@@ -99,18 +99,21 @@ def test_ci_static_gate_takes_every_commit_of_a_push():
     gate = _step("Checks")
     assert 'git cat-file -e "$BEFORE^{commit}"' in gate and 'base="$BEFORE"' in gate
     assert "base=HEAD~1" in gate  # a new branch (before is zeros) or a force-push whose before is gone
+    assert "base=HEAD;" in gate  # a repository's first commit: nothing before it
 
 
 @pytest.mark.skipif(os.name != "posix" or not shutil.which("git"), reason="the runner's shell")
-@pytest.mark.parametrize("event,before,want", [("push", "known", "first"), ("push", "0" * 40, "HEAD~1"),
-                                                ("pull_request", "", "origin/main")])
-def test_the_static_gate_picks_its_base(tmp_path, event, before, want):
+@pytest.mark.parametrize("event,before,want,commits", [("push", "known", "first", 3), ("push", "0" * 40, "HEAD~1", 3),
+                                                        ("push", "0" * 40, "HEAD", 1),
+                                                        ("pull_request", "", "origin/main", 3)])
+def test_the_static_gate_picks_its_base(tmp_path, event, before, want, commits):
     repo = tmp_path / "r"
     git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.test"]
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    for message in ("first", "second", "third"):
+    for message in ("first", "second", "third")[:commits]:  # one: a new repository's first snapshot
         subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", message], check=True)
-    first = subprocess.run(git + ["rev-parse", "HEAD~2"], capture_output=True, text=True, check=True).stdout.strip()
+    first = subprocess.run(git + ["rev-list", "--max-parents=0", "HEAD"], capture_output=True, text=True,
+                           check=True).stdout.strip()
     script = _step("Checks").replace("python scripts/check.py --profile ci", "echo")
     env = {**os.environ, "EVENT": event, "BASE_REF": "main", "BEFORE": first if before == "known" else before}
     out = subprocess.run(["bash", "-e", "-c", script], cwd=repo, env=env, capture_output=True, text=True, timeout=60)

@@ -38,9 +38,11 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           # a push is checked from the commit before it (every commit it brought); a new branch or a force-push
-          # whose earlier head is gone — its last commit
+          # whose earlier head is gone — its last commit; a repository's first commit has nothing before it, so the
+          # static gate compares it with itself (the full suite runs all the same)
           if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"
           elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then base="$BEFORE"
-          else base=HEAD~1; fi
+          elif git cat-file -e "HEAD~1^{commit}" 2>/dev/null; then base=HEAD~1
+          else base=HEAD; fi
           # scratch under /tmp: under the checkout, pytest's socket paths outgrow AF_UNIX's 108 bytes
           python scripts/check.py --profile ci --base "$base" --workers 4 --scratch-root /tmp
