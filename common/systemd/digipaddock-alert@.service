@@ -1,0 +1,8 @@
+[Unit]
+Description=DigiPaddock: unit %i failed — a notice in the cabinet, an alert also in Telegram
+
+[Service]
+Type=oneshot
+# root: reads the failed run's journal and /etc/digipaddock/pult.env, posts to the cabinet as root
+ExecStart=/usr/local/bin/kd-alert %i
+TimeoutStartSec=60

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "host.read",
+  "module": "host",
+  "description": "Read the platform host through the host reader kd-host-read (KD-9101): the journal of catalog units (sysadmin: every unit) filtered by trusted fields, systemd read verbs, catalog files and fixed host state; the agent's own groups, files and sandbox stay as they were.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [
+    {"name": "host-read-catalog", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-host-read",
+      "source": "common/bin/kd-host-read",
+      "subcommands": ["journalctl", "systemctl", "ls", "stat", "cat", "head", "tail", "grep", "paths", "sys"],
+      "approval": "allow",
+      "run_as": "@observe@",
+      "executor": "common/bin/kd-host-read"
+    }
+  ],
+  "validator": null,
+  "setup": "common/install/host_read_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-host-read"]
+  },
+  "lifecycle": {
+    "install": ["executor-user", "setup", "wrappers", "channels"],
+    "check": ["executor-user", "setup", "wrappers", "channels"],
+    "disable": ["channels", "setup"]
+  }
+}

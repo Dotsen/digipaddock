@@ -1,0 +1,8 @@
+[Unit]
+Description=DigiPaddock: the coordinator's morning report (09:00 in the host's zone)
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 @host:timezone@
+
+[Install]
+WantedBy=timers.target

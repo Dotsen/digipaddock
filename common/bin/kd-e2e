@@ -1,0 +1,34 @@
+#!/usr/bin/python3 -I
+"""Fixed test executor, reached only through the caller's base capability channel."""
+
+import os
+import sys
+import pwd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from kd import cap_client, diag, e2e, naming
+from kd.cabinet.client import Client
+
+if __name__ == "__main__":
+    base = pwd.getpwnam(naming.base_user())
+    if os.geteuid() != base.pw_uid:
+        os.execv(
+            cap_client.CLIENT,
+            [
+                cap_client.CLIENT,
+                "run",
+                "base",
+                "/opt/digipaddock/common/bin/kd-e2e",
+                *sys.argv[1:],
+            ],
+        )
+    caller = diag.channel_caller(os.environ)
+    os.environ.clear()
+    os.environ.update(PATH="/usr/bin:/bin", HOME=base.pw_dir, LANG="C.UTF-8")
+    os.chdir("/")
+    os.umask(0o077)
+    try:
+        sys.exit(e2e.main(sys.argv[1:], caller=caller, client=Client()))
+    except (OSError, ValueError) as exc:
+        print("kd-e2e: " + str(exc), file=sys.stderr)
+        sys.exit(2)

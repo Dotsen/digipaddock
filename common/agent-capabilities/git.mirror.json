@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "name": "git.mirror",
+  "module": "forge",
+  "description": "kd-mirror-fetch <branch>: the forge executor fetches a branch of the read-only code mirror (mirror_remote) with its own key into the bare copy code-mirror; git fetch github reads that copy by path. The sandbox reaches no mirror host and holds no key for it.",
+  "shell": "none",
+  "dependencies": ["forge.review", "git.develop"],
+  "conflicts": [],
+  "resources": [
+    {"name": "code-mirror", "access": "read-grant"},
+    {"name": "forge-tokens", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-mirror-fetch",
+      "source": "agents/dev/bin/kd-mirror-fetch",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "@forge@",
+      "executor": "agents/dev/bin/forge_exec.py"
+    }
+  ],
+  "validator": "agents/dev/dev_agent/guard.py",
+  "setup": "agents/dev/install/mirror_read_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-mirror-fetch"]
+  },
+  "lifecycle": {
+    "install": ["executor-user", "setup", "wrappers", "read-grants", "channels"],
+    "check": ["executor-user", "setup", "wrappers", "read-grants", "channels"],
+    "disable": ["channels", "read-grants", "setup"]
+  }
+}

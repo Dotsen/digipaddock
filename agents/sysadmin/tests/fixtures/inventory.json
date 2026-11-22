@@ -1,0 +1,21 @@
+{
+  "_comment": "Инвентарь сисадмина (спека §4.5). Добавлять серверы — только по слову владельца.",
+  "home": "example-stage",
+  "prod": "example-prod",
+  "servers": {
+    "example-prod":  { "host": "203.0.113.20",    "exec_user": "root" },
+    "example-stage": { "host": "203.0.113.10",    "exec_user": "root" },
+    "node-c":            { "host": "203.0.113.32",   "exec_user": "root" },
+    "node-d":         { "host": "203.0.113.33",   "exec_user": "root" },
+    "node-a":      { "host": "203.0.113.30",  "exec_user": "ubuntu", "exec_sudo": true },
+    "node-e":      { "host": "203.0.113.34",   "exec_user": "root" },
+    "node-f":      { "host": "203.0.113.35",   "exec_user": "root" },
+    "node-g":      { "host": "203.0.113.36",  "exec_user": "root" },
+    "node-b":      { "host": "203.0.113.31", "exec_user": "root" },
+    "node-h":      { "host": "203.0.113.37",  "exec_user": "root" },
+    "node-i":      { "host": "203.0.113.38",   "exec_user": "root" },
+    "node-j":      { "host": "203.0.113.39",   "exec_user": "root" },
+    "node-k":      { "host": "203.0.113.40",   "exec_user": "root" },
+    "node-l":          { "host": "203.0.113.41",     "exec_user": "root" }
+  }
+}

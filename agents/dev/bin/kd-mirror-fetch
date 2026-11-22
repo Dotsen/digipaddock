@@ -1,0 +1,14 @@
+#!/bin/bash
+# kd-mirror-fetch <branch> — a branch of the read-only code mirror (the host value mirror_remote, KD-9200) into the bare copy
+# /srv/digipaddock-mirror/code.git, fetched by the forge executor with its own read-only deploy key (review 04.11.2026:
+# the developer's sandbox has neither the mirror's host nor a key for it). Then, in the clone: git fetch github <branch>
+# — the remote github is that copy's path, read with no network.
+EXEC=/opt/digipaddock/agents/dev/bin/forge_exec.py
+CAP=/opt/digipaddock/common/bin/kd-cap
+USAGE="usage: kd-mirror-fetch <branch>"
+case "${1:-}" in
+  -h|--help) echo "$USAGE"; echo "Then in the clone: git fetch github <branch>."; exit 0 ;;
+  ""|-*) echo "$USAGE" >&2; exit 2 ;;
+esac
+[ "$#" -eq 1 ] || { echo "$USAGE" >&2; exit 2; }
+exec "$CAP" run forge "$EXEC" --agent "${KD_AGENT:-unknown}" mirror "$1"

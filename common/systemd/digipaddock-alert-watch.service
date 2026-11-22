@@ -1,0 +1,9 @@
+[Unit]
+Description=DigiPaddock: a Telegram duplicate of what the cabinet cannot send itself — a failed session, a denylist refusal, the cabinet not answering
+OnFailure=digipaddock-alert@digipaddock-alert-watch.service
+
+[Service]
+Type=oneshot
+# root: reads /etc/digipaddock/pult.env and the cabinet's journal as root, stamps in /run/digipaddock
+ExecStart=/usr/local/bin/kd-alert --watch
+TimeoutStartSec=60

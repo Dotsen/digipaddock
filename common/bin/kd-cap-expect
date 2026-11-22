@@ -1,0 +1,17 @@
+#!/usr/bin/python3 -I
+"""PreToolUse (Bash) of an agent without a guard (BOSS): refuses `cd X && …` and non-literal
+channel calls, records the expected channel calls. Any failure blocks the call (exit 2)."""
+
+import os
+import sys
+
+try:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    from kd import cap_expect
+except Exception as exc:  # noqa: BLE001 — Claude Code lets a call through on any exit but 2
+    print(
+        f"⛔ kd-cap-expect не загрузился ({exc.__class__.__name__}) — вызов заблокирован",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+sys.exit(cap_expect.standalone_hook())

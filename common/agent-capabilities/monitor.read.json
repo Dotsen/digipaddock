@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "name": "monitor.read",
+  "module": "monitor",
+  "description": "Read the monitor's incidents P-n (timeline, linked cards), servers, checks and the week's history from the cabinet through the base-user executor kd-monitor-read (KD-9152); every string masked by the gate's rules, nothing printed without them; no acknowledgement, mute, trust, link or check request.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [],
+  "wrappers": [
+    {
+      "command": "kd-monitor-read",
+      "source": "common/bin/kd-monitor-read",
+      "subcommands": ["incident", "incidents", "server", "servers"],
+      "approval": "allow",
+      "run_as": "@base@",
+      "executor": "common/bin/kd-monitor-read"
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-monitor-read"]
+  },
+  "lifecycle": {
+    "install": ["wrappers", "channels"],
+    "check": ["wrappers", "channels"],
+    "disable": ["channels"]
+  }
+}

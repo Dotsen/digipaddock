@@ -1,0 +1,13 @@
+pytest>=8
+pytest-xdist==3.8.0
+vermin>=1.6
+ruff>=0.15,<0.16
+# The web service's packages are the hashed lock common/cabinet/requirements.txt (after requirements-build.txt), installed
+# in pip calls of their own: `pip install --require-hashes -r …` — included here they would put pip into hash mode for
+# the unpinned tools above. develop_setup.sh does both for the dev agent's venv.
+httpx==0.28.1
+httpx2==2.16.0
+# Windows has no time zone database for zoneinfo (the dev cabinet and its tests)
+tzdata==2026.4; sys_platform == "win32"
+# The probe client of a card's live probe through its session's probe exit (docs/probe-egress.md): dev's venv has it
+curl_cffi==0.14.0

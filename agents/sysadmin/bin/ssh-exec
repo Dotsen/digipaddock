@@ -1,0 +1,5 @@
+#!/bin/bash
+# ssh-exec <сервер|сервер1,сервер2,…> '<команда>' — выполнение после одобрения владельца (спека §4.4).
+# The executor runs as the exec service user behind the agent's exec channel (KD-194): the agent has neither the exec
+# key nor the right to write the journal.
+exec /opt/digipaddock/common/bin/kd-cap run exec /opt/digipaddock/agents/sysadmin/bin/ssh_exec.py --agent "${KD_AGENT:-unknown}" "$@"

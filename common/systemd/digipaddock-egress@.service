@@ -1,0 +1,34 @@
+[Unit]
+Description=DigiPaddock: exit %i — a session's hosts through the VPN tunnel port
+After=network-online.target
+
+[Service]
+# An exit of host/egress.json (egress_setup.sh renders /etc/digipaddock/egress/%i.conf and .filter): a loopback
+# HTTP proxy that the sandbox proxy of a session holding the exit forwards to (Claude Code's upstream HTTPS_PROXY).
+# Only CONNECT to 443, each through one SOCKS port of the VPN tunnel; an exit of named hosts refuses any other name
+# by the filter, an exit of every host (domains ["*"]) has no filter. It runs as tinyproxy from the start
+# (no capabilities; it appends to the log egress_setup.sh made). The network is loopback only (IPAddressDeny): even
+# a misrendered config cannot leave the host directly.
+# Kill switch: systemctl stop digipaddock-egress@%i — sessions keep working, the exit's hosts fail.
+User=tinyproxy
+Group=tinyproxy
+ExecStart=/usr/bin/tinyproxy -d -c /etc/digipaddock/egress/%i.conf
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/log/digipaddock-egress
+IPAddressAllow=localhost
+IPAddressDeny=any
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

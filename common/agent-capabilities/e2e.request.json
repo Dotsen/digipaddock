@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "e2e.request",
+  "module": "e2e",
+  "description": "Run the fixed cabinet smoke suite in private network and filesystem namespaces against a root-prepared test-only bundle; no caller-supplied URL, shell or settings.",
+  "shell": "none",
+  "dependencies": ["board.read", "board.write"],
+  "conflicts": [],
+  "resources": [{"name": "e2e-runtime", "access": "via-wrapper"}],
+  "wrappers": [{"command": "kd-e2e", "source": "common/bin/kd-e2e", "subcommands": ["run", "list"], "approval": "allow", "run_as": "@base@", "executor": "common/bin/kd-e2e"}],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {"network_domains": [], "channel_commands": ["kd-e2e"]},
+  "lifecycle": {"install": ["wrappers", "channels"], "check": ["wrappers", "channels"], "disable": ["channels"]}
+}

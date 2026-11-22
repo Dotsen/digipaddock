@@ -1,0 +1,11 @@
+[Unit]
+Description=DigiPaddock: a release request from dev → kd-release
+
+[Path]
+# PathExists is checked again when the service exits, so requests arriving during a run are kept.
+# kd-release removes request.json at the start to avoid retriggering on the same request.
+PathExists=/var/lib/digipaddock/release/request.json
+Unit=digipaddock-release.service
+
+[Install]
+WantedBy=multi-user.target

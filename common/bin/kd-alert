@@ -1,0 +1,432 @@
+#!/usr/bin/env python3
+"""kd-alert <name> — a failed unit tells people: a notice in the cabinet, the critical ones also in Telegram.
+
+digipaddock-alert@<name>.service runs it as root from ``OnFailure=`` of the units that may fail unattended: the board's
+timers, the release, the cabinet itself, the session host, the monitor. The failed unit is ``MONITOR_UNIT`` (systemd
+passes the failed run's facts, systemd >= 251) or the one named by <name>; the reason is read from that run's
+journal. What it posts:
+
+- a unit's failure: one ``critical`` notice ``notice.alert.unit {host, unit, reason}`` without a card;
+- kd-monitor's fallback (exit 3: the sysadmin could not be woken): its 🔴 lines as one ``critical`` notice, the
+  lines "accepted: …" (baselines changed past the agent) and its other lines as ``info`` notices; a monitor error
+  ("error: …") is a unit failure.
+
+Telegram is only the duplicate of a ``critical`` notice: plain text with a link to the cabinet's alerts (the incidents page), while
+/etc/digipaddock/pult.env exists (root 0600). The cabinet away or Telegram away never stops the other; nothing
+delivered — the text goes to stderr (the journal). At most once in 60 min per name (a stamp in /run/digipaddock);
+the monitor's fallback neither checks nor sets it (the monitor dedups by event). A bad name exits 2, anything else 0.
+
+kd-alert --watch — every minute (digipaddock-alert-watch.timer, root): the Telegram duplicate of what the cabinet cannot send
+itself, the token being root's:
+
+- a cabinet that does not answer in CABINET_TIMEOUT twice in a row while its socket is up (a stopped socket is the
+  owner's switch, one miss a restart): "the cabinet does not answer", at most once in 60 min;
+- since the last pass (the journal's seq in the cabinet's state ``alert-watch``; the first pass starts at its end): an
+  agent's session that failed — not ``host_restart``, the host's own failure is its unit's alert — and a server
+  command the denylist refused (``notice.exec.denied``, ``notice.exec.batch_denied``), in one message, each with
+  its link. The pass moves on whether Telegram took it or not: the cabinet keeps them, the journal the text;
+- every new critical incident of the monitor: opened crit, or warn -> crit (``incident.worse`` at crit; a
+  warn never worsens to anything else), with its page — the owner's test alert as well. An imported one is history.
+"""
+import os
+import json
+import re
+import socket
+import subprocess
+import sys
+import time
+
+NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+UNIT_RE = re.compile(r"[A-Za-z0-9@._:-]{1,96}\.service")
+STAMP_DIR = "/run/digipaddock"
+PULT_ENV = "/etc/digipaddock/pult.env"
+COMMON = "/opt/digipaddock/common"
+MIN_INTERVAL = 60 * 60
+NO_REASON = "причина не найдена в журнале"
+INVOCATION_RE = re.compile(r"[0-9a-f]{32}")
+MONITOR = "digipaddock-monitor"  # the name is the failed unit's: digipaddock-alert@<unit name>.service
+MONITOR_PREFIX = "kd-monitor: "  # the monitor's own lines in its journal
+# a reason line: «kd-board: …», «kd-board watch: …»; «<name>: running» is the last good tick
+REASON_RE = re.compile(r"^kd-[a-z0-9-]+(?: [a-z0-9-]+)?: ")
+MONITOR_MAX_LINES = 11  # 10 fallback groups + "… and N more"
+MONITOR_ERROR = "ошибка:"
+MONITOR_ACCEPTED = "принято: "  # accept/trust/an automatic baseline entry — information, not 🔴
+# a fallback line (deliver._group_line): "<server> · …" or "… and N more"
+MONITOR_RED = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._-]* · |… и ещё \d+$)")
+MONITOR_INFO_MAX = 3
+TELEGRAM_MAX = 4000
+# the long parameter (reason, lines): the cabinet takes 2000 characters a value and 4096 bytes of all params as
+# JSON (kd.cabinet.notices); 3000 bytes leave the rest to host and unit
+PARAM_CHARS = 2000
+PARAM_BYTES = 3000
+CABINET_TIMEOUT = 10  # a hung cabinet must not eat TimeoutStartSec=60 of digipaddock-alert@.service
+WATCH = "--watch"
+WATCH_KEY = "alert-watch"  # the cabinet's state: the journal's seq the watch read last
+WATCH_PAGE = 500  # the cabinet's EVENTS_MAX
+WATCH_PAGES = 20
+WATCH_LINES = 10
+WATCH_MISS = 3 * 60  # the previous miss counts when it is this fresh
+NEWEST = 2 ** 63 - 1
+DENIED = ("notice.exec.denied", "notice.exec.batch_denied")
+# every new critical incident of the monitor (a new crit, warn -> crit; the owner's test alert too)
+CRITICAL = {"incident.opened": "notice.alert.incident", "incident.worse": "notice.alert.incident_worse"}
+# the host's Claude token lives a year from its put (kd.claude_token.LIFETIME_DAYS)
+TOKEN_KEY = "notice.alert.claude_token"
+TOKEN_EXPIRED_KEY = "notice.alert.claude_token_expired"
+TOKEN_LIFETIME_DAYS = 365
+TOKEN_WARN_DAYS = 335
+TOKEN_CRITICAL_DAYS = 7
+TOKEN_EVERY = 24 * 60 * 60
+
+
+def read_journal(unit, invocation=None):
+    """The failed run's journal (by systemd's run id) or, without one, the unit's last 20 lines."""
+    if invocation:
+        query = [f"_SYSTEMD_INVOCATION_ID={invocation}"]
+    else:
+        query = ["-u", unit, "-n", "20"]
+    proc = subprocess.run(["journalctl", *query, "-o", "cat", "--no-pager"],
+                          capture_output=True, text=True, errors="replace", timeout=20)
+    return proc.stdout
+
+
+def reason_from(journal, name, own=False):
+    """The last «kd-…: » or «<name>: » line, never «<name>: running»; with ``own`` (the journal is
+    the run's own output, read by its id) the last non-empty line when no such line is there."""
+    lines = [line.strip() for line in journal.splitlines() if line.strip()]
+    found = [line for line in lines
+             if (REASON_RE.match(line) or line.startswith(f"{name}:")) and not line.endswith(": running")]
+    if found:
+        return found[-1]
+    return lines[-1] if own and lines else NO_REASON
+
+
+def monitor_split(journal):
+    """The monitor's lines without the prefix → (errors, 🔴 fallback, accepted, service), each with its limit."""
+    errors, red, accepted, info = [], [], [], []
+    for line in journal.splitlines():
+        if not line.startswith(MONITOR_PREFIX):
+            continue
+        ln = line.strip()[len(MONITOR_PREFIX):]
+        if ln.startswith(MONITOR_ERROR):
+            errors.append(ln)
+        elif ln.startswith(MONITOR_ACCEPTED):
+            accepted.append(ln[len(MONITOR_ACCEPTED):])
+        elif MONITOR_RED.match(ln):
+            red.append(ln)
+        else:
+            info.append(ln)
+    if len(info) > MONITOR_INFO_MAX:
+        info = info[:MONITOR_INFO_MAX] + [f"… и ещё {len(info) - MONITOR_INFO_MAX}"]
+    return errors, red[:MONITOR_MAX_LINES], accepted[:MONITOR_MAX_LINES], info
+
+
+def _common():
+    if COMMON not in sys.path:
+        sys.path.insert(0, COMMON)
+
+
+def cabinet_poster():
+    """client.post_notice as root; None — the cabinet's code is not on this host."""
+    _common()
+    try:
+        from kd.cabinet import client  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — no cabinet here
+        return None
+    return lambda source, level, key, params: client.post_notice(
+        source, level, key, params, client=client.Client(timeout=CABINET_TIMEOUT))
+
+
+def pult_sender():
+    _common()
+    try:
+        from kd import pult  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — no Pult here
+        return None
+    return pult.send
+
+
+def cabinet_origin():
+    _common()
+    try:
+        from kd.cabinet import config  # noqa: PLC0415
+        return config.origin_of() or ""
+    except Exception:  # noqa: BLE001 — no cabinet.json: no link
+        return ""
+
+
+ALERTS_PATH = "/incidents"  # where the cabinet lists the platform's alerts (kd.cabinet.notify.ALERTS_URL)
+
+
+def alerts_link():
+    origin = cabinet_origin()
+    return f"{origin}{ALERTS_PATH}" if origin else ""
+
+
+def cabinet_caller():
+    """The cabinet's socket as root; None — the cabinet's code is not on this host."""
+    _common()
+    try:
+        from kd.cabinet import client  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — no cabinet here
+        return None
+    return client.Client(timeout=CABINET_TIMEOUT).call
+
+
+def cabinet_socket_up():
+    try:
+        return subprocess.run(["systemctl", "is-active", "--quiet", "digipaddock-cabinet.socket"], timeout=20).returncode == 0
+    except Exception:  # noqa: BLE001 — no systemd: nothing says it was stopped on purpose
+        return True
+
+
+def render(key, params):
+    _common()
+    try:
+        from kd.cabinet import config, i18n  # noqa: PLC0415
+        return i18n.t(config.owner_language(), key, **params)
+    except Exception:  # noqa: BLE001 — no catalogs: the facts as they are
+        return f"{key}: " + " · ".join(f"{k}={v}" for k, v in params.items())
+
+
+def host_command(name):
+    """The host's name of a kd-<word> command (kd.naming); the repository's name without the release tree."""
+    _common()
+    try:
+        from kd import naming  # noqa: PLC0415
+        return naming.command(name)
+    except Exception:  # noqa: BLE001 — the name as the repository spells it
+        return name
+
+
+def fit(text):
+    """``text`` cut to PARAM_CHARS characters and to PARAM_BYTES bytes of its JSON, as the cabinet counts them."""
+    text = text[:PARAM_CHARS]
+    while True:
+        size = len(json.dumps(text, ensure_ascii=False).encode("utf-8"))
+        if size <= PARAM_BYTES:
+            return text
+        text = text[:max(0, len(text) * PARAM_BYTES // size - 1)]
+
+
+def recent(stamp, now, seconds=MIN_INTERVAL):
+    try:
+        return now - os.stat(stamp).st_mtime < seconds
+    except OSError:
+        return False
+
+
+def touch(stamp, now):
+    with open(stamp, "w"):
+        pass
+    os.utime(stamp, (now, now))
+
+
+def _failed_unit(name, env):
+    unit = env.get("MONITOR_UNIT", "")
+    if UNIT_RE.fullmatch(unit):
+        return unit
+    return f"{name}.service"
+
+
+def relayed(event):
+    """(text, link path) of a journal event the watch duplicates, or None."""
+    payload = event.get("payload") or {}
+    card = event.get("card") or ""
+    if event.get("kind") == "session.changed":
+        if payload.get("state") != "failed" or payload.get("was") == "failed" or payload.get("error") == "host_restart":
+            return None
+        agent = payload.get("agent") or "?"
+        if payload.get("error") == "auth_failed":  # Claude refused the credentials — the remedy, not the code
+            text = render("sys.session.auth_failed", {"agent": f"@{agent}", "command": host_command("kd-secret")})
+        else:
+            text = render("sys.session.failed", {"agent": f"@{agent}", "error": payload.get("error") or "?"})
+        return text, f"/cards/{card}" if card else f"/agents/{agent}"
+    if event.get("kind") == "notice" and payload.get("key") in DENIED:
+        return render(payload["key"], payload.get("params") or {}), f"/cards/{card}" if card else ALERTS_PATH
+    if event.get("kind") in CRITICAL and payload.get("level") == "crit" and not payload.get("imported"):
+        pid = str(payload.get("id") or "?")
+        if event["kind"] == "incident.opened":
+            subject = payload.get("subject") or ""
+            check = str(payload.get("check") or "?") + (f" {subject}" if subject not in ("", "-") else "")
+            text = render(CRITICAL[event["kind"]], {"id": pid, "server": payload.get("server") or "?", "check": check,
+                                                    "value": payload.get("value") or ""})
+        else:
+            text = render(CRITICAL[event["kind"]], {"id": pid, "value": payload.get("value") or ""})
+        return text, f"/incidents/{pid}"
+    return None
+
+
+def claude_token_age():
+    """Days since the host's Claude token was put (kd.claude_token), None without it or the release tree."""
+    _common()
+    try:
+        from kd import claude_token  # noqa: PLC0415
+        return claude_token.age_days()
+    except Exception:  # noqa: BLE001 — no tree here: nothing to warn of
+        return None
+
+
+def token_notice(call, now, stamp_dir, duplicate, host, base, age, stderr):
+    """a notice from TOKEN_WARN_DAYS of the token's year (warn), critical in its last TOKEN_CRITICAL_DAYS
+    days and after it (expired) with the Telegram duplicate; each once in 24 h per state, the duplicate's stamp only
+    when it went out. A cabinet error is a line, never the watch's failure."""
+    days = age()
+    if days is None or days < TOKEN_WARN_DAYS:
+        return
+    expired = days >= TOKEN_LIFETIME_DAYS
+    level = "critical" if days >= TOKEN_LIFETIME_DAYS - TOKEN_CRITICAL_DAYS else "warn"
+    state, key = ("expired", TOKEN_EXPIRED_KEY) if expired else (level, TOKEN_KEY)
+    params = {"host": host, "days": max(0, TOKEN_LIFETIME_DAYS - int(days)), "command": host_command("kd-secret")}
+    if level == "critical":  # the copy first: a cabinet that is down must not hold it back
+        sent = os.path.join(str(stamp_dir), f"claude-token-{state}-telegram")
+        if not recent(sent, now, TOKEN_EVERY) and duplicate(render(key, params) + (f"\n{base}{ALERTS_PATH}" if base else "")):
+            touch(sent, now)
+    stamp = os.path.join(str(stamp_dir), f"claude-token-{state}")
+    if recent(stamp, now, TOKEN_EVERY):
+        return
+    try:
+        call({"op": "notice.post", "source": "alert", "level": level, "key": key, "params": params})
+    except Exception as exc:  # noqa: BLE001 — only the cabinet's own errors; a bug fails the unit (its alert)
+        if not hasattr(exc, "kind"):
+            raise
+        print(f"kd-alert watch: the Claude token's notice is not posted ({exc.kind}: {exc})", file=stderr)
+        return
+    touch(stamp, now)
+
+
+def watch(call=None, socket_up=cabinet_socket_up, clock=time.time, stamp_dir=STAMP_DIR, sender=None, base=None,
+          hostname=None, pult_env=PULT_ENV, stderr=None, token_age=claude_token_age):
+    stderr = stderr or sys.stderr
+    call = call if call is not None else cabinet_caller()
+    if call is None:
+        return 0
+    base = cabinet_origin() if base is None else base
+    host = hostname or socket.gethostname()
+    now = clock()
+    os.makedirs(str(stamp_dir), mode=0o700, exist_ok=True)
+    miss = os.path.join(str(stamp_dir), "watch-cabinet-miss")
+
+    def duplicate(text):
+        if not os.path.exists(str(pult_env)):
+            return False
+        send = sender if sender is not None else pult_sender()
+        return bool(send is not None and send(text[:TELEGRAM_MAX]))
+
+    try:
+        cursor = call({"op": "state.get", "key": WATCH_KEY}).get("value")
+    except Exception as exc:  # noqa: BLE001 — only the cabinet's own errors; a bug fails the unit (its alert)
+        if not hasattr(exc, "kind"):
+            raise
+        if exc.kind != "unavailable" or not socket_up():
+            print(f"kd-alert watch: the cabinet is not read ({exc.kind}: {exc})", file=stderr)
+            return 0
+        hung = os.path.join(str(stamp_dir), "alert-cabinet-hung")
+        if not recent(miss, now, WATCH_MISS):
+            touch(miss, now)  # one miss is a restart: the next one says it hangs
+            return 0
+        touch(miss, now)
+        text = render("notice.alert.cabinet", {"host": host, "seconds": CABINET_TIMEOUT})
+        print(text, file=stderr)
+        if not recent(hung, now) and duplicate(text + (f"\n{base}" if base else "")):
+            touch(hung, now)
+        return 0
+    try:
+        os.remove(miss)
+    except OSError:
+        pass
+    token_notice(call, now, stamp_dir, duplicate, host, base, token_age, stderr)
+    if not isinstance(cursor, int) or isinstance(cursor, bool):  # the first pass: from the journal's end
+        newest = call({"op": "events.since", "before": NEWEST, "limit": 1})["events"]
+        call({"op": "state.set", "key": WATCH_KEY, "value": newest[0]["seq"] if newest else 0})
+        return 0
+    found = []
+    for _ in range(WATCH_PAGES):
+        page = call({"op": "events.since", "after": cursor, "limit": WATCH_PAGE})
+        found += [item for item in map(relayed, page["events"]) if item]
+        cursor = page["last"]
+        if len(page["events"]) < WATCH_PAGE:
+            break
+    call({"op": "state.set", "key": WATCH_KEY, "value": cursor})
+    if not found:
+        return 0
+    lines = [f"{text} — {base}{path}" if base else text for text, path in found]
+    if len(lines) > WATCH_LINES:
+        lines = lines[:WATCH_LINES] + [f"… и ещё {len(lines) - WATCH_LINES}"]
+    text = "\n".join([f"⚠️ {host}"] + lines)
+    if not duplicate(text):
+        print(text, file=stderr)
+    return 0
+
+
+def main(argv=None, journal=read_journal, clock=time.time, stamp_dir=STAMP_DIR, sender=None, poster=None,
+         link=None, hostname=None, pult_env=PULT_ENV, stderr=None, env=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv == [WATCH]:
+        return watch()
+    stderr = stderr or sys.stderr
+    env = os.environ if env is None else env
+    if len(argv) != 1 or not NAME_RE.match(argv[0]):
+        print("usage: kd-alert <name> (a-z, 0-9, _-, up to 32 characters)", file=stderr)
+        return 2
+    name = argv[0]
+    stamp = os.path.join(str(stamp_dir), f"alert-{name}")
+    now = clock()
+    is_monitor = name == MONITOR
+    # the monitor's fresh stamp silences only what is not its fallback (the reason below decides)
+    if not is_monitor and recent(stamp, now):
+        return 0
+    unit = _failed_unit(name, env)
+    invocation = env.get("MONITOR_INVOCATION_ID", "")
+    invocation = invocation if INVOCATION_RE.fullmatch(invocation) else None
+    result = env.get("MONITOR_SERVICE_RESULT") or ""
+    status = env.get("MONITOR_EXIT_STATUS") or ""
+    try:
+        text_journal = journal(unit, invocation)
+    except Exception:  # noqa: BLE001 — no journal must not silence the alert
+        text_journal = ""
+    host = hostname or socket.gethostname()
+    notices = []  # (source, level, key, params)
+    split = monitor_split(text_journal) if is_monitor else None
+    fallback = bool(split) and not split[0] and bool(split[1] or split[2])
+    if fallback:
+        _, red, accepted, info = split
+        for level, key, lines in (("critical", "notice.alert.fallback", red), ("info", "notice.alert.accepted", accepted),
+                                  ("info", "notice.alert.service", info)):
+            if lines:
+                notices.append(("monitor", level, key, {"host": host, "lines": fit("\n".join(lines))}))
+    else:
+        if is_monitor and recent(stamp, now):
+            return 0
+        if is_monitor:
+            lines = (split[0] + split[1] + split[3])[:MONITOR_MAX_LINES] if split else []
+            reason = "\n".join(lines) or NO_REASON
+        else:
+            reason = reason_from(text_journal, name, own=invocation is not None)
+        if reason == NO_REASON:
+            reason = f"{NO_REASON} (результат: {result or '?'})"
+        elif result:
+            reason += f" (результат: {result}{', код ' + status if status.isdigit() else ''})"
+        notices.append(("monitor" if is_monitor else "alert", "critical", "notice.alert.unit",
+                        {"host": host, "unit": unit, "reason": fit(reason)}))
+    post = poster if poster is not None else cabinet_poster()
+    delivered = False
+    for source, level, key, params in notices:
+        sent = False  # a critical duplicate first: a hung cabinet must not hold it back
+        if level == "critical" and os.path.exists(pult_env):
+            send = sender if sender is not None else pult_sender()
+            where = link() if link is not None else alerts_link()
+            text = render(key, params)[:TELEGRAM_MAX - len(where) - 1] + (f"\n{where}" if where else "")
+            sent = send is not None and send(text)
+        posted = post is not None and post(source, level, key, params)
+        if not posted:
+            print(render(key, params), file=stderr)
+        delivered = delivered or posted or sent
+    if delivered and not fallback:  # the stamp only from a real failure: "accepted"/🔴 do not silence it for an hour
+        os.makedirs(str(stamp_dir), mode=0o700, exist_ok=True)
+        touch(stamp, now)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

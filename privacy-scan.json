@@ -1,0 +1,10 @@
+{
+  "forbidden_domains": [],
+  "exclude": [
+    "tmp/**",
+    ".worktrees/**",
+    "host/host.json",
+    "common/install/github_known_hosts",
+    "privacy-scan.json"
+  ]
+}

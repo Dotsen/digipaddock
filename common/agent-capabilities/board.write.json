@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "board.write",
+  "module": "board",
+  "description": "Board writes through kd-task (from board.read), opened by this capability: claim, create in Inbox, edit own cards by the transition table, comment, hand off; kd-work reports progress, answers directives and the council's findings, asks the owner. No file write to the board; nothing leaves Inbox.",
+  "shell": "none",
+  "dependencies": ["board.read"],
+  "conflicts": ["board.coordinate", "worker.request"],
+  "resources": [
+    {"name": "board-tasks", "access": "via-wrapper"},
+    {"name": "board-activity", "access": "via-wrapper"},
+    {"name": "board-directives", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-work",
+      "source": "common/bin/kd-work",
+      "subcommands": ["progress", "directive", "reply", "ask", "answer", "finish", "assist", "council", "council-reply"],
+      "approval": "allow",
+      "run_as": "@base@",
+      "executor": "common/bin/kd-work"
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-work"]
+  },
+  "lifecycle": {
+    "install": ["wrappers", "channels"],
+    "check": ["wrappers", "channels"],
+    "disable": ["channels"]
+  }
+}

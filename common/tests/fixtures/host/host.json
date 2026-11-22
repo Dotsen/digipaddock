@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "stage_alias": "example-stage",
+  "stage_ip": "203.0.113.10",
+  "prod_alias": "example-prod",
+  "forge_host": "forge.example.test",
+  "forge_ssh_url": "ssh://git@forge.example.test/{repo}.git",
+  "forge_api": "https://forge.example.test/api/v1",
+  "cabinet_host": "cabinet.example.test",
+  "cabinet_origin": "https://cabinet.example.test",
+  "docs_dir": "/srv/example-docs",
+  "mirror_remote": "git@github.example.test:example/digipaddock.git",
+  "forge_owner": "example-owner",
+  "dev_email": "dev@example.test",
+  "forge_dev_user": "digipaddock-dev",
+  "forge_merge_user": "digipaddock-merge",
+  "forge_review_user": "digipaddock-review",
+  "forge_import_user": "digipaddock-import",
+  "owner_language": "ru",
+  "timezone": "UTC"
+}

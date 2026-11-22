@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "name": "forge.review",
+  "module": "forge",
+  "description": "Read pull requests, comment and publish them to the owner's cabinet through kd-forge, and merge through kd-merge only after the owner approves (signed in the cabinet or in Forgejo); both run the forge executor as @forge@.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": ["board.coordinate", "monitor.manage", "servers.execute", "servers.read", "worker.request"],
+  "resources": [
+    {"name": "forge-repos", "access": "read-public"},
+    {"name": "forge-tokens", "access": "via-wrapper"},
+    {"name": "forge-journal", "access": "read-grant"},
+    {"name": "release-requests", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-forge",
+      "source": "agents/dev/bin/kd-forge",
+      "subcommands": ["prs", "pr", "comments", "comment", "publish", "check", "status"],
+      "approval": "allow",
+      "run_as": "@forge@",
+      "executor": "agents/dev/bin/forge_exec.py"
+    },
+    {
+      "command": "kd-merge",
+      "source": "agents/dev/bin/kd-merge",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "@forge@",
+      "executor": "agents/dev/bin/forge_exec.py"
+    }
+  ],
+  "validator": "agents/dev/dev_agent/guard.py",
+  "setup": "agents/dev/install/forge_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-forge", "kd-merge"]
+  },
+  "lifecycle": {
+    "install": ["executor-user", "setup", "wrappers", "read-grants", "channels"],
+    "check": ["executor-user", "setup", "wrappers", "read-grants", "channels"],
+    "disable": ["channels", "read-grants", "setup"]
+  }
+}

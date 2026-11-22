@@ -1,0 +1,17 @@
+[Unit]
+Description=DigiPaddock: release of main from Forgejo by the owner's card (dev)
+OnFailure=digipaddock-alert@digipaddock-release.service
+# The path unit starts this service on each request. A burst must not put the path unit in the failed state.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# Root reads Forgejo with /root/.ssh/forgejo_deploy, writes /opt/digipaddock-releases, and updates the symlink.
+# A handled refusal exits 0, records result.json, and lets the executor tell the owner. A failure triggers kd-alert.
+Environment=HOME=/root
+RuntimeDirectory=digipaddock-release
+ExecStart=/usr/local/bin/kd-release
+# two repositories, the preflight, the units, the cabinet, the e2e runtime (review I5), the health check
+# and the mirror's start, a second request within LOOP_BUDGET —
+# 2905 s of the T_* of kd-release (test_kd_release)
+TimeoutStartSec=3000

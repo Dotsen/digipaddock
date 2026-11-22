@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""kd-board sync | digest-signal | watch | deliver  (root).
+
+sync   — by the path unit (/run/digipaddock-cabinet/changed) and a timer: the cursor of the cabinet's events; events for
+         the coordinator (a card assigned to it, a new one without an executor, Blocked) — watch starts at once. Wakes of
+         executors are the cabinet's commands, they are born together with the event.
+digest-signal — 09:00 in the host's zone: a fixed signal to the coordinator to prepare the morning report (no coordinator — nothing).
+watch  — a 15 min timer: a snapshot of the cabinet's cards → stalls → the attention automaton → a fixed signal to the
+         coordinator or a notice in the cabinet (notice.watch.*); BOSS's acknowledgements — from the cabinet, open events — back.
+deliver — kd-board-deliver: once a minute and by the path unit kd-board-grants — kd-nudge deliver: BOSS's assignments
+         and the owner's permission reach BOSS at once.
+The owner reads cards in the cabinet (or with the kd-cabinet command), not through kd-board. The owner's Telegram bot
+gets nothing from here — neither lines about cards nor the 09:15 digest; the morning digest is the cabinet's.
+"""
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+sys.path.insert(0, "/opt/digipaddock/common")
+from kd import board, naming, wake, watch  # noqa: E402
+from kd.cabinet import client as cabinet_client  # noqa: E402
+# from root's systemd the environment is empty: explicit HOME and PATH for kd-nudge deliver under the base user
+OWNER = naming.base_user()
+AS_BASE = ("runuser", "-u", OWNER, "--", "env", "HOME=" + naming.home(OWNER), "PATH=/usr/local/bin:/usr/bin:/bin")
+
+
+def _wake(agent, text, *, space="chat"):
+    return wake.wake(agent, text, space=space)  # root: the cabinet's command, nothing else
+
+
+def _kick_watch(events):
+    if board.coordinator_events(events):
+        try:  # it failed — the watch timer will do the same tick within ≤15 min; the timer is off — watch is not started
+            if subprocess.run(["systemctl", "is-active", "--quiet", "digipaddock-board-watch.timer"],
+                              capture_output=True, timeout=15).returncode == 0:
+                subprocess.run(["systemctl", "start", "--no-block", "digipaddock-board-watch.service"],
+                               capture_output=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def _cards(client):
+    try:
+        return watch.card_snapshot(cabinet_client.records(client))
+    except cabinet_client.CabinetError:
+        return None  # the cabinet did not answer: the tick is skipped, no event looks resolved
+
+
+def _projects(client):
+    try:
+        return cabinet_client.projects(client)
+    except cabinet_client.CabinetError:
+        return None  # no projects is no board: the tick is skipped, never routed against an empty table
+
+
+def _acks(client):
+    try:
+        return client.call({"op": "attention.acks.take"})["events"]
+    except cabinet_client.CabinetError:
+        return []  # the acks stay in the cabinet for the next tick
+
+
+def _publish(client, events):
+    try:
+        client.call({"op": "attention.open.set", "events": events})
+        return True
+    except cabinet_client.CabinetError:
+        return False
+
+
+def _watch(client):
+    import pwd  # Linux only
+
+    def notify(level, key, params):
+        return cabinet_client.post_notice("watch", level, key, params, client=client)
+
+    return watch.tick(
+        now=datetime.now(timezone.utc),
+        paths=watch.Paths(),
+        wake=_wake,
+        notify=notify,
+        activity_owner_uid=pwd.getpwnam(OWNER).pw_uid,
+        cards=lambda: _cards(client),
+        projects=lambda: _projects(client),
+        acks=lambda: _acks(client),
+        publish=lambda events: _publish(client, events),
+        deliver=_deliver_directives,
+    )
+
+
+def _deliver_directives():
+    """the coordinator's pending directives, as the base user (never through a channel)."""
+    try:
+        return subprocess.run([*AS_BASE, "/opt/digipaddock/common/bin/kd-nudge", "deliver"],
+                              stdin=subprocess.DEVNULL, timeout=300).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return 1
+
+
+def main(argv=None, client=None):
+    argv = sys.argv[1:] if argv is None else argv
+    client = client if client is not None else cabinet_client.Client()  # root: the cabinet's root principal
+    cmd = argv[:1]
+    if cmd == ["sync"] and len(argv) == 1:
+        return board.sync(client, on_events=_kick_watch)
+    if cmd == ["digest-signal"] and len(argv) == 1:
+        return watch.digest_signal(watch.Paths(), _wake)
+    if cmd == ["watch"] and len(argv) == 1:
+        return _watch(client)
+    if cmd == ["deliver"] and len(argv) == 1:
+        return _deliver_directives()
+    print("usage: kd-board sync | digest-signal | watch | deliver", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

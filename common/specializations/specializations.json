@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "max_skills": 2,
+  "specializations": {
+    "support-draft": {
+      "type": "analyst",
+      "version": 2,
+      "file": "analyst/support-draft.v2.md",
+      "default": false,
+      "skills": [],
+      "result": ["draft", "sources", "unknowns", "questions", "missing_inputs"],
+      "requires": ["board.read", "docs.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "post-deploy": {
+      "type": "sysadmin",
+      "version": 2,
+      "file": "sysadmin/post-deploy.v2.md",
+      "default": false,
+      "skills": [],
+      "result": ["verdict", "basis", "checks", "evidence", "missing_inputs"],
+      "requires": ["host.read", "servers.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "incident-triage": {
+      "type": "sysadmin",
+      "version": 1,
+      "file": "sysadmin/incident-triage.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["summary", "evidence", "hypotheses", "impact", "next", "missing_inputs"],
+      "requires": ["host.read", "servers.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "drift-audit": {
+      "type": "sysadmin",
+      "version": 1,
+      "file": "sysadmin/drift-audit.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["summary", "drifts", "unchecked"],
+      "requires": ["host.read", "servers.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "capacity": {
+      "type": "sysadmin",
+      "version": 1,
+      "file": "sysadmin/capacity.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["summary", "resources", "database", "forecast", "recommendation", "unchecked"],
+      "requires": ["host.read", "servers.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "vpn-deploy": {
+      "type": "sysadmin",
+      "version": 1,
+      "file": "sysadmin/vpn-deploy.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["summary", "steps", "final_check", "owner_steps", "missing_inputs"],
+      "requires": ["host.read", "servers.read", "servers.execute"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "release-check": {
+      "type": "analyst",
+      "version": 2,
+      "file": "analyst/release-check.v2.md",
+      "default": false,
+      "skills": [],
+      "result": ["verdict", "basis", "findings", "checks", "missing_inputs"],
+      "requires": ["repo.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "brief-critic": {
+      "type": "analyst",
+      "version": 1,
+      "file": "analyst/brief-critic.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["verdict", "findings", "questions", "missing_inputs"],
+      "requires": ["repo.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "brief-review": {
+      "type": "analyst",
+      "version": 2,
+      "file": "analyst/brief-review.v2.md",
+      "default": false,
+      "skills": [],
+      "result": ["verdict", "basis", "findings", "missing_inputs"],
+      "requires": ["repo.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "copywriting": {
+      "type": "analyst",
+      "version": 1,
+      "file": "analyst/copywriting.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["drafts", "sources", "missing_inputs"],
+      "requires": [],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "data-health": {
+      "type": "analyst",
+      "version": 1,
+      "file": "analyst/data-health.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["period", "slices", "causes", "unknowns", "missing_inputs"],
+      "requires": ["board.read", "data.read", "docs.read", "repo.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "docs": {
+      "type": "developer",
+      "version": 1,
+      "file": "developer/docs.v1.md",
+      "default": false,
+      "skills": ["localization", "technical-writing"],
+      "result": ["commit", "files", "notes"],
+      "requires": ["git.develop"],
+      "limits": {"write": "repo", "capabilities": [], "network": "none"}
+    },
+    "implementer": {
+      "type": "developer",
+      "version": 1,
+      "file": "developer/implementer.v1.md",
+      "default": true,
+      "skills": ["python-backend", "security-review", "frontend", "stateful-testing", "localization", "e2e-testing", "technical-writing"],
+      "result": ["commit", "tests", "notes"],
+      "requires": ["git.develop"],
+      "limits": {"write": "repo", "capabilities": [], "network": "none"}
+    },
+    "code-critic": {
+      "type": "developer",
+      "version": 3,
+      "file": "developer/code-critic.v3.md",
+      "default": false,
+      "skills": [],
+      "result": ["verdict", "findings", "questions"],
+      "requires": ["git.develop"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "reviewer": {
+      "type": "developer",
+      "version": 3,
+      "file": "developer/reviewer.v3.md",
+      "default": false,
+      "skills": ["python-backend", "security-review", "frontend", "stateful-testing", "localization", "e2e-testing", "technical-writing"],
+      "result": ["verdict", "findings"],
+      "requires": ["git.develop"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "site-copy": {
+      "type": "developer",
+      "version": 1,
+      "file": "developer/site-copy.v1.md",
+      "default": false,
+      "skills": ["localization"],
+      "result": ["commit", "files", "notes", "missing_inputs"],
+      "requires": ["git.develop"],
+      "limits": {"write": "repo", "capabilities": [], "network": "none"}
+    },
+    "task-brief": {
+      "type": "analyst",
+      "version": 8,
+      "file": "analyst/task-brief.v8.md",
+      "default": true,
+      "skills": [],
+      "result": ["description", "acceptance_criteria", "modules", "risks", "size", "next", "stages"],
+      "requires": [],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "test-author": {
+      "type": "developer",
+      "version": 1,
+      "file": "developer/test-author.v1.md",
+      "default": false,
+      "skills": ["python-backend", "stateful-testing", "e2e-testing"],
+      "result": ["commit", "tests", "notes"],
+      "requires": ["git.develop"],
+      "limits": {"write": "repo", "capabilities": [], "network": "none"}
+    },
+    "tester": {
+      "type": "developer",
+      "version": 1,
+      "file": "developer/tester.v1.md",
+      "default": false,
+      "skills": ["python-backend", "frontend", "stateful-testing", "localization", "e2e-testing"],
+      "result": ["passed", "commands", "failures", "proposed_tests"],
+      "requires": ["git.develop"],
+      "limits": {"write": "temp", "capabilities": [], "network": "none"}
+    },
+    "ui-design": {
+      "type": "developer",
+      "version": 1,
+      "file": "developer/ui-design.v1.md",
+      "default": false,
+      "skills": ["frontend"],
+      "result": ["commit", "files", "tokens", "screens", "missing_inputs"],
+      "requires": ["git.develop"],
+      "limits": {"write": "repo", "capabilities": [], "network": "none"}
+    },
+    "ux-review": {
+      "type": "analyst",
+      "version": 1,
+      "file": "analyst/ux-review.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["findings", "summary", "missing_inputs"],
+      "requires": ["repo.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "cost-report": {
+      "type": "analyst",
+      "version": 1,
+      "file": "analyst/cost-report.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["period", "totals", "summary", "changes", "savings", "gaps"],
+      "requires": ["usage.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "commit-review": {
+      "type": "analyst",
+      "version": 1,
+      "file": "analyst/commit-review.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["basis", "findings", "summary", "missing_inputs"],
+      "requires": ["repo.read", "board.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    },
+    "onboarding": {
+      "type": "analyst",
+      "version": 1,
+      "file": "analyst/onboarding.v1.md",
+      "default": false,
+      "skills": [],
+      "result": ["drafts", "sources", "unknowns", "missing_inputs"],
+      "requires": ["board.read", "docs.read"],
+      "limits": {"write": "none", "capabilities": [], "network": "none"}
+    }
+  },
+  "skills": {
+    "technical-writing": {"version": 1, "file": "skills/technical-writing.v1.md", "conflicts": []},
+    "e2e-testing": {"version": 2, "file": "skills/e2e-testing.v2.md", "conflicts": []},
+    "localization": {"version": 1, "file": "skills/localization.v1.md", "conflicts": []},
+    "stateful-testing": {"version": 1, "file": "skills/stateful-testing.v1.md", "conflicts": []},
+    "frontend": {"version": 1, "file": "skills/frontend.v1.md", "conflicts": []},
+    "python-backend": {"version": 1, "file": "skills/python-backend.v1.md", "conflicts": []},
+    "security-review": {"version": 1, "file": "skills/security-review.v1.md", "conflicts": []}
+  }
+}

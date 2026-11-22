@@ -1,0 +1,7 @@
+{
+  "schema_version": 2,
+  "name": "dev",
+  "profile": "developer",
+  "capabilities": ["board.read", "board.write", "data.read", "diag.request", "e2e.request", "factory.request", "forge.review", "git.develop", "git.mirror", "host.read", "net.egress"],
+  "runtime": {"sandbox_profile": "developer-v1", "working_directory": "work"}
+}

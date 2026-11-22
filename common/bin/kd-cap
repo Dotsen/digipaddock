@@ -1,0 +1,11 @@
+#!/usr/bin/python3 -I
+"""Capability channel client (kd/cap_client.py): <command> [args] through the agent's self channel,
+kd-cap run <exec|forge|base> <program> [args] through an executor channel."""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from kd import cap_client  # noqa: E402
+
+sys.exit(cap_client.main(sys.argv[0], sys.argv[1:], uid=os.getuid()))

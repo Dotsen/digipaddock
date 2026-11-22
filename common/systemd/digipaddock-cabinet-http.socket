@@ -1,0 +1,16 @@
+[Unit]
+Description=DigiPaddock: the owner cabinet's web for nginx
+
+[Socket]
+# HTTP of the cabinet's web: only nginx (www-data) connects; a person is the session the service checks.
+ListenStream=/run/digipaddock-cabinet-http/http.sock
+FileDescriptorName=http
+Service=digipaddock-cabinet.service
+SocketUser=@cabinet@
+SocketGroup=www-data
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=no
+
+[Install]
+WantedBy=sockets.target

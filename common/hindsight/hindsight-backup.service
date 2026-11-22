@@ -1,0 +1,10 @@
+[Unit]
+Description=Дамп базы hindsight в @host:backup_dir@/hindsight
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+Environment=HINDSIGHT_DUMPS=@host:backup_dir@/hindsight
+ExecStart=/usr/local/sbin/hindsight-backup.sh
+TimeoutStartSec=1200

@@ -1,0 +1,9 @@
+[Unit]
+Description=Ночной дамп базы hindsight, 04:30 по зоне хоста
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 @host:timezone@
+Persistent=true
+
+[Install]
+WantedBy=timers.target

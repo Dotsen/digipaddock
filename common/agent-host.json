@@ -1,0 +1,10 @@
+{
+  "schema_version": 4,
+  "unit_dependencies": {
+    "commands": ["kd-alert"],
+    "units": ["digipaddock-alert@.service"]
+  },
+  "group_grants": [
+    {"group": "digipaddock-cabinet", "capability": "board.read"}
+  ]
+}

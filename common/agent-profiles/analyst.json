@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "name": "analyst",
+  "defaults": {
+    "role": "Analyst: settles what is to be built before anyone builds it. Reads the board, the documentation and read-only repository copies, talks with the owner and writes briefs into cards; never code, servers or pull requests, and a card leaves Inbox only by the owner's click."
+  },
+  "capability_ceiling": ["board.read", "board.write", "data.read", "docs.read", "host.read", "monitor.read", "net.egress", "repo.read", "usage.read"],
+  "sandbox_profiles": ["analyst-v1"]
+}

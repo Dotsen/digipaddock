@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "critical_units": ["*.example.test*", "app-*", "scraper-*", "token-*"],
+  "verbs": ["package.refresh", "service.restart", "service.start", "package.install", "script"],
+  "servers": {
+    "example-stage": {"packages": "apt", "install": true, "units": [
+      "nginx.service", "php8.3-fpm.service", "stageapi.example.test.service", "testapi.example.test.service",
+      "testapi-internal.example.test.service", "testapi-partner.example.test.service"
+    ]},
+    "node-c": {"packages": "apt", "install": true, "units": [
+      "nginx.service", "app-gateway.service", "app-raw-api.service", "app-raw-api-staging.service",
+      "app-worker@alpha.service", "app-worker@beta.service", "app-worker@gamma.service",
+      "app-worker@delta.service", "app-worker@epsilon.service", "app-worker@zeta.service",
+      "app-worker@eta.service", "app-worker-staging@alpha.service", "app-worker-staging@epsilon.service",
+      "app-worker-staging@zeta.service", "token-api.service"
+    ]},
+    "node-l": {"packages": "apt", "install": true, "units": ["scraper-api.service"]},
+    "node-d": {"packages": "apt", "install": true, "units": []},
+    "node-a": {"packages": "apt", "install": true, "units": []},
+    "node-e": {"packages": "apt", "install": true, "units": []},
+    "node-f": {"packages": "apt", "install": true, "units": []},
+    "node-h": {"packages": "apt", "install": true, "units": []},
+    "node-b": {"packages": "apt", "install": true, "units": []},
+    "node-i": {"packages": "apt", "install": true, "units": []},
+    "node-j": {"packages": "apt", "install": true, "units": []},
+    "node-g": {"packages": "dnf", "install": true, "units": []},
+    "node-k": {"packages": "apt", "install": true, "units": []}
+  }
+}

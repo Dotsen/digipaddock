@@ -1,0 +1,14 @@
+[Unit]
+Description=DigiPaddock: the agents' session host socket
+
+[Socket]
+# Only the cabinet's service user reaches it (its group); the host checks the peer's uid again (SO_PEERCRED).
+ListenStream=/run/digipaddock-session-host/host.sock
+SocketUser=root
+SocketGroup=@cabinet@
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=no
+
+[Install]
+WantedBy=sockets.target

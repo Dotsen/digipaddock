@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "name": "factory.request",
+  "module": "factory",
+  "description": "Ask the factory for its catalog's operations on the agent's own card through the base-user executor kd-factory: a schema-2 plan the owner approves, then agent.reinstall or component.install of a catalog component on the factory host under that grant; no command or path travels.",
+  "shell": "none",
+  "dependencies": ["board.read"],
+  "conflicts": [],
+  "resources": [
+    {"name": "factory-catalog", "access": "via-wrapper"},
+    {"name": "board-tasks", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-factory",
+      "source": "common/bin/kd-factory",
+      "subcommands": ["install", "plan", "reinstall", "status"],
+      "approval": "allow",
+      "run_as": "@base@",
+      "executor": "common/bin/kd-factory"
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-factory"]
+  },
+  "lifecycle": {
+    "install": ["wrappers", "channels"],
+    "check": ["wrappers", "channels"],
+    "disable": ["channels"]
+  }
+}

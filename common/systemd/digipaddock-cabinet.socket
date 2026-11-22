@@ -1,0 +1,17 @@
+[Unit]
+Description=DigiPaddock: the owner cabinet's board socket
+
+[Socket]
+# Who may connect is the group (the base user, the exec user, every agent user: cabinet_setup.sh);
+# what a caller may do is decided by the service from its uid (SO_PEERCRED).
+ListenStream=/run/digipaddock-cabinet/local.sock
+# the service tells its two sockets apart by name (the web's is digipaddock-cabinet-http.socket)
+FileDescriptorName=local
+SocketUser=@cabinet@
+SocketGroup=digipaddock-cabinet
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=no
+
+[Install]
+WantedBy=sockets.target

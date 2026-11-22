@@ -1,0 +1,11 @@
+[Unit]
+Description=DigiPaddock: stalls on the board — attention automation, a signal to the coordinator or a notice in the cabinet
+OnFailure=digipaddock-alert@digipaddock-board-watch.service
+# Sync starts watch for each coordinator event. A burst must not trip the default start limit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# As root, read regular board files without following symlinks and write /var/lib/digipaddock/{attention,board}.
+ExecStart=/usr/local/bin/kd-board watch
+TimeoutStartSec=120

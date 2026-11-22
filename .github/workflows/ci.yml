@@ -1,0 +1,46 @@
+# Advisory CI of the public mirror: the checks the forge's devcheck/unit runs, minus the ones that need the
+# factory host itself (pytest marker "host"). The required check stays devcheck/unit in the forge; this one only
+# tells. The checks themselves are one command, scripts/check.py --profile ci: this file only installs
+# what they need. No secrets; every action pinned by its commit.
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+      - name: Python packages
+        # the cabinet's hashed lock in pip calls of its own (requirements-dev.txt says why), as develop_setup.sh
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r common/cabinet/requirements-build.txt
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: --no-binary=http-ece --no-build-isolation -r common/cabinet/requirements.txt
+      - name: Web packages
+        run: npm ci --prefix common/cabinet/web
+      - name: Checks
+        # the same command repeats this job locally (docs/testing.md): privacy scan, static gate, pytest without the
+        # host tests, the overlay from the examples, the cabinet web; on a failure — the command and its log's tail
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # a push is checked from the commit before it (every commit it brought); a new branch or a force-push
+          # whose earlier head is gone — its last commit
+          if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"
+          elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then base="$BEFORE"
+          else base=HEAD~1; fi
+          # scratch under /tmp: under the checkout, pytest's socket paths outgrow AF_UNIX's 108 bytes
+          python scripts/check.py --profile ci --base "$base" --workers 4 --scratch-root /tmp

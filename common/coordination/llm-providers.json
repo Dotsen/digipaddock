@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "providers": {
+    "anthropic": {
+      "title": "Anthropic API",
+      "base_url": "https://api.anthropic.com",
+      "secret": "llm-anthropic",
+      "auth_env": "ANTHROPIC_API_KEY",
+      "env": {},
+      "caching": true,
+      "hint": "Direct Anthropic API billing; use the full Claude model id."
+    },
+    "openai": {
+      "title": "OpenAI API",
+      "base_url": "https://api.openai.com/v1",
+      "secret": "llm-openai",
+      "protocol": "openai-responses",
+      "env": {
+        "ANTHROPIC_API_KEY": ""
+      },
+      "caching": true,
+      "hint": "Direct OpenAI API billing through the local Responses adapter; use an OpenAI model id supporting function calling."
+    },
+    "openrouter": {
+      "title": "OpenRouter",
+      "base_url": "https://openrouter.ai/api",
+      "secret": "llm-openrouter",
+      "env": {
+        "ANTHROPIC_API_KEY": ""
+      },
+      "caching": true,
+      "hint": "the model id as OpenRouter lists it, e.g. anthropic/claude-sonnet-4.5; add [1m] for a 1M context"
+    },
+    "fireworks": {
+      "title": "Fireworks",
+      "base_url": "https://api.fireworks.ai/inference",
+      "secret": "llm-fireworks",
+      "env": {},
+      "caching": false,
+      "hint": "accounts/fireworks/models/<model> or accounts/fireworks/routers/<router>"
+    },
+    "deepseek": {
+      "title": "DeepSeek",
+      "base_url": "https://api.deepseek.com/anthropic",
+      "secret": "llm-deepseek",
+      "env": {},
+      "caching": true,
+      "hint": "e.g. deepseek-chat; add [1m] when the model has a 1M context"
+    },
+    "custom": {
+      "title": "Custom (Anthropic-compatible)",
+      "base_url": "",
+      "secret": "llm-custom",
+      "env": {},
+      "caching": true,
+      "hint": "any Anthropic-compatible endpoint; its base URL is set per model"
+    }
+  }
+}

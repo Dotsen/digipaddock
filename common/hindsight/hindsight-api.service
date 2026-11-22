@@ -1,0 +1,32 @@
+[Unit]
+Description=Hindsight API (память агентов и владельца), 127.0.0.1:9077
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+# 5 crashes in 10 min → failed (the monitor sees it), not an endless crash loop that loads torch every 5 s
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+User=@base@
+WorkingDirectory=/opt/hindsight
+EnvironmentFile=/etc/hindsight/coding-agent.env
+# the host's Claude token for Hindsight's Claude calls; without it, the base user's own login
+EnvironmentFile=-/etc/digipaddock/claude.env
+Environment=PATH=/opt/hindsight/venv/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=4 DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+ExecStart=/opt/hindsight/venv/bin/hindsight-api
+Restart=always
+RestartSec=30
+TimeoutStopSec=30
+LimitNOFILE=65536
+PrivateTmp=yes
+NoNewPrivileges=yes
+RuntimeMaxSec=7d
+CPUWeight=30
+MemoryHigh=3G
+MemoryMax=4G
+MemorySwapMax=0
+OOMScoreAdjust=800
+LogFilterPatterns=~^Database connected:
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+#!/bin/bash
+# kd-merge <project> <N> <sha> [--release] — merge PR учёткой kd-merge и выкатка main на stage (спека §4.4).
+# sha — полный, 40 символов, из kd-forge pr.
+# The owner's consent is the Approve in Forgejo on this sha, checked by the executor and by Forgejo itself; no Claude
+# Code card (KD-194 spec 5.12). The executor runs as the forge user behind the agent's forge channel.
+# Сбой выкатки — владельцу: journalctl -u digipaddock-release на хосте фабрики.
+exec /opt/digipaddock/common/bin/kd-cap run forge /opt/digipaddock/agents/dev/bin/forge_exec.py --agent "${KD_AGENT:-unknown}" merge "$@"

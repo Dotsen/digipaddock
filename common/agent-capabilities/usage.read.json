@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "usage.read",
+  "module": "usage",
+  "description": "Read the per-agent token usage table with kd-usage show; no session transcripts and no sending.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [
+    {"name": "usage-ledger", "access": "read-public"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-usage",
+      "source": "common/bin/kd-usage",
+      "subcommands": ["show"],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": []
+  },
+  "lifecycle": {
+    "install": ["wrappers"],
+    "check": ["wrappers"],
+    "disable": []
+  }
+}

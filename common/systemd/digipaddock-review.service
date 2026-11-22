@@ -1,0 +1,29 @@
+[Unit]
+Description=DigiPaddock: kd-review — Approve in Forgejo after checking the owner's signature
+Requires=digipaddock-review.socket
+After=digipaddock-review.socket network-online.target
+Wants=network-online.target
+OnFailure=digipaddock-alert@digipaddock-review.service
+
+[Service]
+# Its own user and Forgejo token; it checks the owner's passkey signature itself before any Forgejo call. The token
+# and the signers registry are read only; it writes only the spent nonces (used-nonces.json) in its StateDirectory,
+# so a restart approves nothing twice. Started by its socket, one connection at a time.
+User=@review@
+StateDirectory=digipaddock/review
+StateDirectoryMode=0700
+ExecStart=/var/lib/digipaddock/venv/cabinet/bin/python -I /opt/digipaddock/agents/dev/bin/kd-review serve
+Restart=on-failure
+RestartSec=2
+UMask=0077
+Environment=LANG=C.UTF-8 PATH=/usr/bin:/bin
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes

@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""kd-permlog — the PermissionRequest hook (managed-settings): every permission prompt of any agent goes as a JSON line
+into the private audit /var/log/digipaddock-permission/permission.jsonl. Not into the system journal — all agents read
+that through kd-host-read. To look, as root on the factory host: tail /var/log/digipaddock-permission/permission.jsonl.
+
+The hook runs as the agent's user and does not write into the closed file itself: the executor of the base channel
+receives the event without reading it (the same file under the base user through kd-cap run base; the file 0600, the
+directory 0700). The channel names the agent (KD_AGENT), not the event; at most RATE records a minute per agent. The
+hook decides nothing: always code 0 and an empty output; the channel did not answer — one line on stderr, no event.
+Secrets (Bearer/Basic, TOKEN=, password=, in a URL, PEM) are redacted before the write.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+AUDIT = "/var/log/digipaddock-permission/permission.jsonl"
+EXECUTOR = "/opt/digipaddock/common/bin/kd-permlog"
+CLIENT = "/opt/digipaddock/common/bin/kd-cap"
+RATE = 120  # records a minute per agent; the first one over the limit leaves a single marker
+CHANNEL_TIMEOUT = 4  # the hook's own timeout is 5 s
+LIMIT = 2000
+SCAN = 1 << 20  # redaction scans at most 1 MiB; the logged line is cut to LIMIT afterwards anyway
+
+# Secret patterns follow the sysadmin gate redactor (agents/sysadmin/gate/agent_ro_gate.py), as text.
+MASK = "***"
+PEM_RE = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\Z)", re.S)
+URL_CREDS_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]{0,31}://)[^\s/@:'\"]*:[^\s/@'\"]*@")
+BEARER_RE = re.compile(r"(\bbearer[ \t]+)[A-Za-z0-9._~+/=-]{8,}", re.I)
+BASIC_RE = re.compile(r"(\bauthorization[\"']?[ \t]*[:=][ \t]*[\"']?basic[ \t]+)[A-Za-z0-9._~+/=-]+", re.I)
+CURL_USER_RE = re.compile(r"((?:^|[ \t])(?:-u|--user)(?:[ \t]+|=)['\"]?[^\s:'\"]+:)[^\s'\"]+")
+TELEGRAM_RE = re.compile(r"(?<![0-9])\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])")
+MYSQL_LINE_RE = re.compile(r"^[^\n]*\bmysql(?:dump|admin)?\b[^\n]*$", re.M)
+MYSQL_P_RE = re.compile(r"([ \t]-p)[^\s'\"-][^\s'\"]*")
+EDGE_END_RE = re.compile(r"://[^\s/@'\"]*\Z")
+_SECRET_NAMES = (
+    r"client_secret|aws_secret_access_key|secret_key|access_token|auth_token|refresh_token|api[_-]?key|"
+    r"private_?key|presharedkey|signature|password|passwd|secret|token|pass|pwd|sig|key"
+)
+KV_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?P<name>" + _SECRET_NAMES + r")(?P<q1>[\"']?)(?P<sep>[ \t]*(?:=>|=|:)[ \t]*)"
+    r"(?:(?P<q>[\"'])(?!\*\*\*|-----BEGIN)(?P<qv>[^\n]*?)(?P<end>(?P=q)|$)"
+    r"|(?!\*\*\*|-----BEGIN)(?P<uv>[^&\s'\",;}\x00]+))",
+    re.I | re.M)
+
+
+def redact(text):
+    """Text with secrets masked; an unterminated secret at the cut edge is masked too."""
+    def key_value(match):
+        whole = match.group(0)
+        if match.group("name").lower() == "key" and ":" in match.group("sep") and not match.group("q1"):
+            return whole  # "public key: …" is not a secret; a bare key is masked only with "=" or in quotes
+        if match.group("q"):
+            if not match.group("qv"):
+                return whole
+            return whole[:match.start("q") - match.start()] + match.group("q") + MASK + match.group("end")
+        return whole[:match.start("uv") - match.start()] + MASK
+
+    text = text[:SCAN]
+    text = PEM_RE.sub("-----BEGIN PRIVATE KEY-----***-----END PRIVATE KEY-----", text)
+    text = EDGE_END_RE.sub("://***", text)
+    text = URL_CREDS_RE.sub(r"\1***:***@", text)
+    text = BEARER_RE.sub(r"\1***", text)
+    text = BASIC_RE.sub(r"\1***", text)
+    text = CURL_USER_RE.sub(r"\1***", text)
+    text = TELEGRAM_RE.sub(MASK, text)
+    text = MYSQL_LINE_RE.sub(lambda m: MYSQL_P_RE.sub(r"\1***", m.group(0)), text)
+    return KV_RE.sub(key_value, text)
+
+
+def record(event, env):
+    inp = event.get("tool_input")
+    if isinstance(inp, dict):
+        what = inp.get("command") or inp.get("file_path") or inp.get("path") or json.dumps(inp, ensure_ascii=False)
+        desc = inp.get("description", "")
+    else:
+        what, desc = inp, ""
+    return {"agent": env["KD_AGENT"], "tool": str(event.get("tool_name", "")), "input": redact(str(what or ""))[:LIMIT],
+            "description": redact(str(desc or ""))[:200], "session": str(event.get("session_id", ""))[:64]}
+
+
+def _within_rate(agent, audit, now):
+    """True while the agent has records left this minute; the first refusal of a minute returns None (the marker)."""
+    path = os.path.join(os.path.dirname(audit), f".rate-{agent}")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "r+", encoding="utf-8") as f:
+        try:
+            import fcntl  # Linux only: on Windows the tests run without the lock
+
+            fcntl.flock(f, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        try:
+            minute, count = json.loads(f.read() or "[0, 0]")
+        except ValueError:
+            minute, count = 0, 0
+        this = int(now() // 60)
+        count = count + 1 if minute == this else 1
+        f.seek(0)
+        f.truncate()
+        f.write(json.dumps([this, count]))
+    if count <= RATE:
+        return True
+    return None if count == RATE + 1 else False
+
+
+def to_file(line, agent, audit=AUDIT, now=time.time):
+    allowed = _within_rate(agent, audit, now)
+    if allowed is False:
+        return
+    if allowed is None:
+        line = json.dumps({"agent": agent, "limit": f"over {RATE} a minute"}, ensure_ascii=False)
+    fd = os.open(audit, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def main(stdin=None, env=None, log=None):
+    """The executor's side: one record of the event on stdin for the channel's agent."""
+    env = os.environ if env is None else env
+    agent = env.get("KD_AGENT", "")
+    try:
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", agent):
+            return 0
+        log = log or (lambda line: to_file(line, agent))
+        raw = (sys.stdin if stdin is None else stdin).read(SCAN + 1)
+        if len(raw) > SCAN:
+            event = None
+            log(json.dumps({"agent": agent, "tool": "?", "input": "(event over 1 MiB)", "description": "",
+                            "session": ""}, ensure_ascii=False))
+        else:
+            event = json.loads(raw)
+        if isinstance(event, dict):
+            log(json.dumps(record(event, {"KD_AGENT": agent}), ensure_ascii=False))
+    except ValueError:  # not an event: nothing to record
+        pass
+    except Exception:  # noqa: BLE001 — the record is lost: code 1, the hook says so in one line
+        return 1
+    return 0
+
+
+def hook(run=subprocess.run, stderr=None):
+    """The agent's side: the event, unread, to the base channel's executor; never blocks the card."""
+    stderr = sys.stderr if stderr is None else stderr
+    try:
+        done = run([CLIENT, "run", "base", EXECUTOR], stdin=None, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, timeout=CHANNEL_TIMEOUT)
+        ok = done.returncode == 0
+    except Exception:  # noqa: BLE001 — no channel, no client, a timeout: the card goes on
+        ok = False
+    if not ok:
+        stderr.write("kd-permlog: audit channel unavailable\n")
+    return 0
+
+
+if __name__ == "__main__":
+    import pwd
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+    from kd import naming
+
+    if os.geteuid() == pwd.getpwnam(naming.base_user()).pw_uid:
+        sys.exit(main())
+    sys.exit(hook())

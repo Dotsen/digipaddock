@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "projects": ["digipaddock", "digipaddock-deploy"],
+  "requesters": ["dev"],
+  "operations": {
+    "agent.reinstall": {"target": "factory"},
+    "component.install": {
+      "target": "factory",
+      "components": {
+        "repo-attach": {
+          "install": {"run": ["agents/dev/install/repo_attach_setup.sh", "install"],
+                      "check": ["agents/dev/install/repo_attach_setup.sh", "check"]},
+          "check": {"run": ["agents/dev/install/repo_attach_setup.sh", "check"]}
+        },
+        "transcribe": {
+          "install": {"run": ["common/install/transcribe_setup.sh", "install"],
+                      "check": ["common/install/transcribe_setup.sh", "check"]},
+          "check": {"run": ["common/install/transcribe_setup.sh", "check"]}
+        },
+        "e2e-runtime": {
+          "install": {"run": ["common/install/e2e_runtime_setup.sh", "install"],
+                      "check": ["common/install/e2e_runtime_setup.sh", "check"]},
+          "check": {"run": ["common/install/e2e_runtime_setup.sh", "check"]}
+        },
+        "devcheck": {
+          "install": {"run": ["common/install/devcheck_setup.sh", "install"],
+                      "check": ["common/install/devcheck_setup.sh", "check"]},
+          "check": {"run": ["common/install/devcheck_setup.sh", "check"]}
+        },
+        "session-host": {
+          "check": {"run": ["common/install/session_host_setup.sh", "check"]},
+          "restart": {"run": ["systemctl", "restart", "digipaddock-session-host.service"],
+                      "check": ["common/install/session_host_setup.sh", "check"], "drain": "all"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+[Unit]
+Description=DigiPaddock: board — a backup of the path unit and the docs/decisions commit (every 10 min)
+
+[Timer]
+OnCalendar=*:0/10
+RandomizedDelaySec=20
+
+[Install]
+WantedBy=timers.target

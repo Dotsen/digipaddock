@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "name": "developer-v1",
+  "description": "Fail-closed sandbox for a developer: network only to the pinned Forgejo host, Unix sockets only to its own channels, no local binding, writes only in its working directory; the board and forge tools reach their channels, nothing is excluded from the sandbox.",
+  "settings": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": false,
+    "allowUnsandboxedCommands": false,
+    "enableWeakerNestedSandbox": false,
+    "enableWeakerNetworkIsolation": false,
+    "credentials": {"envVars": [{"name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny"}, {"name": "ANTHROPIC_AUTH_TOKEN", "mode": "deny"}, {"name": "ANTHROPIC_API_KEY", "mode": "deny"}]},
+    "network": {
+      "strictAllowlist": true,
+      "allowUnixSockets": [],
+      "allowAllUnixSockets": false,
+      "allowLocalBinding": false
+    }
+  },
+  "ceiling": {
+    "network_domains": ["@host:forge_host@"],
+    "channel_commands": ["kd-data", "kd-diag", "kd-e2e", "kd-factory", "kd-forge", "kd-host-read", "kd-merge", "kd-mirror-fetch", "kd-notes", "kd-task", "kd-work"],
+    "writable": ["work"]
+  }
+}

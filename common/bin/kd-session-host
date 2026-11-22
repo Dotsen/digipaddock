@@ -1,0 +1,164 @@
+#!/usr/bin/python3 -I
+"""kd-session-host — the agents' Claude Code sessions for the owner cabinet.
+
+``serve`` runs the host (digipaddock-session-host.service, as root, with the socket systemd passes): requests come from
+the cabinet's service user only; each session runs under its agent's own user through ``systemd-run --pipe``.
+The agents it runs and their slots are ``/etc/digipaddock/session-host.json`` (``kd.session_config``); the
+worker jobs it runs take the enabled worker slots of worker-slots.json (``kd.worker_slots``).
+``status`` (root) prints the sessions, the jobs, the slots and the paused roles; ``resume <agent>`` (root) lifts
+a role's pause a factory operation left (a failed reinstall keeps it) — never one an operation under way
+holds.
+
+Exit codes: 0 done, 1 error, 2 refused.
+"""
+
+import asyncio
+import json
+import os
+import re
+import socket
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import agents, naming, session_config, worker_slots  # noqa: E402
+from kd.cabinet import client as cabinet_client  # noqa: E402
+from kd.session_host import claude, server  # noqa: E402
+
+USAGE = "usage: kd-session-host serve | status | resume <agent>"
+AGENT = re.compile(r"[a-z][a-z0-9-]{0,31}")
+FD_START = 3  # SD_LISTEN_FDS_START
+
+
+def listen_socket():
+    """The socket systemd passed (socket activation), or None."""
+    if os.environ.get("LISTEN_PID") != str(os.getpid()) or os.environ.get("LISTEN_FDS") != "1":
+        return None
+    return socket.socket(fileno=FD_START)
+
+
+def agent_user(agent: str) -> str:
+    """The agent's own user: a hosted agent never runs as the base user."""
+    user = agents.user_of(agent)
+    if user == agents.DEFAULT_USER:
+        raise ValueError(f"{agent} has no user of its own")
+    return user
+
+
+def job_slots(agent: str) -> list:
+    """The agent's enabled worker slots, read at each use (worker_slots.sh --install|--disable changes them); a
+    pool that does not load has none."""
+    try:
+        config = worker_slots.load_config()
+        return [slot.ref for slot in worker_slots.enabled(config) if slot.agent == agent]
+    except (worker_slots.SlotError, OSError, ValueError) as exc:
+        print(f"kd-session-host: worker slots: {exc}", file=sys.stderr)
+        return []
+
+
+def pin_release() -> None:
+    """The release directory this host loaded its code from is pinned: release_switch.sh keeps it,
+    kd-release restarts the host when its code changed. A pin that cannot be written is said, the host serves."""
+    from pathlib import Path
+
+    from kd import release_reinstall
+
+    try:
+        release_reinstall.pin_host(Path(COMMON).parent)
+    except OSError as exc:
+        print(f"kd-session-host: release not pinned: {exc}", file=sys.stderr)
+
+
+async def cleanup():
+    """Session units a former host left behind (its clients died with it) are stopped before the first report:
+    the sessions' slice, never a glob of the session units' prefix (it names this host's own unit too)."""
+    proc = await asyncio.create_subprocess_exec(
+        *claude.CLEANUP, stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+
+def serve() -> int:
+    import pwd
+
+    if os.geteuid() != 0:
+        print("kd-session-host: serve runs as root", file=sys.stderr)
+        return 2
+    cabinet_uid = pwd.getpwnam(naming.service_user("cabinet")).pw_uid
+    pin_release()
+    asyncio.run(
+        server.serve(
+            config=session_config.Cached(),
+            users=agent_user,
+            cabinet=cabinet_client.Client(),
+            allowed_uid=cabinet_uid,
+            sock=listen_socket(),
+            cleanup=cleanup,
+            job_slots=job_slots,
+        )
+    )
+    return 0
+
+
+def ask(request: dict, path=None):
+    """One request to the host's socket; None (said on stderr) when it does not answer."""
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        conn.settimeout(10)
+        conn.connect(path or server.SOCKET)
+        conn.sendall(json.dumps(request).encode("utf-8") + b"\n")
+        return json.loads(conn.makefile("rb").readline().decode("utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"kd-session-host: the host does not answer ({exc.__class__.__name__})", file=sys.stderr)
+        return None
+    finally:
+        conn.close()
+
+
+def _refused(answer) -> int:
+    if answer is None:
+        return 1
+    print(f"kd-session-host: {answer.get('error')}: {answer.get('message')}", file=sys.stderr)
+    return 2
+
+
+def resume(agent: str, out=sys.stdout) -> int:
+    answer = ask({"op": "resume", "agent": agent})
+    if not answer or not answer.get("ok"):
+        return _refused(answer)
+    out.write(f"{agent}: {'resumed' if answer.get('resumed') else 'was not paused'}\n")
+    return 0
+
+
+def status(path=None, out=sys.stdout) -> int:
+    answer = ask({"op": "status"}, path)
+    if not answer or not answer.get("ok"):
+        return _refused(answer)
+    for agent, slots in sorted(answer["slots"].items()):
+        out.write(f"{agent}: {slots['used']}/{slots['max']} slots, {slots['waiting']} waiting\n")
+    for s in answer["sessions"]:
+        out.write(f"  {s['session']} {s['agent']} {s['state']} {s['slot'] or '-'} inputs={s['queued_inputs']}\n")
+    for agent, slots in sorted(answer.get("worker_slots", {}).items()):
+        out.write(f"{agent} workers: {slots['used']}/{slots['max']} slots, {slots['waiting']} waiting\n")
+    for j in answer.get("jobs", []):
+        out.write(f"  job {j['job']} {j['agent']} {j['state']} {j['slot'] or '-'}\n")
+    for agent, operation_id in sorted(answer.get("paused", {}).items()):
+        out.write(f"{agent}: paused by operation {operation_id}\n")
+    return 0
+
+
+def main(argv) -> int:
+    if argv == ["serve"]:
+        return serve()
+    if argv == ["status"]:
+        return status()
+    if len(argv) == 2 and argv[0] == "resume" and AGENT.fullmatch(argv[1]):
+        return resume(argv[1])
+    print(USAGE, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

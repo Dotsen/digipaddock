@@ -1,0 +1,14 @@
+[Unit]
+Description=DigiPaddock: the kd-review socket — PR approval by the owner's signature in the cabinet
+
+[Socket]
+# Only the cabinet's service user reaches it (its group); kd-review checks the peer's uid again (SO_PEERCRED).
+ListenStream=/run/digipaddock-review/review.sock
+SocketUser=root
+SocketGroup=@cabinet@
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=no
+
+[Install]
+WantedBy=sockets.target

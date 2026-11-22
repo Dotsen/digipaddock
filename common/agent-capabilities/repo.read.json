@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "repo.read",
+  "module": "repo",
+  "description": "Read-only checkouts of the registered repositories (resource repo-checkouts), refreshed by kd-repo-sync under the repo service user; the agent reads files with its tools by grant and history through kd-repo (list, log, show, diff, blame). No network, no Forgejo key, no write.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [
+    {"name": "repo-checkouts", "access": "read-grant"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-repo",
+      "source": "common/bin/kd-repo",
+      "subcommands": ["list", "log", "show", "diff", "blame"],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    }
+  ],
+  "validator": null,
+  "setup": "common/install/repo_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": []
+  },
+  "lifecycle": {
+    "install": ["setup", "wrappers", "read-grants"],
+    "check": ["setup", "wrappers", "read-grants"],
+    "disable": ["read-grants", "setup"]
+  }
+}

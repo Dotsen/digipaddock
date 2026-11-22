@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "name": "coordinator",
+  "defaults": {
+    "role": "Coordinator of the agent team: routes cards, watches stalls and disputes, and escalates to the owner; never does the work itself."
+  },
+  "capability_ceiling": ["agent.nudge", "board.coordinate", "board.read", "data.read", "host.read", "monitor.read", "net.egress", "usage.read", "worker.request"],
+  "sandbox_profiles": ["coordinator-v1"]
+}

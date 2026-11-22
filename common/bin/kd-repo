@@ -1,0 +1,11 @@
+#!/usr/bin/python3 -I
+"""kd-repo — read-only git over the repo.read checkouts; see kd/repo_read.py."""
+import os
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import repo_read  # noqa: E402
+
+sys.exit(repo_read.main())

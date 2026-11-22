@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "name": "boss",
+  "model": "sonnet",
+  "profile": "coordinator",
+  "capabilities": ["agent.nudge", "board.coordinate", "board.read", "data.read", "host.read", "monitor.read", "net.egress", "usage.read", "worker.request"],
+  "runtime": {"sandbox_profile": "coordinator-v1", "working_directory": "work"}
+}

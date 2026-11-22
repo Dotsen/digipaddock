@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "monitor.manage",
+  "module": "servers",
+  "description": "Work the sysadmin monitor through kd-monitor: list, find SSH keys across servers, acknowledge, mark fixed; accept, revoke, baseline and trust only propose a monitor_trust decision the owner signs (the monitor applies it); tick stays with its timer, which wakes the agent through a cabinet command.",
+  "shell": "none",
+  "dependencies": ["servers.read"],
+  "conflicts": ["board.coordinate", "forge.review", "git.develop", "worker.request"],
+  "resources": [
+    {"name": "monitor-state", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-monitor",
+      "source": "agents/sysadmin/bin/kd-monitor",
+      "subcommands": ["list", "keys", "ack", "accept", "revoke", "fixed", "baseline", "trust", "--help", "tick --help"],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    }
+  ],
+  "validator": "agents/sysadmin/sysadmin/guard.py",
+  "setup": "agents/sysadmin/install/monitor_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-monitor"]
+  },
+  "lifecycle": {
+    "install": ["setup", "wrappers", "channels"],
+    "check": ["setup", "wrappers", "channels"],
+    "disable": ["channels", "setup"]
+  }
+}

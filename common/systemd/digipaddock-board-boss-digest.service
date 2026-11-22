@@ -1,0 +1,8 @@
+[Unit]
+Description=DigiPaddock: a signal to the coordinator to prepare the morning report
+OnFailure=digipaddock-alert@digipaddock-board-boss-digest.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kd-board digest-signal
+TimeoutStartSec=60

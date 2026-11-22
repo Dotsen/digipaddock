@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "kinds": {
+    "server_read": {
+      "roles": ["sysadmin"],
+      "description": "Read a fact on a managed server with the sysadmin's reading tools (ssh-ro and its read-only commands). No change, no plan, no shell beyond the read-only gate."
+    },
+    "platform_read": {
+      "roles": ["sysadmin"],
+      "description": "The monitor's state or a diagnostic from host logs the lead's own kd-host-read leaves out, read with the sysadmin's tools. The answer is a conclusion or the permitted output: no private audit records, no owner login or command history, no signatures. No change, no installation."
+    },
+    "code_read": {
+      "roles": ["dev", "analyst"],
+      "description": "Read the code, history or docs of a project from the read-only repository copies. No commit, no PR."
+    },
+    "server_change": {
+      "roles": ["sysadmin"],
+      "description": "Prepare and carry out the server steps of the lead's approved card: the helper opens its own admin card with a plan made from the lead's rollout sheet. A plan made only of the catalog's steps of a test environment is approved by the cabinet's rule and runs at once — the answer says what each step showed; any other plan waits for the owner's signature, and the answer names the helper's card."
+    }
+  }
+}

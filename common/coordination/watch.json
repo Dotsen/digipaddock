@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "utcOffsetMinutes": 180,
+  "clockSkewSeconds": 300,
+  "trustedWorkers": ["@dev", "@sysadmin", "@analyst"],
+  "rules": {
+    "blocked": {"enabled": true},
+    "dependency_done": {"enabled": true},
+    "in_progress_idle": {"enabled": true, "afterHours": 24, "escalateAfterHours": 12},
+    "review_waiting": {"enabled": true, "afterHours": 24},
+    "inbox_waiting": {"enabled": true, "afterHours": 24},
+    "due_tomorrow": {"enabled": true},
+    "due_today": {"enabled": true},
+    "overdue": {"enabled": true},
+    "route_mismatch": {"enabled": true, "statuses": ["To Do"]},
+    "coordinator_assigned": {"enabled": true},
+    "spec_mismatch": {"enabled": true},
+    "brief_ready": {"enabled": true},
+    "inbox_unassigned": {"enabled": true}
+  }
+}

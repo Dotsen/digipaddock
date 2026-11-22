@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "projects": {
+    "digipaddock": {
+      "name": "DigiPaddock",
+      "route": "@dev",
+      "done_by": "dev",
+      "memory_bank": "",
+      "repo": {
+        "repo": "example-owner/digipaddock",
+        "dir": "work/DigiPaddock",
+        "release": "digipaddock",
+        "checks": {"contour": "digipaddock-ci", "profiles": {"unit": {"required": true}}}
+      }
+    },
+    "digipaddock-deploy": {
+      "name": "DigiPaddock deployment",
+      "route": "@dev",
+      "done_by": "dev",
+      "memory_bank": "",
+      "repo": {
+        "repo": "example-owner/digipaddock-deploy",
+        "dir": "work/digipaddock-deploy",
+        "release": "digipaddock",
+        "role": "overlay"
+      }
+    },
+    "admin": {
+      "name": "Servers",
+      "route": "@sysadmin",
+      "done_by": "sysadmin",
+      "memory_bank": ""
+    }
+  }
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=DigiPaddock: board — waking the assignee by a cabinet command
+
+OnFailure=digipaddock-alert@digipaddock-board-sync.service
+# The path unit starts this service on every file change. The default limit of five starts in ten seconds
+# would leave the path unit in the failed state.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# As root, read cabinet events when /run/digipaddock-cabinet/changed is touched.
+ExecStart=/usr/local/bin/kd-board sync
+TimeoutStartSec=120

@@ -1,0 +1,49 @@
+#!/usr/bin/python3 -I
+"""kd-data — one read-only SQL statement on a product database for an agent; see ``kd.data_read``.
+
+    kd-data <database> "<SQL>"
+
+Runs as the data user (``naming.service_user("data")``), the one holder of the data key: another caller re-executes
+itself through its ``data`` capability channel, ``kd-cap run data`` with this exact path. The channel names the
+agent (``KD_AGENT``); the caller's environment and cwd are not used.
+"""
+
+import os
+import sys
+
+try:
+    import pwd
+except ImportError:  # Windows: tests only
+    pwd = None
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import cap_client, naming  # noqa: E402
+
+EXECUTOR = "/opt/digipaddock/common/bin/kd-data"
+
+
+def reexec_argv(argv):
+    """The same call through the data channel: its service runs as the data user."""
+    return [cap_client.CLIENT, "run", "data", EXECUTOR, *argv]
+
+
+if __name__ == "__main__":
+    try:
+        reader = pwd.getpwnam(naming.service_user("data"))
+    except KeyError:
+        sys.stderr.write(
+            "kd-data: no data user on this host: data.read is not installed\n"
+        )
+        sys.exit(3)
+    if os.geteuid() != reader.pw_uid:
+        os.execv(cap_client.CLIENT, reexec_argv(sys.argv[1:]))
+    from kd import data_read  # noqa: E402 — only the data user reaches the server
+
+    agent = os.environ.get("KD_AGENT", "")
+    os.environ.clear()
+    os.environ.update({"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
+    os.chdir("/")
+    os.umask(0o027)
+    sys.exit(data_read.main(sys.argv[1:], agent=agent, home=reader.pw_dir))

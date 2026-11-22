@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "naming": {"prefix": "digi", "commands": "kd", "cards": "KD"},
+  "roles": {
+    "analyst": {"slots": 1},
+    "boss": {"slots": 1},
+    "dev": {"slots": 2},
+    "sysadmin": {"slots": 1}
+  },
+  "components": ["review", "repo-attach", "transcribe", "e2e-runtime", "devcheck", "mirror", "worker-slots"],
+  "pipeline": "enforce",
+  "hindsight": true,
+  "behind_nat": false
+}

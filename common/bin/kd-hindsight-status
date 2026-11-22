@@ -1,0 +1,10 @@
+#!/usr/bin/python3 -I
+"""Read-only Hindsight snapshot, run by digipaddock-hindsight-status.timer."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from kd.hindsight_status import main
+
+if __name__ == '__main__':
+    main()

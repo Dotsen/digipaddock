@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "servers.read",
+  "module": "servers",
+  "description": "Read-only commands on enabled servers through ssh-ro and the remote agent-ro gate.",
+  "shell": "sandboxed",
+  "dependencies": [],
+  "conflicts": ["board.coordinate", "forge.review", "git.develop", "worker.request"],
+  "resources": [
+    {"name": "server-inventory", "access": "via-wrapper"},
+    {"name": "servers-enabled", "access": "via-wrapper"},
+    {"name": "server-ro-key", "access": "own-file"}
+  ],
+  "wrappers": [
+    {
+      "command": "ssh-ro",
+      "source": "agents/sysadmin/bin/ssh_ro.py",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    }
+  ],
+  "validator": "agents/sysadmin/sysadmin/guard.py",
+  "setup": "agents/sysadmin/install/servers_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["ssh-ro"]
+  },
+  "lifecycle": {
+    "install": ["setup", "wrappers", "channels"],
+    "check": ["setup", "wrappers", "channels"],
+    "disable": ["channels", "setup"]
+  }
+}

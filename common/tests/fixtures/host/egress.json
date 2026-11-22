@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "exits": {
+    "probe": {
+      "port": 3140,
+      "upstream": "127.0.0.1:1080",
+      "domains": ["api.example.test", "example.test"],
+      "agents": ["dev"],
+      "max_clients": 8,
+      "timeout": 60
+    }
+  },
+  "projects": {"shop": "probe"}
+}

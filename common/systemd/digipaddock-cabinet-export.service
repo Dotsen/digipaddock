@@ -1,0 +1,11 @@
+[Unit]
+Description=DigiPaddock: nightly board snapshot — the cabinet into Backlog.md files and git
+Wants=digipaddock-cabinet.socket
+After=digipaddock-cabinet.socket
+OnFailure=digipaddock-alert@digipaddock-cabinet-export.service
+
+[Service]
+Type=oneshot
+# root: reads every card through the socket and writes the snapshot and its .git in the board directory
+ExecStart=/opt/digipaddock/common/bin/kd-cabinet export /srv/digipaddock-agents/board
+TimeoutStartSec=600

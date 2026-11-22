@@ -1,0 +1,278 @@
+#!/usr/bin/python3 -I
+"""kd-worker — the coordinator's only way to worker jobs (BOSS spec 5.7, 5.8.6, C04).
+
+  kd-worker request --card KD-n --spec <name> [--skill <skill>]... --brief <text>
+  kd-worker status --job <id>
+  kd-worker result --job <id>
+  kd-worker cancel --job <id> --reason <text>
+
+Runs as the base user, a board executor of the cabinet: the cabinet keeps the jobs (``job.submit``,
+``job.view``, ``job.cancel``), hands each to the session host, which runs it in a free worker slot of
+its agent (a job waits for one), and records its end — the card's comment as the agent, the usage, and
+the requester woken in the card's thread. Another caller reaches it through its capability channel
+(C07 grants the coordinator ``worker.request``); the channel tells who called — ``KD_AGENT`` is the
+channel's agent and ``KD_CALLER_USER`` the peer's Unix user (SO_PEERCRED) — and nothing the caller
+passes names the requester. Only the requester of worker-slots.json, by the user the agent registry
+gives it, and the base user itself may call; status, result and cancel see only the caller's own jobs.
+No option takes a command, path, model, prompt, settings, agent or limit: the card names the agent, its
+manifest names the type, the registry of that type names the specialization, its limits and the
+skills; the slot pool names the limits and the model.
+
+A request is refused unless the agent has an enabled slot (the installer enables a pool only with the
+agent's Claude Code login in place; the root runner checks it again before the session), the card has
+exactly one assignee with registered slots, the type's precondition holds (developer: owner-approved
+card of a registered repository; analyst: any open card, no effects) and the specialization and skills
+fit the registry. Cancel of a queued job is immediate; of a running one it asks the host to stop it
+(``cancelling`` until the host reports the end).
+
+Exit codes: 0 done, 1 error, 2 refused, 3 the card already has an active writer, 5 rate or retry limit.
+"""
+
+import argparse
+import json
+import os
+import sys
+
+try:
+    import pwd
+except ImportError:  # Windows: tests only
+    pwd = None
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import admin_task, agents, atomic_file, cap_client, manifest, naming  # noqa: E402
+from kd import worker_jobs, worker_packs, worker_result, worker_slots  # noqa: E402
+from kd.cabinet import client as cabinet_client  # noqa: E402
+from kd.worker_jobs import EXIT_CONFLICT, EXIT_ERROR, EXIT_RATE, EXIT_REFUSED, JobError, clean  # noqa: E402
+
+EXECUTOR = "/opt/digipaddock/common/bin/kd-worker"
+MANIFESTS = os.path.join(os.path.dirname(COMMON), "agents")
+RECORD_LIMIT = 256 * 1024
+# The cabinet's refusals: a second writer on the card, a daily limit; a bad request or an unknown job is refused.
+CABINET_CODES = {"conflict": EXIT_CONFLICT, "rate": EXIT_RATE, "invalid": EXIT_REFUSED, "not_found": EXIT_REFUSED,
+                 "forbidden": EXIT_REFUSED}
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise JobError(EXIT_REFUSED, f"usage: {message}")
+
+
+def parse(argv):
+    parser = Parser(prog="kd-worker", allow_abbrev=False, add_help=False)
+    ops = parser.add_subparsers(dest="op", required=True, parser_class=Parser)
+    request = ops.add_parser("request", allow_abbrev=False, add_help=False)
+    for name in ("--card", "--spec", "--brief"):
+        request.add_argument(name, required=True)
+    request.add_argument("--skill", action="append", default=[])
+    for name in ("status", "result"):
+        ops.add_parser(name, allow_abbrev=False, add_help=False).add_argument("--job", required=True)
+    cancel = ops.add_parser("cancel", allow_abbrev=False, add_help=False)
+    cancel.add_argument("--job", required=True)
+    cancel.add_argument("--reason", required=True)
+    return parser.parse_args(argv)
+
+
+def cabinet(client, request):
+    """One call of the cabinet; its refusal is the job's exit code."""
+    try:
+        return client.call(request)
+    except cabinet_client.CabinetError as exc:
+        raise JobError(CABINET_CODES.get(exc.kind, EXIT_ERROR), clean(exc, 500)) from exc
+
+
+def authorize(caller, config, registry_path):
+    """The owner (no channel), or the requester by the user the registry names; never a default user."""
+    if caller is None:
+        return worker_jobs.OWNER_CALLER
+    agent, user = caller
+    try:
+        entry = agents._load(registry_path).get(config.requester)
+    except ValueError as exc:
+        raise JobError(EXIT_ERROR, "agent registry is not readable") from exc
+    if (
+        agent != config.requester
+        or not isinstance(entry, dict)
+        or not isinstance(user, str)
+        or not user
+        or entry.get("user") != user
+    ):
+        raise JobError(EXIT_REFUSED, "only the coordinator may use kd-worker")
+    return user
+
+
+def load_card(client, task_id):
+    try:
+        return cabinet_client.admin_card(client, task_id)
+    except admin_task.CardError as exc:
+        raise JobError(EXIT_REFUSED, clean(exc)) from exc
+
+
+def agent_types(manifests_root, names):
+    """Agent -> profile from the deployed manifests; a manifest that does not load is an error."""
+    types = {}
+    for name in names:
+        try:
+            types[name] = manifest.load_manifest(os.path.join(manifests_root, name, "agent.json")).profile
+        except (manifest.ManifestError, OSError, ValueError) as exc:
+            raise JobError(EXIT_ERROR, f"the manifest of {name} is unreadable ({exc.__class__.__name__})") from exc
+    return types
+
+
+def request(args, config, *, caller, requester, enabled_path, repos_path, client, packs_root, manifests_root,
+            require_root_owner, out):
+    wanted = worker_jobs.Request(args.card, args.spec, tuple(args.skill), args.brief)
+    card = load_card(client, args.card)
+    try:
+        registry = worker_packs.load_packs(packs_root, require_root_owner=require_root_owner)
+    except worker_packs.PackError as exc:
+        raise JobError(EXIT_ERROR, f"specialization registry: {clean(exc)}") from exc
+    admission = worker_jobs.admit(
+        wanted, card,
+        repos=worker_jobs.registered_repos(repos_path),
+        registry=registry,
+        config=config,
+        types=agent_types(manifests_root, config.agents),
+    )
+    if not any(s.agent == admission.agent for s in worker_slots.enabled(config, enabled_path)):
+        raise JobError(EXIT_REFUSED, f"no enabled worker slots for {admission.agent}")
+    job = worker_jobs.definition(wanted, admission, job_id=worker_jobs.new_job_id(), caller=caller,
+                                 requester=requester, config=config)
+    limits = {"jobs_per_day": config.jobs_per_day, "attempts_per_card_spec": config.attempts_per_card_spec}
+    queued = cabinet(client, {"op": "job.submit", "job": job, "limits": limits})["job"]
+    out.write(f"ok job {queued['id']} card {queued['card']} agent @{queued['agent']} spec {queued['spec']}"
+              f" state {queued['state']}\n")
+    return 0
+
+
+def render(job, op, record=None):
+    lines = [
+        f"{job['id']} {job['state']} card {job['card']} agent @{job['agent']} spec {job['spec']}"
+        f" skills {','.join(job['skills']) or '-'} write {job['write']}"
+        f" slot {job['slot'] or '-'} updated {job['updated']}"
+    ]
+    if job["reason"]:
+        lines.append(f"reason: {clean(job['reason'], 500)}")
+    if op == "result":
+        if record is not None:
+            lines.append("summary: " + worker_result.summary(record))
+        result = job["result"]
+        text = "none" if result is None else json.dumps(result, ensure_ascii=False, sort_keys=True)
+        lines.append("result: " + clean(text, 4000))
+    return "\n".join(lines) + "\n"
+
+
+def load_record(results_root, job_id):
+    """The runner's result record of the job, or None when there is none (yet)."""
+    try:
+        data = atomic_file.read(os.path.join(results_root, f"{job_id}.json"), RECORD_LIMIT)
+        record = json.loads(data) if data else None
+    except (OSError, ValueError):
+        return None
+    usage = record.get("usage") if isinstance(record, dict) else None
+    if (
+        not isinstance(record, dict)
+        or record.get("schema_version") != worker_result.RESULT_SCHEMA
+        or record.get("job") != job_id
+        or not isinstance(record.get("provenance"), dict)
+        or not isinstance(usage, dict)
+        or not isinstance(usage.get("model"), str)
+        or isinstance(usage.get("cost_usd"), bool)
+        or not isinstance(usage.get("cost_usd"), (int, float))
+    ):
+        return None
+    return record
+
+
+def cancel(args, *, user, client, out):
+    answer = cabinet(client, {"op": "job.cancel", "job": args.job, "caller": user, "reason": args.reason})
+    state, previous = answer["state"], answer["previous"]
+    if previous == "cancelled":
+        out.write(f"ok {args.job} already cancelled\n")
+    elif previous in ("done", "failed", "no-result"):
+        raise JobError(EXIT_REFUSED, f"job is already {previous}; nothing to cancel")
+    elif state == "cancelled":
+        out.write(f"ok {args.job} cancelled\n")
+    else:
+        out.write(f"ok {args.job} cancelling: the session host stops it; status shows its end\n")
+    return 0
+
+
+def channel_caller(environ):
+    """(agent, user) of the capability channel that started this call, or None for root itself."""
+    agent, user = environ.get("KD_AGENT"), environ.get("KD_CALLER_USER")
+    if agent is None and user is None:
+        return None
+    return (agent or "", user or "")
+
+
+def main(
+    argv=None,
+    *,
+    caller=None,
+    config_path=worker_slots.CONFIG,
+    registry_path=agents.REGISTRY,
+    enabled_path=worker_slots.ENABLED,
+    repos_path=worker_jobs.REPOS,
+    client=None,
+    packs_root=worker_packs.PACKS_ROOT,
+    manifests_root=MANIFESTS,
+    require_root_owner=True,
+    results_root=worker_slots.RESULTS,
+    out=sys.stdout,
+    err=sys.stderr,
+) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    client = client if client is not None else cabinet_client.Client()
+    try:
+        args = parse(argv)
+        config = worker_slots.load_config(config_path)
+        user = authorize(caller, config, registry_path)
+        if args.op == "request":
+            return request(
+                args,
+                config,
+                caller=user,
+                requester="" if caller is None else config.requester,  # the owner is woken by nobody
+                enabled_path=enabled_path,
+                repos_path=repos_path,
+                client=client,
+                packs_root=packs_root,
+                manifests_root=manifests_root,
+                require_root_owner=require_root_owner,
+                out=out,
+            )
+        if args.op in ("status", "result"):
+            job = cabinet(client, {"op": "job.view", "job": args.job, "caller": user})["job"]
+            record = load_record(results_root, job["id"]) if args.op == "result" else None
+            out.write(render(job, args.op, record))
+            return 0
+        return cancel(args, user=user, client=client, out=out)
+    except worker_slots.SlotError as exc:
+        err.write(f"kd-worker: {clean(exc, 500)}\n")
+        return EXIT_ERROR
+    except JobError as exc:
+        err.write(f"kd-worker: {clean(exc, 500)}\n")
+        return exc.code
+
+
+def reexec_argv(argv):
+    """The same call through the base channel: its service runs as the base user."""
+    return [cap_client.CLIENT, "run", "base", EXECUTOR, *argv]
+
+
+if __name__ == "__main__":
+    base = pwd.getpwnam(naming.base_user())
+    if os.geteuid() != base.pw_uid:
+        # the agent's self channel ran this as the agent (sandbox exit only): hop to the base
+        # channel, like kd-nudge and kd-task; root reaches it through runuser
+        os.execv(cap_client.CLIENT, reexec_argv(sys.argv[1:]))
+    who = channel_caller(os.environ)
+    # Nothing of the caller's environment or cwd reaches the cabinet; HOME is the base user's own,
+    # PATH the same as kd-work's and kd-nudge's.
+    os.environ.clear()
+    os.environ.update(PATH="/usr/local/bin:/usr/bin:/bin", LANG="C.UTF-8", HOME=base.pw_dir)
+    os.chdir("/")
+    os.umask(0o077)
+    sys.exit(main(caller=who))

@@ -1,0 +1,20 @@
+#!/usr/bin/python3 -I
+"""kd-admin-task show|approve|revoke KD-<n> — the owner's fallback for a sysadmin plan's decision.
+
+Root on the stage only; drops to the cabinet's service user (the grant store's writer) before reading or
+writing anything, uses the same validation and decision journal as the cabinet. ``approve`` takes the proposal hash printed by ``show``, so a plan that
+changed in between is not approved. Never give it to an agent through sudoers. Exit codes: 0 done, 1 error, 2 refused.
+"""
+import os
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import admin_cli  # noqa: E402
+
+if os.geteuid() != 0:
+    print("kd-admin-task: run as root on the stage", file=sys.stderr)
+    sys.exit(2)
+admin_cli.drop_to_service_user()
+sys.exit(admin_cli.task_main(sys.argv[1:], service=admin_cli.default_service()))

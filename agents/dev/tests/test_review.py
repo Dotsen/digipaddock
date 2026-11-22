@@ -1,0 +1,402 @@
+# agents/dev/tests/test_review.py
+"""kd-review posts the Approve in Forgejo only after checking the owner's passkey signature over the decision
+it is shown — the term, the nonce, the registered key, the project's repository and the live PR's head."""
+import json
+import os
+import socket
+import sys
+import threading
+import urllib.error
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "common" / "tests"))
+from softauth import SoftAuthenticator, b64url  # noqa: E402
+from test_forge_read import REPO, Resp, make_opener  # noqa: E402
+
+from dev_agent import forge, review  # noqa: E402
+from kd import pr_signature  # noqa: E402
+from kd.cabinet import passkeys  # noqa: E402
+
+ORIGIN, RP = "https://cabinet.example", "cabinet.example"
+NOW = 1_800_000_000
+HEAD, HEAD2 = "c" * 40, "e" * 40
+DECISION = "1" * 32
+TOKEN = "tokABCDEF0123456789"
+PAYLOAD = {"kind": "pr_approve", "repo": REPO, "project": "digipaddock", "number": 12, "head": HEAD, "url": "u",
+           "title": "KD-12: x", "release": True, "target": "main", "effect": "", "checks": []}
+PR = {"number": 12, "title": "KD-12: x", "state": "open", "merged": False, "head": {"sha": HEAD},
+      "base": {"ref": "main"}, "user": {"login": "digipaddock-dev"}}
+OURS = {"id": 77, "user": {"login": "digipaddock-review"}, "state": "APPROVED", "commit_id": HEAD, "dismissed": False,
+        "stale": False, "body": "Одобрено владельцем в кабинете (одобрение и merge), решение 11111111, в ветку main"}
+
+
+def iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def registry(tmp_path, *auths, user="owner", types=("pr_approve",)):
+    folder = tmp_path / "signers"
+    folder.mkdir(exist_ok=True)
+    keys = [{"credential_id": b64url(a.credential_id), "public_key": b64url(a._cose_key()), "name": "Ноутбук",
+             "types": list(types), "added": "2026-10-19T10:00:00Z", "added_by": "root"} for a in auths]
+    (folder / f"{user}.json").write_text(json.dumps({"user": user, "keys": keys}), encoding="utf-8")
+    return folder
+
+
+def signed(auth, *, mode="merge", payload=PAYLOAD, revision=4, user="owner", expires=None, nonce="ab" * 16,
+           sign_mode=None, sign_payload=None):
+    """An approve request as the cabinet sends it, signed over ``sign_mode``/``sign_payload`` when given."""
+    expires = expires or iso(NOW + 300)
+    value = pr_signature.challenge(DECISION, sign_payload or payload, revision, user, expires, nonce, sign_mode or mode)
+    options, _ = passkeys.authentication_options(review.Rp(ORIGIN, RP), challenge=value, allow=[auth.credential_id])
+    return {"op": "approve", "decision": DECISION, "payload": payload, "card_revision": revision, "user": user,
+            "expires": expires, "nonce": nonce, "mode": mode, "assertion": json.loads(auth.assert_(options))}
+
+
+def forgejo(pr=None, reviews=(), posted=None, extra=None):
+    routes = {("GET", f"/repos/{REPO}/pulls/12/reviews"): list(reviews), ("GET", f"/repos/{REPO}/pulls/12"): pr or PR,
+              ("POST", f"/repos/{REPO}/pulls/12/reviews"): posted or {"id": 91}}
+    routes.update(extra or {})
+    return make_opener(routes)
+
+
+def reviewer(tmp_path, opener, repos=None, nonces=None, clock=NOW):
+    (tmp_path / "repos.json").write_text(json.dumps(repos or {
+        "digipaddock": {"repo": REPO, "dir": "work/DigiPaddock", "release": "digipaddock"}}), encoding="utf-8")
+    return review.Reviewer(api=forge.Api(TOKEN, opener=opener), repos_path=str(tmp_path / "repos.json"),
+                           signers_dir=str(tmp_path / "signers"), origin=ORIGIN, clock=lambda: clock,
+                           nonces_path=nonces)
+
+
+def posts(opener):
+    return [json.loads(c[2]) for c in opener.seen if c[0] == "POST"]
+
+
+@pytest.fixture
+def auth(tmp_path):
+    a = SoftAuthenticator(RP, ORIGIN)
+    registry(tmp_path, a)
+    return a
+
+
+def refused(r, request, kind="refused"):
+    with pytest.raises(review.Refused) as exc:
+        r.handle(request)
+    assert exc.value.kind == kind, exc.value
+    return exc.value
+
+
+def test_approve_posts_one_approved_review_on_the_head(tmp_path, auth):
+    opener = forgejo()
+    out = reviewer(tmp_path, opener).handle(signed(auth))
+    assert out == {"review": 91, "head": HEAD, "state": "approved"}
+    assert posts(opener) == [{"event": "APPROVED", "commit_id": HEAD,
+                              "body": "Одобрено владельцем в кабинете (одобрение и merge), решение 11111111, в ветку main"}]
+
+
+def test_an_existing_review_on_the_head_is_reused(tmp_path, auth):
+    opener = forgejo(reviews=[OURS])
+    assert reviewer(tmp_path, opener).handle(signed(auth)) == {"review": 77, "head": HEAD, "state": "already"}
+    assert posts(opener) == []
+    for other in ({**OURS, "dismissed": True}, {**OURS, "commit_id": HEAD2}, {**OURS, "user": {"login": "example-owner"}},
+                  {**OURS, "state": "COMMENT"},
+                  {**OURS, "body": OURS["body"].replace("в ветку main", "в ветку dev")}):  # signed into another target
+        opener = forgejo(reviews=[other])
+        assert reviewer(tmp_path, opener).handle(signed(auth, nonce="cd" * 16))["state"] == "approved"
+        assert len(posts(opener)) == 1
+
+
+def test_a_release_signature_after_a_merge_one_posts_its_own_approve(tmp_path, auth):
+    """kd-merge reads the mode from the body — a merge Approve on the head is not reused for a release."""
+    opener = forgejo(reviews=[OURS])
+    assert reviewer(tmp_path, opener).handle(signed(auth, mode="release"))["state"] == "approved"
+    assert posts(opener)[0]["body"] == ("Одобрено владельцем в кабинете (одобрение, merge и выкатка), решение 11111111,"
+                                        " в ветку main")
+    assert forge.signed_mode(posts(opener)[0]["body"]) == "release"
+
+
+def test_a_new_head_after_signing_is_refused(tmp_path, auth):
+    for pr, kind in (({**PR, "head": {"sha": HEAD2}}, "stale"), ({**PR, "state": "closed"}, "stale"),
+                     ({**PR, "merged": True}, "stale"), ({**PR, "user": {"login": "example-owner"}}, "refused"),
+                     ({**PR, "base": {"ref": "dev"}}, "refused")):
+        opener = forgejo(pr=pr)
+        refused(reviewer(tmp_path, opener), signed(auth), kind)
+        assert posts(opener) == []
+
+
+def test_replay_foreign_key_and_old_term_are_refused(tmp_path, auth):
+    r = reviewer(tmp_path, forgejo())
+    request = signed(auth)
+    r.handle(request)
+    assert "used" in str(refused(r, request))
+    stranger = SoftAuthenticator(RP, ORIGIN)
+    refused(r, signed(stranger, nonce="01" * 16))
+    for expires in (iso(NOW), iso(NOW - 60), iso(NOW + review.TERM_MAX + 1)):
+        refused(r, signed(auth, expires=expires, nonce="02" * 16))
+    refused(r, signed(auth, expires="soon", nonce="03" * 16), "invalid")
+    refused(r, signed(auth, mode="release", sign_mode="approve", nonce="04" * 16))  # the mode it was not signed for
+    refused(r, signed(auth, payload={**PAYLOAD, "number": 13}, sign_payload=PAYLOAD, nonce="05" * 16))
+    registry(tmp_path, auth, types=())  # the key is registered, but not for PRs
+    refused(r, signed(auth, nonce="06" * 16))
+    refused(r, {**signed(auth, nonce="07" * 16), "nonce": "x"}, "invalid")
+    refused(r, {**signed(auth, nonce="08" * 16), "payload": {**PAYLOAD, "kind": "admin_plan"}}, "invalid")
+
+
+def test_mode_release_needs_a_release_payload(tmp_path, auth):
+    opener = forgejo()
+    refused(reviewer(tmp_path, opener), signed(auth, mode="release", payload={**PAYLOAD, "release": False}))
+    assert opener.seen == []
+
+
+def test_project_must_name_the_repo(tmp_path, auth):
+    opener = forgejo()
+    refused(reviewer(tmp_path, opener), signed(auth, payload={**PAYLOAD, "repo": "other/repo"}))
+    refused(reviewer(tmp_path, opener, repos={"web": {"repo": REPO, "dir": "work/Ops"}}), signed(auth, nonce="09" * 16))
+    assert opener.seen == []
+
+
+def test_comment_posts_line_comments(tmp_path):
+    opener = forgejo(posted={"id": 93})
+    out = reviewer(tmp_path, opener).handle(
+        {"op": "comment", "project": "digipaddock", "repo": REPO, "number": 12, "head": HEAD, "body": "Поправь",
+         "comments": [{"path": "a.py", "line": 3, "side": "new", "body": "тут"},
+                      {"path": "b.py", "line": 1, "side": "old", "body": "и тут"}]})
+    assert out == {"review": 93}
+    assert posts(opener) == [{"event": "COMMENT", "commit_id": HEAD, "body": "Поправь",
+                              "comments": [{"path": "a.py", "body": "тут", "new_position": 3},
+                                           {"path": "b.py", "body": "и тут", "old_position": 1}]}]
+    opener = forgejo(pr={**PR, "head": {"sha": HEAD2}})
+    refused(reviewer(tmp_path, opener), {"op": "comment", "project": "digipaddock", "repo": REPO, "number": 12, "head": HEAD,
+                                         "body": "x", "comments": []}, "stale")
+
+
+def test_keys_lists_the_signer_ids(tmp_path):
+    a, b = SoftAuthenticator(RP, ORIGIN), SoftAuthenticator(RP, ORIGIN)
+    registry(tmp_path, a)
+    r = reviewer(tmp_path, forgejo())
+    assert r.handle({"op": "keys", "user": "owner"}) == {"credential_ids": [b64url(a.credential_id)]}
+    registry(tmp_path, b, user="anna", types=())
+    assert r.handle({"op": "keys", "user": "anna"}) == {"credential_ids": []}
+    assert r.handle({"op": "keys", "user": "nobody"}) == {"credential_ids": []}
+    refused(r, {"op": "keys", "user": "../owner"}, "invalid")
+    refused(r, {"op": "drop"}, "invalid")
+
+
+class FakeCabinet:
+    def __init__(self, keys):
+        self.keys, self.seen = keys, []
+
+    def call(self, request):
+        self.seen.append(request)
+        return {"keys": self.keys}
+
+
+def _cabinet_key(auth, name, created="2026-10-15T09:00:00Z"):
+    return {"credential_id": b64url(auth.credential_id), "public_key": b64url(auth._cose_key()), "name": name,
+            "created": created}
+
+
+def test_signers_add_shows_the_keys_then_adds_one_chosen_key(tmp_path, capsys, monkeypatch):
+    # final review: root chooses each key by its id — a key the cabinet's base gained is never taken unseen
+    a, b = SoftAuthenticator(RP, ORIGIN), SoftAuthenticator(RP, ORIGIN)
+    cabinet = FakeCabinet([_cabinet_key(a, "Ноутбук"), _cabinet_key(b, "Телефон", "2026-10-18T08:00:00Z")])
+    folder = tmp_path / "signers"
+    owned = []
+    monkeypatch.setattr(os, "chown", lambda path, uid, gid: owned.append((uid, gid)), raising=False)
+
+    def run(*args, clock=NOW):
+        return review.main(["signers", *args], cabinet=cabinet, signers_dir=str(folder), owner=(1001, 1002),
+                           clock=lambda: clock)
+
+    assert run("add", "owner") == 0  # without --credential: the cabinet's keys, nothing written
+    shown = capsys.readouterr().out
+    assert b64url(a.credential_id)[:16] in shown and "Ноутбук" in shown and "2026-10-18T08:00:00Z" in shown
+    assert "--credential" in shown and not (folder / "owner.json").exists()
+    assert run("add", "owner", "--credential", b64url(a.credential_id)[:16]) == 0
+    assert "Ноутбук" in capsys.readouterr().out
+    assert run("add", "owner", "--credential", b64url(b.credential_id), clock=NOW + 60) == 0
+    data = json.loads((folder / "owner.json").read_text(encoding="utf-8"))
+    assert [(k["name"], k["added"]) for k in data["keys"]] == [("Ноутбук", iso(NOW)), ("Телефон", iso(NOW + 60))]
+    assert data["keys"][0] == {"credential_id": b64url(a.credential_id), "public_key": b64url(a._cose_key()),
+                               "name": "Ноутбук", "types": ["pr_approve"], "added": iso(NOW), "added_by": "root"}
+    assert set(owned) == {(1001, 1002)}  # the service user's uid and its group, not the uid twice
+    if os.name == "posix":
+        assert (folder / "owner.json").stat().st_mode & 0o777 == 0o600
+    for bad in (b64url(a.credential_id), "zzzzzzzzzzzz", b64url(a.credential_id)[:5]):  # again, none, too short
+        assert run("add", "owner", "--credential", bad) == 2
+    assert review.main(["signers", "add", "anna", "--credential", b64url(a.credential_id)], cabinet=FakeCabinet([]),
+                       signers_dir=str(folder), owner=None) == 2
+    assert not (folder / "anna.json").exists()
+    assert run("remove", "owner", "--credential", "zzzzzzzzzzzz") == 2
+    assert review.main(["signers", "list", "owner"], signers_dir=str(folder)) == 0
+    assert "Телефон" in capsys.readouterr().out
+    assert run("remove", "owner", "--credential", b64url(a.credential_id)[:16]) == 0
+    data = json.loads((folder / "owner.json").read_text(encoding="utf-8"))
+    assert [k["name"] for k in data["keys"]] == ["Телефон"]
+    assert review.main(["signers", "remove", "owner"], signers_dir=str(folder)) == 0
+    assert not (folder / "owner.json").exists()
+
+
+def test_a_used_signature_stays_used_after_a_restart(tmp_path, auth):
+    # final review: the nonces a signature spent survive kd-review's restart within the signature's term
+    used = tmp_path / "state" / "used-nonces.json"
+    first = reviewer(tmp_path, forgejo(), nonces=used)
+    first.handle(signed(auth))
+    opener = forgejo()
+    assert "used" in str(refused(reviewer(tmp_path, opener, nonces=used), signed(auth)))
+    assert posts(opener) == []
+    later = reviewer(tmp_path, forgejo(), nonces=used, clock=NOW + 400)  # the term is over: the file forgets it
+    later.handle(signed(auth, nonce="cd" * 16, expires=iso(NOW + 600)))
+    assert set(json.loads(used.read_text(encoding="utf-8"))) == {"cd" * 16}
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    opener = forgejo()
+    refused(reviewer(tmp_path, opener, nonces=blocked), signed(auth, nonce="ef" * 16), "unavailable")
+    assert posts(opener) == []  # a nonce it cannot keep approves nothing
+
+
+def test_live_answers_the_prs_state_and_an_ended_pr_says_so(tmp_path, auth):
+    r = reviewer(tmp_path, forgejo())
+    ask = {"op": "live", "project": "digipaddock", "repo": REPO, "number": 12}
+    assert r.handle(ask) == {"state": "open", "head": HEAD, "target": "main"}
+    for pr, state in (({**PR, "merged": True, "state": "closed"}, "merged"), ({**PR, "state": "closed"}, "closed")):
+        assert reviewer(tmp_path, forgejo(pr=pr)).handle(ask) == {"state": state, "head": HEAD, "target": "main"}
+        error = refused(reviewer(tmp_path, forgejo(pr=pr)), signed(auth, nonce="9" * 32), "stale")
+        assert error.extra == {"live": state}
+        line = json.loads(review.answer(reviewer(tmp_path, forgejo(pr=pr)), json.dumps(signed(auth, nonce="8" * 32))
+                                        .encode()))
+        assert line["error"] == "stale" and line["live"] == state
+    refused(reviewer(tmp_path, forgejo(pr={**PR, "user": {"login": "example-owner"}})), ask)
+    refused(r, {**ask, "repo": "other/repo"})
+
+
+def test_the_token_never_reaches_an_answer(tmp_path, auth, capsys):
+    opener = forgejo(extra={("POST", f"/repos/{REPO}/pulls/12/reviews"): (500, {"message": f"bad {TOKEN}"})})
+    r = reviewer(tmp_path, opener)
+    line = review.answer(r, json.dumps(signed(auth)).encode())
+    answer = json.loads(line)
+    assert answer["ok"] is False and answer["error"] == "unavailable"
+    logged = capsys.readouterr().err
+    request = signed(auth, nonce="0a" * 16)
+    for text in (line.decode(), logged):
+        assert TOKEN not in text and request["assertion"]["response"]["signature"] not in text
+    assert json.loads(logged.strip().splitlines()[-1])["outcome"] == "unavailable"
+    assert json.loads(review.answer(r, b"not json"))["error"] == "invalid"
+
+
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX") or os.name != "posix", reason="SO_PEERCRED is Linux only")
+def test_serve_refuses_another_uid(tmp_path):
+    r = reviewer(tmp_path, forgejo())
+    for allowed, ok in ((os.getuid() + 1, False), (os.getuid(), True)):
+        server, client = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        worker = threading.Thread(target=review.serve_one, args=(server, r, allowed))
+        worker.start()
+        client.sendall(b'{"op": "keys", "user": "owner"}\n')
+        answer = json.loads(client.makefile("rb").readline())
+        worker.join(5)
+        client.close()
+        assert answer["ok"] is ok and (ok or answer["error"] == "refused")
+
+
+# --- the signature binds the target; the passport's required checks; imported PRs -------------------------
+
+TWO = {"digipaddock": {"repo": REPO, "dir": "work/DigiPaddock", "targets": ["main", "dev"]}}
+
+
+def test_approve_refuses_a_pr_retargeted_after_signing(tmp_path, auth):
+    opener = forgejo(pr={**PR, "base": {"ref": "dev"}})
+    error = refused(reviewer(tmp_path, opener, repos=TWO), signed(auth), "stale")
+    assert "dev" in str(error) and "main" in str(error) and posts(opener) == []
+
+
+def test_approve_refuses_red_required_checks(tmp_path, auth):
+    repos_ = {"digipaddock": {"repo": REPO, "dir": "work/DigiPaddock", "checks": {"profiles": {"unit": {"required": True}}}}}
+    status = {("GET", f"/repos/{REPO}/commits/{HEAD}/status"): {
+        "sha": HEAD, "state": "failure", "statuses": [{"context": "devcheck/unit", "status": "failure", "state": None}]}}
+    opener = forgejo(extra=status)
+    error = refused(reviewer(tmp_path, opener, repos=repos_), signed(auth))
+    assert "devcheck/unit (failure)" in str(error) and posts(opener) == []
+    green = {("GET", f"/repos/{REPO}/commits/{HEAD}/status"): {
+        "sha": HEAD, "state": "success", "statuses": [{"context": "devcheck/unit", "status": "success", "state": None}]}}
+    opener = forgejo(extra=green)
+    assert reviewer(tmp_path, opener, repos=repos_).handle(signed(auth, nonce="cd" * 16))["state"] == "approved"
+
+
+def test_an_unreachable_forgejo_keeps_the_signature_usable(tmp_path, auth):
+    """the nonce is spent only once the live PR and its checks passed — a Forgejo that did not answer, a
+    stale head or red checks leave the owner's signature for the retry (within its term, once)."""
+    used = tmp_path / "state" / "used-nonces.json"
+    down = forgejo(pr=(502, {"message": "bad gateway"}))
+    with pytest.raises(forge.ForgeError):
+        reviewer(tmp_path, down, nonces=used).handle(signed(auth))
+    refused(reviewer(tmp_path, forgejo(pr={**PR, "head": {"sha": HEAD2}}), nonces=used), signed(auth), "stale")
+    opener = forgejo()
+    assert reviewer(tmp_path, opener, nonces=used).handle(signed(auth))["state"] == "approved"
+    assert len(posts(opener)) == 1
+    assert "used" in str(refused(reviewer(tmp_path, forgejo(), nonces=used), signed(auth)))
+
+
+def test_reviews_that_did_not_answer_keep_the_signature_usable(tmp_path, auth):
+    """Review M9: the reviews lookup is one more call to Forgejo before the Approve — its failure spends nothing."""
+    used = tmp_path / "state" / "used-nonces.json"
+    down = forgejo(extra={("GET", f"/repos/{REPO}/pulls/12/reviews"): (502, {"message": "bad gateway"})})
+    with pytest.raises(forge.ForgeError):
+        reviewer(tmp_path, down, nonces=used).handle(signed(auth))
+    assert reviewer(tmp_path, forgejo(), nonces=used).handle(signed(auth))["state"] == "approved"
+
+
+def test_approve_without_required_profiles_reads_no_status(tmp_path, auth):
+    opener = forgejo()
+    assert reviewer(tmp_path, opener).handle(signed(auth))["state"] == "approved"
+    assert not any("/status" in c[1] for c in opener.seen)
+
+
+def test_live_accepts_any_passport_target(tmp_path):
+    ask = {"op": "live", "project": "digipaddock", "repo": REPO, "number": 12}
+    r = reviewer(tmp_path, forgejo(pr={**PR, "base": {"ref": "dev"}}), repos=TWO)
+    assert r.handle(ask) == {"state": "open", "head": HEAD, "target": "dev"}
+    refused(reviewer(tmp_path, forgejo(pr={**PR, "base": {"ref": "dev"}})), ask)  # dev is not a target here
+
+
+def test_an_imported_pr_is_approvable(tmp_path, auth):
+    opener = forgejo(pr={**PR, "user": {"login": "digipaddock-import"}})
+    assert reviewer(tmp_path, opener).handle(signed(auth))["state"] == "approved"
+
+
+@pytest.mark.parametrize("payload", [
+    {k: v for k, v in PAYLOAD.items() if k != "target"}, {**PAYLOAD, "target": ""}, {**PAYLOAD, "target": 1}])
+def test_payload_without_target_is_invalid(tmp_path, auth, payload):
+    opener = forgejo()
+    error = refused(reviewer(tmp_path, opener), signed(auth, payload=payload), "invalid")
+    assert "kd-forge publish" in str(error) and posts(opener) == []
+
+
+def test_kd_signers_sync_registry_approves_with_the_new_key_and_refuses_the_removed_one(tmp_path, auth):
+    """after the owner replaced a passkey in the cabinet, ``kd-signers sync --apply`` writes kd-review's
+    registry: the new key's signature approves the PR, the removed key's is refused."""
+    import io
+
+    from kd import signers
+
+    new = SoftAuthenticator(RP, ORIGIN)
+    (tmp_path / "model").mkdir()
+
+    class Cabinet:
+        def call(self, request):
+            if request["op"] == "user.list":
+                return {"users": [{"id": "owner", "status": "active", "roles": [["owner", "*"]]}]}
+            return {"keys": [_cabinet_key(new, "Новый ноутбук")]}
+
+    me = (os.getuid(), os.getgid())
+    env = signers.Env(client=Cabinet(), servers=lambda: [], read=None, origin=lambda: ORIGIN,
+                      registries=(signers.Review("kd-review", str(tmp_path / "signers"), lambda: me),
+                                  signers.ModelKeys("kd-model-keys", str(tmp_path / "model"), lambda: me)))
+    out = io.StringIO()
+    assert signers.main(["sync", "--apply"], env=env, euid=0, out=out, err=out) == 0, out.getvalue()
+    opener = forgejo()
+    assert reviewer(tmp_path, opener).handle(signed(new))["state"] == "approved"
+    error = refused(reviewer(tmp_path, forgejo()), signed(auth, nonce="cd" * 16))
+    assert "not one of owner's signers" in str(error)

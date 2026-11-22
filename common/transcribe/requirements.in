@@ -1,0 +1,8 @@
+# The transcription executor's venv: /var/lib/digipaddock/venv/transcribe, python3.12, x86_64.
+# The lock with hashes (requirements.txt) is built on the stage host by root with network:
+#   common/install/transcribe_setup.sh lock > requirements.txt
+# and committed; transcribe_setup.sh install takes only that lock (--require-hashes, wheels only).
+# Versions of the probe of 21.10.2026.
+faster-whisper==1.2.1
+av==14.2.0  # faster-whisper 1.2.1 fails with av 19 (open() metadata_errors)
+ctranslate2==4.8.3

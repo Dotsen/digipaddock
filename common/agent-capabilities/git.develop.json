@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "name": "git.develop",
+  "module": "forge",
+  "description": "Shell inside the strict sandbox of the working directory and pull requests through kd-pr to the pinned Forgejo host; no push, merge or release.",
+  "shell": "sandboxed",
+  "dependencies": [],
+  "conflicts": ["board.coordinate", "monitor.manage", "servers.execute", "servers.read", "worker.request"],
+  "resources": [
+    {"name": "forge-repos", "access": "read-public"},
+    {"name": "forge-ssh-key", "access": "own-file"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-pr",
+      "source": "agents/dev/bin/kd-pr",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    },
+    {
+      "command": "kd-deps",
+      "source": "agents/dev/bin/kd-deps",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    }
+  ],
+  "validator": "agents/dev/dev_agent/guard.py",
+  "setup": "agents/dev/install/develop_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": ["@host:forge_host@"],
+    "channel_commands": []
+  },
+  "lifecycle": {
+    "install": ["setup", "wrappers"],
+    "check": ["setup", "wrappers"],
+    "disable": ["setup"]
+  }
+}

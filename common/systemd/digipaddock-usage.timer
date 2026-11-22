@@ -1,0 +1,9 @@
+[Unit]
+Description=DigiPaddock: the agents' tokens for the past day (00:30 in the host's zone; the cabinet's morning summary reads the total)
+
+[Timer]
+OnCalendar=*-*-* 00:30:00 @host:timezone@
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "name": "servers.execute",
+  "module": "servers",
+  "description": "Owner-approved commands on enabled servers; executors run as @exec@, alone hold the exec key and write the journal. KD-188: kd-admin-propose (plan) and kd-admin-run (one operation of the grant); kd-admin-propose-action and kd-admin-critical (one exact critical command, once).",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": ["board.coordinate", "forge.review", "git.develop", "worker.request"],
+  "resources": [
+    {"name": "server-inventory", "access": "via-wrapper"},
+    {"name": "servers-enabled", "access": "via-wrapper"},
+    {"name": "exec-key", "access": "via-wrapper"},
+    {"name": "exec-journal", "access": "read-grant"},
+    {"name": "admin-grants", "access": "via-wrapper"},
+    {"name": "admin-proposals", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "ssh-exec",
+      "source": "agents/sysadmin/bin/ssh-exec",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "@exec@",
+      "executor": "agents/sysadmin/bin/ssh_exec.py"
+    },
+    {
+      "command": "kd-admin-propose",
+      "source": "agents/sysadmin/bin/kd-admin-propose",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    },
+    {
+      "command": "kd-admin-run",
+      "source": "agents/sysadmin/bin/kd-admin-run",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "@exec@",
+      "executor": "agents/sysadmin/bin/admin_run.py"
+    },
+    {
+      "command": "kd-admin-propose-action",
+      "source": "agents/sysadmin/bin/kd-admin-propose-action",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    },
+    {
+      "command": "kd-admin-critical",
+      "source": "agents/sysadmin/bin/kd-admin-critical",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "@exec@",
+      "executor": "agents/sysadmin/bin/admin_critical.py"
+    }
+  ],
+  "validator": "agents/sysadmin/sysadmin/guard.py",
+  "setup": "agents/sysadmin/install/exec_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-admin-critical", "kd-admin-propose", "kd-admin-propose-action", "kd-admin-run", "ssh-exec"]
+  },
+  "lifecycle": {
+    "install": ["executor-user", "setup", "wrappers", "read-grants", "channels"],
+    "check": ["executor-user", "setup", "wrappers", "read-grants", "channels"],
+    "disable": ["channels", "read-grants", "setup"]
+  }
+}

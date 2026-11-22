@@ -1,0 +1,10 @@
+[Unit]
+Description=DigiPaddock: updating the read-only repository copies every 10 minutes (repo.read)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

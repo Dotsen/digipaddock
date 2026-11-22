@@ -1,0 +1,47 @@
+[Unit]
+Description=DigiPaddock: the owner cabinet's Web Push — sending notifications from the cabinet's queue
+After=digipaddock-cabinet.socket
+Wants=digipaddock-cabinet.socket
+OnFailure=digipaddock-alert@digipaddock-cabinet-push.service
+
+[Service]
+# its own service user: the one cabinet process with network holds only the push queue on the socket and the
+# VAPID private key (global review 15.10.2026)
+User=@push@
+# the group of the cabinet's socket: it takes the queue and reports the answers over /run/digipaddock-cabinet/local.sock
+Group=digipaddock-cabinet
+# its own group again: push.env is root:@push@ 0640 (Group= above replaces the primary group)
+SupplementaryGroups=@push@
+# reads the VAPID key from push.env (config.load_push); writes nothing; reaches only the push gateways
+ExecStart=/var/lib/digipaddock/venv/cabinet/bin/python3 -I /opt/digipaddock/common/bin/kd-cabinet push
+Restart=always
+RestartSec=5
+UMask=0077
+Environment=HOME=/nonexistent LANG=C.UTF-8 PATH=/usr/bin:/bin
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# the gateways are public hosts: a poisoned gateway name must not reach this host's own services
+IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+# except the systemd-resolved stub (resolv.conf: nameserver 127.0.0.53): without DNS no push leaves the host,
+# every send is status 0; the allow wins over the deny for this one address
+IPAddressAllow=127.0.0.53/32
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

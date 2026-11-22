@@ -1,0 +1,20 @@
+#!/usr/bin/python3 -I
+"""kd-mirror — each new main of the public code repository to the GitHub mirror as a snapshot commit (its tree,
+without the forge's history), through both privacy scanners.
+
+Root, digipaddock-mirror.service (digipaddock-mirror.timer, every five minutes) and kd-release after a healthy release; see
+``kd.mirror``. Exit 0 — published, nothing new or disabled (/etc/digipaddock/mirror/disabled);
+1 — a scanner found something in a new main, which stays off GitHub (OnFailure → kd-alert, once per SHA);
+2 — git or a scanner could not run, or GitHub's main moved during the run (the next run builds on it).
+"""
+
+import os
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd.mirror import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

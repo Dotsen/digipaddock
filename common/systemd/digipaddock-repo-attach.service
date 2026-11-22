@@ -1,0 +1,17 @@
+[Unit]
+Description=DigiPaddock: attaching and detaching a project repository on a request from the cabinet — add_repo.sh only
+OnFailure=digipaddock-alert@digipaddock-repo-attach.service
+# The path unit starts this service on each notification. A burst must not put the path unit in the failed state.
+StartLimitIntervalSec=0
+After=digipaddock-cabinet.socket
+
+[Service]
+Type=oneshot
+# add_repo.sh clones as the dev user via runuser and writes /etc/digipaddock/repos.json and
+# /srv/digipaddock-agents/dev/playbooks/projects.md. Root reads the cabinet queue (project.repo.queue)
+# and returns results through project.repo.result. A handled result exits 0. Cabinet or notification
+# failures reach kd-alert via the unit failure.
+Environment=HOME=/root LANG=C.UTF-8
+RuntimeDirectory=digipaddock-repo-attach
+ExecStart=/usr/local/bin/kd-repo-attach
+TimeoutStartSec=1800

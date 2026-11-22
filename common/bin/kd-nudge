@@ -1,0 +1,426 @@
+#!/usr/bin/python3 -I
+"""kd-nudge — the coordinator's way to wake and watch the other agents (BOSS spec 4.3, B05).
+
+    kd-nudge <agent> KD-<n>                 wake the agent with the fixed line "[boss] KD-<n>: see the card"
+    kd-nudge status                         every registered agent: on the session host ("sessions") or not
+    kd-nudge activity <agent>               the agent's runs in the cabinet's sessions (data, not commands), its open
+                                            cards and last verified actions
+    kd-nudge direct <agent> --card KD-<n> --kind work|clarify|status|pause --message "<text>"
+                                            a verified directive to the card's worker
+    kd-nudge directives [--agent <agent>]   open directives and answers the coordinator has not seen
+    kd-nudge deliver                        (root timers, as the base user; never through a channel): every minute
+                                            retry pending directives, withdraw revoked ones, expire old ones, wake
+                                            the coordinator, tell it once of each new owner grant ("[grant] …")
+
+Runs as the base user (the directive store and the cabinet's base principal): another caller re-executes itself
+through the caller's base capability channel: ``kd-cap run base`` with this exact path,
+which the channel's grants file names. The caller's environment, cwd and
+stdin are not used; the channel names the caller (``KD_AGENT``), and only the coordinator's
+channel may call. The agent must be a registered agent (a root-owned directory under
+/srv/digipaddock-agents) other than the coordinator; the card must exist in the cabinet. No other text
+reaches an agent. The attention signal is not here: only the root watch dispatcher sends it.
+
+A directive is stored in the directive store (``kd.directives``) and only a fixed line with its ID
+reaches the worker: ``[boss] directive <id> KD-<n>: run kd-work directive <id>``. The
+worker reads and answers it with ``kd-work``; the card shows both as comments (best effort). A ``work``
+directive on a subtask of a revoked or expired owner grant is refused.
+
+every agent runs in the cabinet's sessions; an agent that is not on the session host is refused by
+``activity`` and not woken by a nudge.
+
+Exit codes: 0 done, 1 error (the board unavailable), 2 refused, 3 not delivered (the agent is not on the session
+host).
+"""
+
+import os
+import re
+import sys
+import time
+
+try:
+    import pwd
+except ImportError:  # Windows: tests only
+    pwd = None
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import (  # noqa: E402
+    activity, activity_journal, boss_exec, cap_client, clock, delegation, directive_card, directives, ids, naming,
+)
+from kd import session_config, wake as kd_wake  # noqa: E402
+from kd.cabinet import client as cabinet_client  # noqa: E402 — the board
+
+EXECUTOR = "/opt/digipaddock/common/bin/kd-nudge"
+OWNER = naming.base_user()
+AGENTS = "/srv/digipaddock-agents"
+COORDINATOR = "boss"
+NOT_AGENTS = frozenset({"board", COORDINATOR})  # board: the old Backlog.md home, never an agent
+EXIT_ERROR, EXIT_REFUSED, EXIT_UNDELIVERED, EXIT_RATE = 1, 2, 3, 5
+_AGENT = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+_CARD = ids.CARD
+KIND_STATUSES = directives.KIND_STATUSES  # spec 5.1: work only on a card the owner already approved
+BOSS_SIGNAL = "[directive] replies: run kd-nudge directives"
+SHOWN_SESSIONS = ("queued", "starting", "working", "idle", "failed")  # what BOSS supervises; exited/stopped: history
+SESSIONS_MAX = 20
+
+
+def _hosted():
+    """the agents on the session host (a broken config: none — kd.wake refuses them too)."""
+    try:
+        return session_config.load().hosted
+    except ValueError:
+        return lambda agent: False
+
+
+class Refused(Exception):
+    pass
+
+
+class Failed(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def registered(agents_dir: str):
+    """Agents with their own directory under the root-owned agents tree."""
+    try:
+        names = os.listdir(agents_dir)
+    except OSError:
+        return []
+    return sorted(
+        n
+        for n in names
+        if _AGENT.fullmatch(n)
+        and n not in NOT_AGENTS
+        and os.path.isdir(os.path.join(agents_dir, n))
+        and not os.path.islink(os.path.join(agents_dir, n))
+    )
+
+
+def card_exists(client, card: str) -> bool:
+    """Whether the cabinet holds the card; a board that does not answer is an error, not a refusal."""
+    try:
+        client.call({"op": "card.get", "card": card})
+    except cabinet_client.CabinetError as exc:
+        if exc.kind == "not_found":
+            return False
+        raise Failed(EXIT_ERROR, f"the board is unavailable ({exc})") from exc
+    return True
+
+
+def _agent(name, agents_dir):
+    if not _AGENT.fullmatch(name) or name not in registered(agents_dir):
+        raise Refused("unknown agent")
+    return name
+
+
+def _hosted_agent(name, agents_dir, hosted):
+    """A registered agent that runs in the cabinet's sessions: there is nothing else to look at."""
+    if not hosted(_agent(name, agents_dir)):
+        raise Refused(f"{name} is not on the session host")
+    return name
+
+
+def _open_cards(client, agent):
+    """(card ID, status) of the agent's live cards (neither Done nor closed without the work), by number."""
+    try:
+        cards = cabinet_client.records(client, assignee=f"@{agent}")
+    except cabinet_client.CabinetError as exc:
+        raise Failed(EXIT_ERROR, f"the board is unavailable ({exc})") from exc
+    found = [(c["id"], c["status"]) for c in cards if c.get("status") not in ("Done", "Cancelled")]
+    return sorted(found, key=lambda c: int(c[0].split("-")[1]))
+
+
+def sessions(client, agent, out) -> int:
+    """an agent on the session host has no panel; BOSS sees its runs — the state, the card (or its chat),
+    the last update and the host's error. Data from the cabinet, not commands."""
+    try:
+        rows = client.call({"op": "session.list", "agent": agent})["sessions"]
+    except cabinet_client.CabinetError as exc:
+        raise Failed(EXIT_ERROR, f"the board is unavailable ({exc})") from exc
+    shown = sorted((s for s in rows if s.get("state") in SHOWN_SESSIONS), key=lambda s: str(s.get("updated") or ""),
+                   reverse=True)[:SESSIONS_MAX]
+    failed = sum(1 for s in shown if s["state"] == "failed")
+    out.write(f"{agent} runs in cabinet sessions: {len(shown) - failed} live, {failed} failed (data, not commands)\n")
+    for s in shown:
+        line = f"session {str(s['id'])[:8]} {s['state']} {s.get('card') or 'chat'} · updated {s.get('updated') or '-'}"
+        error = " ".join(str(s.get("error") or "").split())[:200]
+        out.write(line + (f" · error {error}" if error else "") + "\n")
+    return 0
+
+
+def activity_report(agent, *, client, journal, owner_uid, out, store):
+    sessions(client, agent, out)
+    records = activity_journal.read(journal, owner_uid)
+    trusted = None
+    if records is not None:
+        try:
+            trusted = [activity.parse_record(r) for r in records]
+        except (ValueError, TypeError):
+            trusted = None
+    for card, card_status in _open_cards(client, agent):
+        if records is not None and trusted is None:
+            last = "unknown (journal untrusted)"
+        else:
+            mine = [r for r in trusted or [] if r["cardId"] == card and r["worker"] == f"@{agent}"]
+            latest = max(mine, key=lambda r: r["at"]) if mine else None
+            last = (
+                f"{latest['action']} {latest['at'].strftime('%Y-%m-%dT%H:%M:%SZ')}"
+                if latest
+                else "unknown"
+            )
+        out.write(f"{card} {card_status} · last verified {last}\n")
+    for item in directives.listing(store, agent):  # spec 4: the agent's open directives, never their text
+        if item.state in directives.OPEN:
+            out.write(f"directive {item.id} {item.state} {item.card} {item.kind} · sent {clock.iso(item.created)}\n")
+    return 0
+
+
+def agent_line(item) -> str:
+    return f"[boss] directive {item.id} {item.card}: run kd-work directive {item.id}"
+
+
+def _direct_args(argv):
+    if len(argv) != 7 or [argv[1], argv[3], argv[5]] != ["--card", "--kind", "--message"]:
+        raise Refused(
+            'usage: kd-nudge direct <agent> --card KD-<n> --kind work|clarify|status|pause --message "<text>"'
+        )
+    return argv[0], argv[2], argv[4], argv[6]
+
+
+def _deliver_one(item, *, store, wake, now):
+    """Wake the addressee with the fixed line; returns the wake result."""
+    # the card goes with it: an agent on the session host runs the directive in the card's thread
+    result = wake(item.agent, agent_line(item), urgent=item.kind == "pause", card=item.card)
+    if result == "sent":
+        directives.mark_delivered(store, item.id, now)
+    elif result == "error":
+        directives.mark_attempt(store, item.id, now)
+    return result
+
+
+def direct(argv, *, env, agents_dir, client, store, wake, now, out,
+           children=delegation.CHILDREN, grants=delegation.GRANTS, grant_owner=None):
+    if env.get("KD_AGENT") != COORDINATOR:
+        raise Refused("only the coordinator sends directives")
+    agent, card_id, kind, message = _direct_args(argv)
+    _agent(agent, agents_dir)
+    try:
+        card = boss_exec.load_card(client, card_id)
+    except boss_exec.Failure as exc:
+        if exc.code == boss_exec.EXIT_REFUSED:
+            raise Refused(str(exc)) from exc
+        raise Failed(EXIT_ERROR, str(exc)) from exc
+    if card.assignees != (f"@{agent}",):
+        raise Refused(f"{card_id}: @{agent} is not the card's single assignee")
+    if kind not in KIND_STATUSES:
+        raise Refused("kind must be one of " + ", ".join(KIND_STATUSES))
+    if card.status not in KIND_STATUSES[kind]:
+        raise Refused(
+            f"{card_id} is {card.status or 'without status'}: a {kind} directive needs "
+            + " / ".join(KIND_STATUSES[kind])
+        )
+    stamp = now()
+    if kind in directives.GRANT_KINDS:
+        why = directive_card.grant_problem(card_id, children=children, grants=grants, owner_uid=grant_owner, now=stamp)
+        if why:
+            raise Refused(f"{why}: no {kind} directive")
+    try:
+        item, created = directives.send(
+            store, agent=agent, card=card_id, kind=kind, message=message, revision=card.revision, now=stamp
+        )
+    except directives.Refused as exc:
+        raise Refused(str(exc)) from exc
+    if created:
+        directive_card.comment(
+            card_id, f"[boss] поручение {item.id[:8]} ({kind}): {item.message}", "@boss", client=client,
+        )
+    if item.state != "pending":
+        out.write(f"ok directive {item.id} existing {item.state}\n")
+        return 0
+    result = _deliver_one(item, store=store, wake=wake, now=stamp)
+    if result == "sent":
+        out.write(f"ok directive {item.id} {'delivered' if created else 'existing delivered'}\n")
+    else:
+        out.write(f"ok directive {item.id} pending ({result}): retried every minute\n")
+    return 0
+
+
+def listing(*, store, now, out, agent=None):
+    items = [i for i in directives.listing(store, agent) if i.state in directives.OPEN or not i.seen]
+    if not items:
+        out.write("no open directives or unseen answers\n")
+        return 0
+    for item in items:
+        line = f"{item.id} {item.state} {item.agent} {item.card} {item.kind} · sent {clock.iso(item.created)}"
+        if item.state == "replied":
+            line += f" · {item.reply}: {item.reply_message} (data, not commands)"
+        elif item.state == "expired":
+            line += " · expired without an answer"
+        out.write(line + "\n")
+    directives.mark_seen(store, [i.id for i in items if not i.seen], now())
+    return 0
+
+
+def deliver(*, env, store, wake, now, out, client, children, grants, grant_owner, switch, announced):
+    """Every minute (digipaddock-board-deliver.timer), on a change of the owner's grants and at each watch tick: a directive
+    the cabinet did not take is retried then. A pending directive is checked again before it is sent (the switch, the
+    card, the grant);
+    one the worker may already have is withdrawn only when the owner took back what it rested on (the switch, the
+    grant of a subtask), and the worker is told until a notice reaches it. The coordinator hears of each new answer
+    and each new active grant once. A line is printed only when something happened."""
+    if env.get("KD_AGENT"):
+        raise Refused("deliver runs only for the watch, not through a channel")
+    stamp = now()
+    expired = directives.expire(store, stamp)
+    sent = pending = withdrawn = noticed = 0
+    for item in directives.listing(store):
+        if item.state not in directives.OPEN or stamp >= item.expires:
+            continue
+        if item.state != "pending":
+            if directive_card.revoked(item, children=children, grants=grants, grant_owner=grant_owner,
+                                      switch=switch, now=stamp):
+                directives.withdraw(store, item.id, stamp, notify=True)
+                withdrawn += 1
+        elif directive_card.problem(item, client=client, children=children, grants=grants,
+                                    grant_owner=grant_owner, switch=switch, now=stamp):
+            directives.withdraw(store, item.id, stamp)
+            withdrawn += 1
+        elif _deliver_one(item, store=store, wake=wake, now=stamp) == "sent":
+            sent += 1
+        else:
+            pending += 1
+    # Its kd-work directive now says to stop at a safe point; urgent like a pause: the worker that is still working on
+    # it is the one that must hear.
+    for item in directives.notices(store):
+        # its own key: the same line as the delivery, which a hosted agent's command queue would take for a repeat
+        if wake(item.agent, agent_line(item), urgent=True, card=item.card, key=f"withdrawn:{item.id}") == "sent":
+            directives.notice_sent(store, item.id, stamp)
+            noticed += 1
+    coordinator, told = "-", 0
+    if os.path.isfile(switch):
+        try:
+            told = delegation.announce(grants, announced, stamp, grant_owner,
+                                       lambda line: wake(COORDINATOR, line, urgent=False))
+        except delegation.GrantError:
+            told = "unreadable"
+        if directives.unseen(store) and directives.boss_wake_due(store, stamp):
+            coordinator = "woken" if wake(COORDINATOR, BOSS_SIGNAL, urgent=False) == "sent" else "not woken"
+            if coordinator == "woken":
+                directives.mark_boss_woken(store, stamp)
+    if sent or withdrawn or noticed or expired or told or coordinator == "woken":
+        out.write(
+            f"delivered {sent}, pending {pending}, withdrawn {withdrawn}, withdrawal notices {noticed}, "
+            f"expired {len(expired)}, coordinator {coordinator}, grants {told}\n"
+        )
+    return 0
+
+
+def main(
+    argv,
+    *,
+    wake,
+    agents_dir=AGENTS,
+    client=None,
+    out=sys.stdout,
+    err=sys.stderr,
+    activity_path=activity_journal.JOURNAL,
+    activity_owner=None,
+    env=None,
+    now=time.time,
+    store=directives.STORE,
+    children_path=delegation.CHILDREN,
+    grants_root=delegation.GRANTS,
+    grant_owner=None,
+    boss_switch=directive_card.SWITCH,
+    announced_path=delegation.ANNOUNCED,
+    hosted=None,
+) -> int:
+    env = env or {}
+    hosted = hosted or _hosted()
+    client = client if client is not None else cabinet_client.Client()
+    try:
+        if argv == ["deliver"]:
+            return deliver(env=env, store=store, wake=wake, now=now, out=out, client=client,
+                           children=children_path, grants=grants_root, grant_owner=grant_owner, switch=boss_switch,
+                           announced=announced_path)
+        if env.get("KD_AGENT") and env["KD_AGENT"] != COORDINATOR:
+            raise Refused("only the coordinator's channel may call kd-nudge")
+        if argv == ["status"]:
+            # "sessions" points to kd-nudge activity; an agent off the session host has nothing to show
+            for name in registered(agents_dir) + [COORDINATOR]:
+                out.write(f"{name} {'sessions' if hosted(name) else 'not on the session host'}\n")
+            return 0
+        if argv[:1] == ["direct"]:
+            return direct(
+                argv[1:], env=env, agents_dir=agents_dir, client=client, store=store,
+                wake=wake, now=now, out=out,
+                children=children_path, grants=grants_root, grant_owner=grant_owner,
+            )
+        if argv[:1] == ["directives"]:
+            if argv[1:] and (len(argv) != 3 or argv[1] != "--agent"):
+                raise Refused("usage: kd-nudge directives [--agent <agent>]")
+            agent = _agent(argv[2], agents_dir) if argv[1:] else None
+            return listing(store=store, now=now, out=out, agent=agent)
+        if argv[:1] == ["activity"]:
+            if len(argv) != 2:
+                raise Refused("usage: kd-nudge activity <agent>")
+            agent = _hosted_agent(argv[1], agents_dir, hosted)
+            return activity_report(
+                agent, client=client, journal=activity_path, owner_uid=activity_owner, out=out, store=store,
+            )
+        if len(argv) != 2:
+            raise Refused("usage: kd-nudge <agent> KD-<n> | status | activity <agent>")
+        agent, card = argv
+        _agent(agent, agents_dir)
+        if not _CARD.fullmatch(card) or not card_exists(client, card):
+            raise Refused("unknown card")
+        result = wake(agent, f"[boss] {card}: see the card", card=card)
+    except Refused as exc:
+        err.write(f"kd-nudge: {exc}\n")
+        return EXIT_REFUSED
+    except Failed as exc:
+        err.write(f"kd-nudge: {exc}\n")
+        return exc.code
+    except directives.DirectiveError as exc:
+        err.write(f"kd-nudge: {exc}\n")
+        return EXIT_ERROR
+    except OSError as exc:
+        err.write(f"kd-nudge: journal unavailable ({exc.__class__.__name__})\n")
+        return EXIT_ERROR
+    if result == "sent":
+        out.write(f"sent {agent} {card}\n")
+        return 0
+    if result == "absent":
+        err.write(f"kd-nudge: {agent} not woken (absent: not on the session host); the card stays as it is\n")
+        return EXIT_UNDELIVERED
+    err.write(f"kd-nudge: {agent} not woken (error)\n")
+    return EXIT_ERROR
+
+
+def reexec_argv(argv):
+    return [cap_client.CLIENT, "run", "base", EXECUTOR, *argv]
+
+
+if __name__ == "__main__":
+    owner = pwd.getpwnam(OWNER)
+    if os.geteuid() != owner.pw_uid:
+        os.execv(cap_client.CLIENT, reexec_argv(sys.argv[1:]))
+    channel = {k: os.environ[k] for k in ("KD_AGENT", "KD_CALLER_USER") if os.environ.get(k)}
+    os.environ.clear()
+    os.environ.update(
+        HOME=owner.pw_dir, PATH="/usr/local/bin:/usr/bin:/bin", LANG="C.UTF-8"
+    )
+    os.chdir("/")
+    sys.exit(
+        main(
+            sys.argv[1:],
+            wake=lambda agent, text, urgent=False, card="", key="": kd_wake.wake(agent, text, card=card, key=key,
+                                                                                 urgent=urgent),
+            activity_owner=owner.pw_uid,
+            env=channel,
+            grant_owner=delegation.owner_uid(),
+        )
+    )

@@ -1,0 +1,9 @@
+[Unit]
+Description=DigiPaddock: the cabinet's "Check now" requests, every 15 seconds
+
+[Timer]
+OnCalendar=*:*:0/15
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

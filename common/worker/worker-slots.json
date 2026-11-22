@@ -1,0 +1,7 @@
+{
+  "schema_version": 3,
+  "requester": "boss",
+  "model": "sonnet",
+  "agents": {"dev": ["worker1", "worker2"], "analyst": ["worker1", "worker2"]},
+  "limits": {"jobs_per_day": 12, "attempts_per_card_spec": 3, "timeout_minutes": 60}
+}

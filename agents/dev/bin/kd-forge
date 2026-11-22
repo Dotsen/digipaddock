@@ -1,0 +1,34 @@
+#!/bin/bash
+# kd-forge prs|pr|comments|comment|publish|check|status … — reads PRs, comments as dev's account (spec §4.3), brings a PR to
+# the owner's cabinet (publish, KD-227: the diff, the files and the cage go to the card, the owner decides there) and
+# asks the cabinet for a dev.check of its live head (check, KD-9181: the passport's contour and profiles); no card.
+# status (KD-9337) reads the checks of a commit by its hash — the merged one too: the deploy its push started.
+# merge — only through kd-merge (Forgejo takes it only with the owner's approval on the head). A comment's text reaches
+# the executor on stdin: the executor never opens the agent's files.
+EXEC=/opt/digipaddock/agents/dev/bin/forge_exec.py
+# KD-194: the agent's forge channel runs the executor as the forge user; its grants file names exactly this program.
+CAP=/opt/digipaddock/common/bin/kd-cap
+TMP_DIR=/srv/digipaddock-agents/dev/work/tmp
+USAGE="usage: kd-forge prs <project> | pr <project> <N> | comments <project> <N> | comment <project> <N> --file <path> | publish <project> <N> | check <project> <N> [--profiles a,b] | status <project> <sha>"
+case "${1:-}" in
+  -h|--help)
+    echo "$USAGE"
+    echo "pr prints the full head sha (40 characters): pass that one to kd-merge."
+    echo "A failed kd-merge --release deploy is the owner's to investigate: journalctl -u digipaddock-release on the factory host."
+    exit 0 ;;
+  merge) echo "⛔ merge: only through kd-merge (the owner's card)" >&2; exit 2 ;;
+  comment)
+    [ "$#" -eq 5 ] && [ "$4" = --file ] || { echo "$USAGE" >&2; exit 2; }
+    # kd-forge runs outside the sandbox (the agent's self channel), as the agent's user: текст — только обычный файл из
+    # tmp/ папки агента, иначе симлинк оттуда на ~/.claude/.credentials.json, токен бота или ключ Hindsight ушёл бы в PR.
+    # Сначала имя (realpath -e), затем сам открытый файл (/proc/$$/fd/3): подмена имени после проверки не проходит
+    p=$(realpath -e -- "$5" 2>/dev/null) && [ -f "$p" ] && [ -r "$p" ] || { echo "⛔ the comment file is not readable: $5" >&2; exit 2; }
+    [[ $p == "$TMP_DIR"/* ]] || { echo "⛔ the comment file must be in $TMP_DIR/ (and not a symlink out of it): $5" >&2; exit 2; }
+    exec 3< "$p" || { echo "⛔ the comment file is not readable: $5" >&2; exit 2; }
+    real=$(readlink -- "/proc/$$/fd/3") && [ -f "/proc/$$/fd/3" ] && [[ $real == "$TMP_DIR"/* ]] \
+      || { echo "⛔ the comment file was replaced during the check: $5" >&2; exit 2; }
+    exec "$CAP" run forge "$EXEC" --agent "${KD_AGENT:-unknown}" comment "$2" "$3" <&3 3<&- ;;
+  prs|pr|comments|publish|check|status) ;;
+  *) echo "$USAGE" >&2; exit 2 ;;
+esac
+exec "$CAP" run forge "$EXEC" --agent "${KD_AGENT:-unknown}" "$@"

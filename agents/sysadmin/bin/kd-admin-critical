@@ -1,0 +1,5 @@
+#!/bin/bash
+# kd-admin-critical --task KD-<n> --action <id> — the owner-approved exact critical command, at most once (KD-188).
+# The executor runs as the exec service user behind the exec channel (KD-194): the command and servers come from the action grant,
+# never from these arguments; the approval service marks the approval used before any SSH.
+exec /opt/digipaddock/common/bin/kd-cap run exec /opt/digipaddock/agents/sysadmin/bin/admin_critical.py --agent "${KD_AGENT:-unknown}" "$@"

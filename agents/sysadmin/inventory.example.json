@@ -1,0 +1,25 @@
+{
+  "home": "example-stage",
+  "prod": "example-prod",
+  "servers": {
+    "example-stage": {
+      "host": "203.0.113.10",
+      "data_databases": ["exampletest"]
+    },
+    "example-prod": {
+      "host": "203.0.113.20",
+      "exec_user": "root",
+      "data_databases": ["exampleprod", "examplearchive"],
+      "data_hidden_columns": ["exampleprod.customers.phone"]
+    },
+    "node-a": {
+      "host": "203.0.113.30",
+      "exec_user": "ubuntu",
+      "exec_sudo": true
+    },
+    "node-b": {
+      "host": "203.0.113.31",
+      "tz": "Europe/Berlin"
+    }
+  }
+}

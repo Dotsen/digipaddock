@@ -1,0 +1,573 @@
+{
+  "acl": [
+    {
+      "access": "read",
+      "path": "/srv/digipaddock-agents/board",
+      "resource": "board-tasks",
+      "user": "digi-dev"
+    },
+    {
+      "access": "read",
+      "path": "/srv/digipaddock-mirror",
+      "resource": "code-mirror",
+      "user": "digi-dev"
+    },
+    {
+      "access": "read",
+      "path": "/var/log/digipaddock-forge",
+      "resource": "forge-journal",
+      "user": "digi-dev"
+    }
+  ],
+  "agent": "dev",
+  "bash_approval": "validator",
+  "capabilities": [
+    "board.read",
+    "board.write",
+    "data.read",
+    "diag.request",
+    "e2e.request",
+    "factory.request",
+    "forge.review",
+    "git.develop",
+    "git.mirror",
+    "host.read",
+    "net.egress"
+  ],
+  "channels": [
+    {
+      "commands": {},
+      "key": "base",
+      "programs": [
+        "/opt/digipaddock/common/bin/kd-diag",
+        "/opt/digipaddock/common/bin/kd-e2e",
+        "/opt/digipaddock/common/bin/kd-factory",
+        "/opt/digipaddock/common/bin/kd-permlog",
+        "/opt/digipaddock/common/bin/kd-task",
+        "/opt/digipaddock/common/bin/kd-work"
+      ],
+      "run_as": "digi"
+    },
+    {
+      "commands": {},
+      "key": "data",
+      "programs": [
+        "/opt/digipaddock/common/bin/kd-data"
+      ],
+      "run_as": "digi-data"
+    },
+    {
+      "commands": {},
+      "key": "forge",
+      "programs": [
+        "/opt/digipaddock/agents/dev/bin/forge_exec.py"
+      ],
+      "run_as": "digi-forge"
+    },
+    {
+      "commands": {},
+      "key": "host",
+      "programs": [
+        "/opt/digipaddock/common/bin/kd-host-read"
+      ],
+      "run_as": "digi-observe"
+    },
+    {
+      "commands": {
+        "kd-data": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-data",
+          "subcommands": []
+        },
+        "kd-diag": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-diag",
+          "subcommands": [
+            "check",
+            "list"
+          ]
+        },
+        "kd-e2e": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-e2e",
+          "subcommands": [
+            "list",
+            "run"
+          ]
+        },
+        "kd-factory": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-factory",
+          "subcommands": [
+            "install",
+            "plan",
+            "reinstall",
+            "status"
+          ]
+        },
+        "kd-forge": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/dev/bin/kd-forge",
+          "subcommands": [
+            "check",
+            "comment",
+            "comments",
+            "pr",
+            "prs",
+            "publish",
+            "status"
+          ]
+        },
+        "kd-host-read": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-host-read",
+          "subcommands": [
+            "cat",
+            "grep",
+            "head",
+            "journalctl",
+            "ls",
+            "paths",
+            "stat",
+            "sys",
+            "systemctl",
+            "tail"
+          ]
+        },
+        "kd-merge": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/dev/bin/kd-merge",
+          "subcommands": []
+        },
+        "kd-mirror-fetch": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/dev/bin/kd-mirror-fetch",
+          "subcommands": []
+        },
+        "kd-notes": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-notes",
+          "subcommands": [
+            "add"
+          ]
+        },
+        "kd-task": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-task",
+          "subcommands": [
+            "brief-review",
+            "chat",
+            "claim",
+            "create",
+            "edit",
+            "file",
+            "handoff",
+            "list",
+            "message",
+            "projects",
+            "result",
+            "scope",
+            "search",
+            "thread",
+            "view",
+            "waits"
+          ]
+        },
+        "kd-work": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-work",
+          "subcommands": [
+            "answer",
+            "ask",
+            "assist",
+            "council",
+            "council-reply",
+            "directive",
+            "finish",
+            "progress",
+            "reply"
+          ]
+        }
+      },
+      "key": "self",
+      "programs": [],
+      "run_as": "digi-dev"
+    }
+  ],
+  "install_steps": {
+    "check": [
+      "data.read:executor-user",
+      "forge.review:executor-user",
+      "git.mirror:executor-user",
+      "host.read:executor-user",
+      "data.read:setup",
+      "forge.review:setup",
+      "git.develop:setup",
+      "git.mirror:setup",
+      "host.read:setup",
+      "board.read:wrappers",
+      "board.write:wrappers",
+      "data.read:wrappers",
+      "diag.request:wrappers",
+      "e2e.request:wrappers",
+      "factory.request:wrappers",
+      "forge.review:wrappers",
+      "git.develop:wrappers",
+      "git.mirror:wrappers",
+      "host.read:wrappers",
+      "board.read:read-grants",
+      "forge.review:read-grants",
+      "git.mirror:read-grants",
+      "board.read:channels",
+      "board.write:channels",
+      "data.read:channels",
+      "diag.request:channels",
+      "e2e.request:channels",
+      "factory.request:channels",
+      "forge.review:channels",
+      "git.mirror:channels",
+      "host.read:channels"
+    ],
+    "disable": [
+      "board.read:channels",
+      "board.write:channels",
+      "data.read:channels",
+      "diag.request:channels",
+      "e2e.request:channels",
+      "factory.request:channels",
+      "forge.review:channels",
+      "git.mirror:channels",
+      "host.read:channels",
+      "board.read:read-grants",
+      "forge.review:read-grants",
+      "git.mirror:read-grants",
+      "data.read:setup",
+      "forge.review:setup",
+      "git.develop:setup",
+      "git.mirror:setup",
+      "host.read:setup"
+    ],
+    "install": [
+      "data.read:executor-user",
+      "forge.review:executor-user",
+      "git.mirror:executor-user",
+      "host.read:executor-user",
+      "data.read:setup",
+      "forge.review:setup",
+      "git.develop:setup",
+      "git.mirror:setup",
+      "host.read:setup",
+      "board.read:wrappers",
+      "board.write:wrappers",
+      "data.read:wrappers",
+      "diag.request:wrappers",
+      "e2e.request:wrappers",
+      "factory.request:wrappers",
+      "forge.review:wrappers",
+      "git.develop:wrappers",
+      "git.mirror:wrappers",
+      "host.read:wrappers",
+      "board.read:read-grants",
+      "forge.review:read-grants",
+      "git.mirror:read-grants",
+      "board.read:channels",
+      "board.write:channels",
+      "data.read:channels",
+      "diag.request:channels",
+      "e2e.request:channels",
+      "factory.request:channels",
+      "forge.review:channels",
+      "git.mirror:channels",
+      "host.read:channels"
+    ]
+  },
+  "launch_settings": {
+    "sandbox": {
+      "allowUnsandboxedCommands": false,
+      "autoAllowBashIfSandboxed": false,
+      "credentials": {
+        "envVars": [
+          {
+            "mode": "deny",
+            "name": "CLAUDE_CODE_OAUTH_TOKEN"
+          },
+          {
+            "mode": "deny",
+            "name": "ANTHROPIC_AUTH_TOKEN"
+          },
+          {
+            "mode": "deny",
+            "name": "ANTHROPIC_API_KEY"
+          }
+        ]
+      },
+      "enableWeakerNestedSandbox": false,
+      "enableWeakerNetworkIsolation": false,
+      "enabled": true,
+      "excludedCommands": [],
+      "failIfUnavailable": true,
+      "filesystem": {
+        "allowRead": [
+          "/home/digi-dev/.claude/projects",
+          "/home/digi-dev/.ssh/config",
+          "/home/digi-dev/.ssh/dev_ed25519",
+          "/run/digipaddock/cap/dev"
+        ],
+        "denyRead": [
+          "/etc/digi-exec",
+          "/etc/digipaddock/cabinet.env",
+          "/etc/digipaddock/claude.env",
+          "/etc/digipaddock/forge",
+          "/etc/digipaddock/llm",
+          "/etc/digipaddock/pult.env",
+          "/etc/digipaddock/push.env",
+          "/etc/digipaddock/review",
+          "/etc/hindsight",
+          "/home/agent-ro",
+          "/home/digi",
+          "/home/digi-cabinet",
+          "/home/digi-ci",
+          "/home/digi-data",
+          "/home/digi-dev/.claude",
+          "/home/digi-dev/.hindsight",
+          "/home/digi-dev/.ssh",
+          "/home/digi-exec",
+          "/home/digi-forge",
+          "/home/digi-observe",
+          "/home/digi-push",
+          "/home/digi-repo",
+          "/home/digi-review",
+          "/home/digi-sysadmin",
+          "/home/digi-transcribe",
+          "/run",
+          "/srv/digipaddock-agents/sysadmin",
+          "/var/lib/digipaddock",
+          "/var/run"
+        ],
+        "denyWrite": [
+          "/home/digi-dev/.bash_profile",
+          "/home/digi-dev/.bashrc",
+          "/home/digi-dev/.bun",
+          "/home/digi-dev/.claude",
+          "/home/digi-dev/.claude.json",
+          "/home/digi-dev/.config",
+          "/home/digi-dev/.local",
+          "/home/digi-dev/.profile",
+          "/home/digi-dev/.ssh",
+          "/opt/digipaddock",
+          "/opt/digipaddock/host/egress.json",
+          "/run",
+          "/srv/digipaddock-agents/board",
+          "/srv/digipaddock-agents/dev/memory/legacy",
+          "/srv/digipaddock-agents/dev/memory/notes.md",
+          "/srv/digipaddock-agents/dev/work/CLAUDE.local.md",
+          "/srv/digipaddock-agents/dev/work/CLAUDE.md",
+          "/srv/digipaddock-mirror",
+          "/srv/example-docs",
+          "/var/lib/digipaddock",
+          "/var/log/digipaddock-forge",
+          "/var/run"
+        ]
+      },
+      "network": {
+        "allowAllUnixSockets": true,
+        "allowLocalBinding": false,
+        "allowUnixSockets": [],
+        "allowedDomains": [
+          "forge.example.test"
+        ],
+        "strictAllowlist": true
+      }
+    }
+  },
+  "model": null,
+  "profile": "developer",
+  "sandbox_profile": "developer-v1",
+  "schema_version": 7,
+  "settings": {
+    "hooks": {
+      "PreToolUse": [
+        {
+          "hooks": [
+            {
+              "command": "/opt/digipaddock/agents/dev/bin/deny_guard.py || exit 2",
+              "timeout": 30,
+              "type": "command"
+            }
+          ],
+          "matcher": "Bash"
+        }
+      ]
+    },
+    "permissions": {
+      "additionalDirectories": [
+        "/srv/digipaddock-agents/board",
+        "/srv/digipaddock-mirror",
+        "/var/log/digipaddock-forge"
+      ],
+      "allow": [
+        "Edit(//srv/digipaddock-agents/dev/memory/chats/**)",
+        "Edit(//srv/digipaddock-agents/dev/memory/tasks/**)",
+        "Edit(//srv/digipaddock-agents/dev/work/**)",
+        "Glob",
+        "Grep",
+        "Read",
+        "Read(//opt/digipaddock/host/egress.json)",
+        "Read(//srv/digipaddock-agents/board/**)",
+        "Read(//srv/digipaddock-agents/dev/**)",
+        "Read(//srv/digipaddock-mirror/**)",
+        "Read(//var/log/digipaddock-forge/**)",
+        "mcp__hindsight__hindsight_capture_initiative",
+        "mcp__hindsight__hindsight_diagnose",
+        "mcp__hindsight__hindsight_ingest_document",
+        "mcp__hindsight__hindsight_list_knowledge_pages",
+        "mcp__hindsight__hindsight_read_knowledge_page",
+        "mcp__hindsight__hindsight_reflect",
+        "mcp__hindsight__hindsight_search_knowledge_pages",
+        "mcp__hindsight__hindsight_sync_status"
+      ],
+      "ask": [],
+      "defaultMode": "dontAsk",
+      "deny": [
+        "Bash(apt*)",
+        "Bash(bash -c *)",
+        "Bash(bun *)",
+        "Bash(curl *)",
+        "Bash(git -C *)",
+        "Bash(git -c *)",
+        "Bash(git config *)",
+        "Bash(git filter-branch*)",
+        "Bash(git pull*)",
+        "Bash(git push*)",
+        "Bash(git rebase*)",
+        "Bash(git remote *)",
+        "Bash(git reset --hard*)",
+        "Bash(git submodule*)",
+        "Bash(git tag *)",
+        "Bash(kd-admin-critical *)",
+        "Bash(kd-admin-propose *)",
+        "Bash(kd-admin-propose-action *)",
+        "Bash(kd-admin-run *)",
+        "Bash(kd-boss-board *)",
+        "Bash(kd-monitor *)",
+        "Bash(kd-monitor-read *)",
+        "Bash(kd-nudge *)",
+        "Bash(kd-repo *)",
+        "Bash(kd-usage *)",
+        "Bash(kd-worker *)",
+        "Bash(npm *)",
+        "Bash(npx *)",
+        "Bash(pip *)",
+        "Bash(pip3 *)",
+        "Bash(rsync *)",
+        "Bash(scp *)",
+        "Bash(sftp *)",
+        "Bash(sh -c *)",
+        "Bash(ssh *)",
+        "Bash(ssh-exec *)",
+        "Bash(ssh-ro *)",
+        "Bash(su *)",
+        "Bash(sudo *)",
+        "Bash(wget *)",
+        "Edit(//home/agent-ro/**)",
+        "Edit(//home/digi-cabinet/**)",
+        "Edit(//home/digi-ci/**)",
+        "Edit(//home/digi-data/**)",
+        "Edit(//home/digi-dev/.bash_profile)",
+        "Edit(//home/digi-dev/.bashrc)",
+        "Edit(//home/digi-dev/.bun/**)",
+        "Edit(//home/digi-dev/.claude.json)",
+        "Edit(//home/digi-dev/.claude/**)",
+        "Edit(//home/digi-dev/.config/**)",
+        "Edit(//home/digi-dev/.hindsight/**)",
+        "Edit(//home/digi-dev/.local/**)",
+        "Edit(//home/digi-dev/.profile)",
+        "Edit(//home/digi-dev/.ssh/**)",
+        "Edit(//home/digi-exec/**)",
+        "Edit(//home/digi-forge/**)",
+        "Edit(//home/digi-observe/**)",
+        "Edit(//home/digi-push/**)",
+        "Edit(//home/digi-repo/**)",
+        "Edit(//home/digi-review/**)",
+        "Edit(//home/digi-sysadmin/**)",
+        "Edit(//home/digi-transcribe/**)",
+        "Edit(//home/digi/**)",
+        "Edit(//opt/digipaddock/**)",
+        "Edit(//opt/digipaddock/host/egress.json)",
+        "Edit(//srv/digipaddock-agents/board/**)",
+        "Edit(//srv/digipaddock-agents/dev/.claude/**)",
+        "Edit(//srv/digipaddock-agents/dev/CLAUDE.md)",
+        "Edit(//srv/digipaddock-agents/dev/memory/legacy/**)",
+        "Edit(//srv/digipaddock-agents/dev/memory/notes.md)",
+        "Edit(//srv/digipaddock-agents/dev/playbooks/**)",
+        "Edit(//srv/digipaddock-agents/dev/work/**/.claude/**)",
+        "Edit(//srv/digipaddock-agents/dev/work/**/.mcp.json)",
+        "Edit(//srv/digipaddock-agents/dev/work/.claude/**)",
+        "Edit(//srv/digipaddock-agents/dev/work/.mcp.json)",
+        "Edit(//srv/digipaddock-agents/dev/work/CLAUDE.local.md)",
+        "Edit(//srv/digipaddock-agents/dev/work/CLAUDE.md)",
+        "Edit(//srv/digipaddock-agents/sysadmin/**)",
+        "Edit(//srv/digipaddock-mirror/**)",
+        "Edit(//srv/example-docs/**)",
+        "Edit(//var/lib/digipaddock/**)",
+        "Edit(//var/log/digipaddock-forge/**)",
+        "Monitor",
+        "Read(//**/.git-credentials)",
+        "Read(//etc/digi-exec/**)",
+        "Read(//etc/digipaddock/cabinet.env)",
+        "Read(//etc/digipaddock/claude.env)",
+        "Read(//etc/digipaddock/forge/**)",
+        "Read(//etc/digipaddock/llm/**)",
+        "Read(//etc/digipaddock/pult.env)",
+        "Read(//etc/digipaddock/push.env)",
+        "Read(//etc/digipaddock/review/**)",
+        "Read(//etc/hindsight/**)",
+        "Read(//home/agent-ro/**)",
+        "Read(//home/digi-cabinet/**)",
+        "Read(//home/digi-ci/**)",
+        "Read(//home/digi-data/**)",
+        "Read(//home/digi-dev/.claude/.credentials.json)",
+        "Read(//home/digi-dev/.hindsight/**)",
+        "Read(//home/digi-dev/.ssh/**)",
+        "Read(//home/digi-exec/**)",
+        "Read(//home/digi-forge/**)",
+        "Read(//home/digi-observe/**)",
+        "Read(//home/digi-push/**)",
+        "Read(//home/digi-repo/**)",
+        "Read(//home/digi-review/**)",
+        "Read(//home/digi-sysadmin/**)",
+        "Read(//home/digi-transcribe/**)",
+        "Read(//home/digi/**)",
+        "Read(//opt/**/.git/config)",
+        "Read(//opt/**/vpn/*.conf)",
+        "Read(//srv/digipaddock-agents/sysadmin/**)",
+        "Read(//var/lib/digipaddock/**)",
+        "Read(//var/www/**/.env)",
+        "Read(//var/www/**/.env.*)",
+        "Read(//var/www/**/.git/config)",
+        "Read(//var/www/**/app_keys.json)",
+        "Read(//var/www/**/app_tokens.json)",
+        "Read(//var/www/**/config.ini)",
+        "Read(//var/www/**/config.ini*)",
+        "Read(//var/www/**/data/keys/**)",
+        "Skill(hindsight-coding-agent)",
+        "WebFetch",
+        "WebSearch"
+      ],
+      "disableAutoMode": "disable",
+      "disableBypassPermissionsMode": "disable"
+    }
+  },
+  "user": "digi-dev"
+}

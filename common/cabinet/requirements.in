@@ -1,0 +1,21 @@
+# The cabinet web service's direct dependencies (kd-cabinet serve / push, venv
+# /var/lib/digipaddock/venv/cabinet). Pins: releases at least two weeks old at the time of pinning.
+# The venv installs the full lock requirements.txt (every package, with hashes), compiled from this file:
+#   uv pip compile common/cabinet/requirements.in --generate-hashes --python-version 3.12
+#     --python-platform x86_64-unknown-linux-gnu --exclude-newer <two weeks ago> --no-header
+#     -o common/cabinet/requirements.txt
+fastapi==0.142.2
+uvicorn==0.54.0
+websockets==17.1
+python-multipart==0.0.32
+webauthn==3.0.1
+pywebpush==2.5.0
+pyotp==2.10.0
+argon2-cffi==25.1.0
+cryptography==50.0.2
+# transitive dependencies whose newest release is younger than two weeks
+starlette==1.7.0
+pydantic==2.13.5
+aiohttp==3.14.3
+opentelemetry-api==1.45.0
+py-vapid==1.9.4

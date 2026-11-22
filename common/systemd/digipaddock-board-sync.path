@@ -1,0 +1,9 @@
+[Unit]
+Description=DigiPaddock: a write in the cabinet → kd-board sync
+
+[Path]
+PathChanged=/run/digipaddock-cabinet/changed
+Unit=digipaddock-board-sync.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+#!/usr/bin/python3 -I
+"""systemd socket-activated capability channel instance: kd-cap-serve <agent> <key> (kd/cap_serve.py)."""
+
+import os
+import socket
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from kd import cap_serve  # noqa: E402
+
+if len(sys.argv) != 3:
+    sys.exit("usage: kd-cap-serve <agent> <key>")
+if os.geteuid() == 0:
+    sys.exit("kd-cap-serve: a channel service never runs as root")
+sys.exit(cap_serve.serve(socket.socket(fileno=0), sys.argv[1], sys.argv[2]))

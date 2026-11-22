@@ -1,0 +1,17 @@
+[Unit]
+Description=DigiPaddock: the kd-transcribe socket — voice message transcription, a process per connection
+
+[Socket]
+# Only the cabinet's service user reaches it (its group). Accept=yes: systemd starts digipaddock-transcribe@.service for each
+# connection, the process answers that one voice message and exits — no standing service.
+ListenStream=/run/digipaddock-transcribe/transcribe.sock
+Accept=yes
+MaxConnections=2
+SocketUser=root
+SocketGroup=@cabinet@
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

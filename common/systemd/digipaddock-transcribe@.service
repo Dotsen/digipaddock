@@ -1,0 +1,40 @@
+[Unit]
+Description=DigiPaddock: kd-transcribe — one voice message to text, no network
+CollectMode=inactive-or-failed
+
+[Service]
+# One connection, one voice message: the header and the recording on the socket, one JSON line back, exit. Its own
+# user without network; reads the code, its venv and the model, writes nothing but its private /tmp (removed by
+# kd-transcribe itself and by PrivateTmp). The model (medium, owner's decision 22.10.2026) is the installer's.
+# Memory: up to 4G per message (medium measured 2.5 GiB), MaxConnections=2 on the socket. No OnFailure alert: a
+# failed message is the caller's "Retry", not an operator's page.
+User=@transcribe@
+ExecStart=/var/lib/digipaddock/venv/transcribe/bin/python -I /opt/digipaddock/common/bin/kd-transcribe --model medium --models-dir /var/lib/digipaddock/transcribe/models --synonyms /opt/digipaddock/host/transcribe-synonyms.json --threads 4
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=900
+MemoryMax=4G
+UMask=0077
+Environment=HOME=/nonexistent LANG=C.UTF-8 PATH=/usr/bin:/bin HF_HUB_OFFLINE=1
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectClock=yes
+ProtectHostname=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

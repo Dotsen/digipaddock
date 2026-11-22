@@ -1,0 +1,11 @@
+#!/usr/bin/python3 -I
+"""Root provider-key service and signer enrollment."""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from kd.model_keys import main
+
+if __name__ == "__main__":
+    sys.exit(main())

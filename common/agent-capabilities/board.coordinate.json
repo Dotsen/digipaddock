@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "name": "board.coordinate",
+  "module": "coordinator",
+  "description": "Finite board mutations through the root-owned kd-boss-board executor (board owner): revision check and audit record; no raw board write or status choice. promote is the owner's decision on its page (propose-promote); subtasks only under the owner's grant (propose-delegate, create-child).",
+  "shell": "none",
+  "dependencies": ["board.read"],
+  "conflicts": ["board.write", "forge.review", "git.develop", "monitor.manage", "servers.execute", "servers.read"],
+  "resources": [
+    {"name": "board-tasks", "access": "via-wrapper"},
+    {"name": "board-audit", "access": "via-wrapper"},
+    {"name": "board-attention", "access": "via-wrapper"},
+    {"name": "board-attention-acks", "access": "via-wrapper"},
+    {"name": "boss-delegation", "access": "via-wrapper"},
+    {"name": "boss-grants", "access": "via-wrapper"},
+    {"name": "agent-registry", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-boss-board",
+      "source": "common/bin/kd-boss-board",
+      "subcommands": [
+        "comment",
+        "assign",
+        "set-project",
+        "set-priority",
+        "set-labels",
+        "set-dependency",
+        "create-inbox",
+        "unblock",
+        "attention-list",
+        "attention-ack",
+        "assist-list",
+        "assist-assign",
+        "revision",
+        "specs",
+        "propose-promote",
+        "propose-delegate",
+        "create-child",
+        "finish",
+        "prepare-create",
+        "request-brief",
+        "close-duplicate",
+        "close-cancelled",
+        "review",
+        "stage-pass",
+        "stage-return",
+        "stage-hold",
+        "defer",
+        "council"
+      ],
+      "approval": "allow",
+      "run_as": "@base@",
+      "executor": "common/bin/kd-boss-board"
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-boss-board"]
+  },
+  "lifecycle": {
+    "install": ["wrappers", "channels"],
+    "check": ["wrappers", "channels"],
+    "disable": ["channels"]
+  }
+}

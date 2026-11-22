@@ -1,0 +1,10 @@
+/* Shared state colors for the agents list and the dashboard team. */
+.agent-state { --state-color: var(--muted); --state-bg: var(--surface-2); --state-border-style: solid; }
+.agent-state.working { --state-color: var(--good); --state-bg: var(--good-bg); }
+.agent-state.free { --state-color: var(--muted); }
+.agent-state.waiting_you { --state-color: var(--warn); --state-bg: var(--warn-bg); }
+.agent-state.queued { --state-color: var(--info); --state-bg: var(--info-bg); }
+.agent-state.error { --state-color: var(--crit); --state-bg: var(--crit-bg); }
+.agent-state.unavailable { --state-color: var(--au-boss-ink); --state-bg: var(--au-boss); }
+.agent-state.unknown { --state-color: var(--text); --state-border-style: dashed; }
+.agent-state .chip.state { color: var(--state-color); background: var(--state-bg); border-color: currentColor; }

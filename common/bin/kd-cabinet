@@ -1,0 +1,640 @@
+#!/usr/bin/python3 -I
+"""kd-cabinet — the board service of the owner cabinet and its owner-side commands.
+
+``serve`` runs the service: the only process that opens cabinet.db (as the cabinet service user,
+started by systemd with the listening socket); the base's projects table is the board's projects.
+``cards [-s STATUS] [-a @who] [-p PROJECT] [-l LABEL]`` and ``card KD-n`` read the
+board through the socket, as whoever runs them.
+``create "<title>" -p PROJECT [-a @who] [-d TEXT]`` makes a card in Inbox and ``edit KD-n [-s STATUS]
+[-a @who] [--priority P] [--check-ac N] [--uncheck-ac N] [-c "comment"]`` changes one (as root
+through the socket, actor ``root``: the maintainer's own cards and clean-ups; a person's clicks stay in
+the web). ``-s Cancelled`` closes a card without the work (outcome ``cancelled``);
+``--duplicate-of KD-m`` closes it as a duplicate of KD-m. ``defer KD-n --until <moment> [--reason T]``
+puts a card off until a moment with its time zone (as the owner's "Put off until…": out of the inbox till
+then, woken by the cabinet with a notice), ``defer KD-n --wake`` ends that now.
+``export <board_dir>`` writes the board as Backlog.md files and commits them to the directory's git
+(``kd.cabinet.exporter``; nightly, digipaddock-cabinet-export.timer, as root); it prints committed or clean.
+``push`` runs the Web Push sender (``kd.cabinet.push_worker``; digipaddock-cabinet-push.service, as the cabinet's
+user) with the host's VAPID key from cabinet.env.
+``serve`` also answers HTTP for nginx on the ``http`` socket systemd passes and runs the scheduler;
+without cabinet.json/cabinet.env it serves the local socket alone, as before (the web stays off).
+``serve --dev [--seed] [--listen 127.0.0.1:8765] [--state-dir DIR]`` runs the whole cabinet on a
+developer's machine over ``DIR`` (default ``tmp/cabinet-dev``), seeded once (``kd.cabinet.devseed``), with @analyst on a
+scripted session host (``kd.cabinet.devhost``).
+``user add <id> --name <name> --role owner|partner|viewer [--projects a,b]`` creates a person and prints
+their sign-in code; ``user code <id>`` issues a new one; ``user block <id>``; ``user list`` (as root,
+through the socket).
+``operation request --agents a[,b] [--card KD-n] [--key K]`` asks the session host for a factory operation
+``agent.reinstall`` as root (no grant, root owns the host; the key defaults to ``root:<agents>:<time>``)
+and prints ``operation <id> <state>``; ``operation get <id>`` prints its state and result.
+``devcheck list [--card KD-n]`` prints the dev.checks, newest first, one line each; ``devcheck cancel <id>``
+stops one (as root: not reached the host — ended here, else flagged for the host). ``contour list`` prints the check
+contours with their state and what runs there; ``contour maintenance <name> --reason "…"`` takes one out of service,
+``contour release <name>`` returns it.
+``release <project>`` (root) asks kd-release for main of the project's release as it is (request.json with
+``"requester": "root"``, no sha); ``--rev <sha|tag>`` names a commit or a tag v... of the code repository
+instead — kd-release checks it is on main and verifies a tag's signature; ``release <project> --rollback [<dir>]``
+runs ``kd-release --rollback``.
+``health [--json]`` (root) runs the release's health checks (``kd.release_health.run``) on this tree with no
+card and no notice: exit 0 healthy, 1 degraded.
+
+Exit codes: 0 done, 1 board unavailable or error, 2 refused or invalid, 3 conflict.
+"""
+
+import argparse
+import json
+import asyncio
+import os
+import re
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import agents, naming, specializations  # noqa: E402
+from kd.cabinet import (  # noqa: E402
+    client as cabinet_client,
+    config,
+    dispatcher,
+    exporter,
+    push_worker,
+    server,
+    view,
+)
+
+DB = "/var/lib/digipaddock/cabinet/cabinet.db"
+RELEASE_DIR = "/var/lib/digipaddock/release"  # kd-release's request; the forge executor writes it too
+REPOS = "/etc/digipaddock/repos.json"
+KD_RELEASE = "/usr/local/bin/" + naming.command("kd-release")
+REV_RE = re.compile(r"[0-9a-f]{7,40}")  # kd-release's shapes of a root-named rev
+TAG_RE = re.compile(r"v[0-9A-Za-z](?:[0-9A-Za-z._-]{0,62}[0-9A-Za-z])?")
+ROLES = ("owner", "partner", "viewer")
+
+
+class Usage(Exception):
+    pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Usage(message)
+
+
+def parse(argv):
+    parser = Parser(prog="kd-cabinet", allow_abbrev=False)
+    commands = parser.add_subparsers(dest="command", required=True, parser_class=Parser)
+    serve_ = commands.add_parser("serve")
+    serve_.add_argument("--dev", action="store_true")
+    serve_.add_argument("--db")
+    serve_.add_argument("--listen", default="127.0.0.1:8765")
+    serve_.add_argument("--origin")
+    serve_.add_argument("--state-dir")
+    serve_.add_argument("--seed", action="store_true")
+    serve_.add_argument("--language", choices=("ru", "en"), help="--dev: the cabinet's default language (host.json's otherwise)")
+    cards = commands.add_parser("cards")
+    cards.add_argument("-s", "--status")
+    cards.add_argument("-a", "--assignee")
+    cards.add_argument("-p", "--project")
+    cards.add_argument("-l", "--label")
+    card = commands.add_parser("card")
+    card.add_argument("card")
+    create = commands.add_parser("create")
+    create.add_argument("title")
+    create.add_argument("-p", "--project", required=True)
+    create.add_argument("-a", "--assignee")
+    create.add_argument("-d", "--description", default="")
+    edit = commands.add_parser("edit")
+    edit.add_argument("card")
+    edit.add_argument("-s", "--status")
+    edit.add_argument("-a", "--assignee")
+    edit.add_argument("--priority")
+    edit.add_argument("--duplicate-of", metavar="KD-m", help="close the card as Cancelled: a duplicate of KD-m")
+    edit.add_argument("--check-ac", type=int, action="append", default=[], metavar="N")
+    edit.add_argument("--uncheck-ac", type=int, action="append", default=[], metavar="N")
+    edit.add_argument("-c", "--comment")
+    defer_ = commands.add_parser("defer")  # as root: the card put off until a moment, or woken now
+    defer_.add_argument("card")
+    defer_.add_argument("--until", metavar="MOMENT", help="2026-11-16T09:00Z or ...T09:00+HH:MM: with its time zone, up to 90 days")
+    defer_.add_argument("--reason", metavar="TEXT")
+    defer_.add_argument("--wake", action="store_true", help="end the card's defer now")
+    commands.add_parser("export").add_argument("board_dir")
+    commands.add_parser("push")
+    pipeline = commands.add_parser("pipeline")
+    pipeline.add_argument("action", choices=["status", "inventory"])
+    pipeline.add_argument("--json", action="store_true", help="inventory as JSON")
+    operation = commands.add_parser("operation")
+    operation_commands = operation.add_subparsers(dest="operation_command", required=True, parser_class=Parser)
+    asked = operation_commands.add_parser("request")
+    asked.add_argument("--agents", required=True)
+    asked.add_argument("--card")
+    asked.add_argument("--key")
+    operation_commands.add_parser("get").add_argument("id")
+    devcheck = commands.add_parser("devcheck")
+    devcheck_commands = devcheck.add_subparsers(dest="devcheck_command", required=True, parser_class=Parser)
+    devcheck_commands.add_parser("list").add_argument("--card")
+    devcheck_commands.add_parser("cancel").add_argument("id")
+    contour = commands.add_parser("contour")
+    contour_commands = contour.add_subparsers(dest="contour_command", required=True, parser_class=Parser)
+    contour_commands.add_parser("list")
+    contour_commands.add_parser("release").add_argument("name")
+    maintenance = contour_commands.add_parser("maintenance")
+    maintenance.add_argument("name")
+    maintenance.add_argument("--reason", required=True)
+    release_ = commands.add_parser("release")
+    release_.add_argument("project")
+    release_.add_argument("--rollback", nargs="?", const="", default=None, metavar="DIR")
+    release_.add_argument("--rev", metavar="SHA|TAG")
+    commands.add_parser("health").add_argument("--json", action="store_true")
+    user = commands.add_parser("user")
+    user_commands = user.add_subparsers(
+        dest="user_command", required=True, parser_class=Parser
+    )
+    add = user_commands.add_parser("add")
+    add.add_argument("id")
+    add.add_argument("--name", required=True)
+    add.add_argument("--role", required=True, choices=ROLES)
+    add.add_argument("--projects")
+    for name in ("code", "block"):
+        user_commands.add_parser(name).add_argument("id")
+    user_commands.add_parser("list")
+    signing = user_commands.add_parser("signing")  # a passkey signs server plans, or stops
+    signing.add_argument("id")
+    signing.add_argument("--credential", required=True, metavar="PREFIX", help="a prefix of the key's id, at least 8 characters")
+    signing.add_argument("state", choices=("on", "off"))
+    user_commands.add_parser("signers").add_argument("ids", nargs="*", metavar="ID")
+    return parser.parse_args(argv)
+
+
+def operation(args, client, *, out) -> int:
+    """A factory operation as root: request one, or read one back."""
+    import time
+
+    if args.operation_command == "get":
+        found = client.call({"op": "operation.get", "id": args.id})["operation"]
+        out.write(f"operation {found['id']} {found['state']} {found['phase'] or '-'} agents {','.join(found['agents'])}"
+                  f" revision {found['revision'][:12]} error {found['error'] or '-'}\n")
+        for name, item in sorted((found["result"].get("agents") or {}).items()):
+            out.write(f"  {name}: {item['state']} {item['stage'] or '-'} {item['error'] or ''}\n")
+        if found.get("reconcile"):
+            out.write("  reconcile: the host lost it — check each role with new_agent.sh --verify <agent>\n")
+        return 0
+    agents = [a for a in args.agents.split(",") if a]
+    request = {"op": "operation.request", "kind": "agent.reinstall", "agents": agents,
+               "key": args.key or f"root:{'-'.join(sorted(agents))}:{int(time.time())}"}
+    if args.card:
+        request["card"] = args.card
+    found = client.call(request)["operation"]
+    out.write(f"operation {found['id']} {found['state']}\n")
+    return 0
+
+
+def devcheck(args, client, *, out) -> int:
+    """The dev.checks as root: list them, or stop one."""
+    if args.devcheck_command == "cancel":
+        found = client.call({"op": "devcheck.cancel", "id": args.id})["operation"]
+        out.write(f"devcheck {found['id']} {found['state']} {found['error'] or '-'}\n")
+        return 0
+    request = {"op": "devcheck.list", **({"card": args.card} if args.card else {})}
+    for op in client.call(request)["checks"]:
+        params = op["params"]
+        out.write(f"{op['id']} {op['state']} {op['card']} {params['project']}#{params['pr']} {params['head'][:7]} "
+                  f"{','.join(params['profiles'])} {params['contour']} {op['error'] or '-'}\n")
+    return 0
+
+
+def contour(args, client, *, out) -> int:
+    """The check contours as root: their state, and maintenance in and out."""
+    if args.contour_command == "list":
+        for row in client.call({"op": "contour.list"})["contours"]:
+            line = f"{row['name']} {row['state']} capacity {row['capacity']} · {', '.join(row['components'])}"
+            for job in row["running"]:
+                line += f" · {job['card']} {job['project']}#{job['pr']} {job['head'][:7]}"
+            if row["reason"]:
+                line += f" — {row['reason']}"
+            out.write(line + "\n")
+        return 0
+    if args.contour_command == "maintenance":
+        row = client.call({"op": "contour.maintenance", "name": args.name, "reason": args.reason})["contour"]
+        out.write(f"contour {row['name']} {row['state']}: {row['reason']}\n")
+        return 0
+    row = client.call({"op": "contour.release", "name": args.name})["contour"]
+    out.write(f"contour {row['name']} {row['state']}\n")
+    return 0
+
+
+def _release_lock():
+    """release/.lock, shared with the forge executor (kd-merge --release): it is the directory's owner's — a root-owned
+    lock would shut the executor out (review I1), so one root creates, or an older kd-cabinet left, is handed over.
+    Only a plain file with one link is taken: a link, a FIFO or a directory there is an OSError, not a hang."""
+    import stat
+
+    path = os.path.join(RELEASE_DIR, ".lock")
+    flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd, created = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o640), True
+    except FileExistsError:
+        fd, created = os.open(path, flags), False
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise OSError(f"{path} is not a plain file")
+        owner = os.stat(RELEASE_DIR).st_uid
+        if hasattr(os, "fchown") and (created or st.st_uid != owner):
+            os.fchown(fd, owner, -1)
+    except BaseException:
+        os.close(fd)
+        raise
+    return os.fdopen(fd, "a")
+
+
+def release(args, *, out, err) -> int:
+    """root's request to kd-release: main of the project's release as it is, or a rollback."""
+    import time
+    from secrets import token_hex
+
+    from kd import release_requests
+
+    if args.rollback is not None:
+        if args.rev is not None:
+            err.write("kd-cabinet: --rev and --rollback do not go together\n")
+            return 2
+        os.execv(KD_RELEASE, ["kd-release", "--rollback", *([args.rollback] if args.rollback else [])])
+        return 1  # execv does not return
+    if args.rev is not None and (not (REV_RE.fullmatch(args.rev) or TAG_RE.fullmatch(args.rev)) or ".." in args.rev):
+        err.write("kd-cabinet: --rev — a commit (7–40 hex) or a tag v... of the code repository\n")
+        return 2
+    try:
+        with open(REPOS, encoding="utf-8") as f:
+            entry = json.load(f).get(args.project)
+    except (OSError, ValueError, AttributeError) as exc:
+        err.write(f"kd-cabinet: {REPOS}: unreadable ({exc.__class__.__name__})\n")
+        return 1
+    if not isinstance(entry, dict) or not entry.get("release") or not isinstance(entry.get("repo"), str):
+        err.write(f"kd-cabinet: project {args.project} is not released by kd-release (repos.json)\n")
+        return 2
+    path = os.path.join(RELEASE_DIR, "request.json")
+    try:
+        import fcntl
+    except ImportError:  # Windows (tests)
+        fcntl = None
+    try:
+        lock = _release_lock()
+    except OSError as exc:
+        err.write(f"kd-cabinet: release lock: {exc}\n")
+        return 1
+    with lock:
+        if fcntl is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        if os.path.exists(path):
+            err.write("kd-cabinet: an earlier release request is not taken yet — journalctl -u digipaddock-release\n")
+            return 1
+        request_id = token_hex(32)
+        release_requests.write(RELEASE_DIR, "request.json", {
+            "project": args.project, "repo": entry["repo"], "ts": f"{time.time():.3f}",
+            "requester": "root", "request_id": request_id,
+            **({"rev": args.rev} if args.rev is not None else {}),
+        }, mode=0o640)
+    out.write(f"release request {args.rev or 'main'} queued; the result — in the cabinet feed "
+              f"and /var/lib/digipaddock/release-result/{release_requests.result_name(request_id)}\n")
+    return 0
+
+
+def health(args, *, out) -> int:
+    """The release's health checks on this tree, no card and no notice: bootstrap's last word."""
+    from pathlib import Path
+
+    from kd import release_health
+    from kd.cabinet import config, schema
+
+    result = release_health.run(Path(COMMON).parent, origin=config.origin_of(), schema_version=schema.SCHEMA_VERSION)
+    if args.json:
+        out.write(json.dumps(result, ensure_ascii=False) + "\n")
+    else:
+        for check in result["checks"]:
+            mark = "ok    " if check["ok"] else "failed"
+            tail = f": {check['detail']}" if check["detail"] and not check["ok"] else ""
+            out.write(f"{mark}  {check['name']}{tail}\n")
+    return 0 if result["ok"] else 1
+
+
+def dev_db(db):
+    """The dev base: the one named, else tmp/cabinet-dev/cabinet.db under the current directory."""
+    return db or os.path.join("tmp", "cabinet-dev", "cabinet.db")
+
+
+def _listen(value):
+    host, _, port = value.rpartition(":")
+    if not host or not port.isdigit():
+        raise Usage("--listen is host:port")
+    return host, int(port)
+
+
+def serve(args, *, out=sys.stdout, err=sys.stderr) -> int:
+    """The service: the base (its projects table is the board's projects), the local socket, the web app
+    and the scheduler (``--dev``: all of it over a local state directory, on a TCP port)."""
+    if args.dev:
+        from kd.cabinet import devseed
+
+        db = dev_db(args.db)
+        host, port = _listen(args.listen)
+        origin = args.origin or f"http://localhost:{port}"
+        state_dir = args.state_dir or os.path.dirname(db)
+        svc = devseed.dev_service(state_dir, origin=origin, db=db, language=args.language)
+        if args.seed:
+            codes = os.path.join(state_dir, "codes.json")
+            devseed.apply(svc, out=out, codes_path=codes)
+        out.write(f"kd-cabinet: {origin} (dev)\n")
+        out.flush()
+        from kd.cabinet import devhost
+
+        # the dev host plays the session host's turns for @analyst
+        asyncio.run(server.serve_all(svc, dev_listen=(host, port), host=devhost.DevHost(svc)))
+        return 0
+    sockets = server.listen_sockets()
+    try:
+        cfg = config.load()
+    except config.ConfigError as exc:
+        # the local socket alone until cabinet.json and cabinet.env exist: the agents' board stays up even when
+        # the http socket came first (cabinet_setup.sh check reports the web as down)
+        cfg = None
+        sockets.pop("http", None)
+        err.write(f"kd-cabinet: the web is off ({exc})\n")
+    svc = server.build(
+        args.db or DB,
+        agents.REGISTRY,
+        str(specializations.REPO_ROOT),
+        cfg=cfg,
+        err=err,
+    )
+    local = sockets.get("local")
+    asyncio.run(
+        server.serve_all(
+            svc,
+            local_sock=local,
+            local_path=None if local is not None else server.SOCKET,
+            http_sock=sockets.get("http"),
+            host=dispatcher.HostClient(),
+        )
+    )
+    return 0
+
+
+def user_signers(args, client, *, out, err) -> int:
+    """the signing passkeys a target's exec gate verifies the owner's signature with, as the registry
+    ``target_setup.sh --exec-signers`` installs there. No ids: every active owner; a named person without a
+    signing key is an error and nothing is printed."""
+    origin = config.origin_of()
+    if origin is None:
+        raise Usage("no cabinet origin: cabinet.json is missing or invalid")
+    named = bool(args.ids)
+    people = client.call({"op": "user.list"})["users"]
+    if named:
+        ids = args.ids
+    else:
+        ids = [p["id"] for p in people
+               if p["status"] == "active" and any(role == "owner" for role, _ in p["roles"])]
+    status = {p["id"]: p["status"] for p in people}
+    signers, missing = [], []
+    for user_id in ids:
+        keys = client.call({"op": "signer.keys", "user": user_id})["keys"] if status.get(user_id) == "active" else []
+        if not keys:
+            missing.append(user_id)
+        signers.extend({"user": user_id, "credential_id": k["credential_id"], "public_key": k["public_key"],
+                        "name": k["name"]} for k in keys)
+    if missing and (named or not signers):
+        err.write(f"kd-cabinet: no signing passkey (or blocked): {', '.join(missing)}\n")
+        return 1
+    for user_id in missing:
+        err.write(f"kd-cabinet: {user_id}: no signing passkey yet, skipped\n")
+    registry = {"schema_version": 1, "rp_id": config.check_origin(origin), "origin": origin, "signers": signers}
+    out.write(json.dumps(registry, ensure_ascii=False, indent=2) + "\n")
+    return 0
+
+
+def user(args, client, *, out, err) -> int:
+    """People, as root through the socket: create (with the first sign-in code), a new code, block, list, a
+    passkey's signing right and the signers registry for targets."""
+    if args.user_command == "signers":
+        return user_signers(args, client, out=out, err=err)
+    if args.user_command == "signing":
+        found = client.call({"op": "user.signing", "id": args.id, "credential": args.credential,
+                             "enabled": args.state == "on"})["credential"]
+        out.write(f"signing {args.state}: {found['name']} {found['credential_id'][:8]}\n")
+    elif args.user_command == "add":
+        if args.role == "owner":
+            projects = "*"
+        elif args.projects:
+            projects = [p for p in args.projects.split(",") if p]
+        else:
+            raise Usage(f"--projects is needed for {args.role}")
+        found = client.call(
+            {
+                "op": "user.create",
+                "id": args.id,
+                "name": args.name,
+                "roles": [[args.role, projects]],
+            }
+        )
+        out.write(f"{found['user']['id']}: login code (15 minutes) {found['code']}\n")
+    elif args.user_command == "code":
+        found = client.call({"op": "user.code", "id": args.id})
+        out.write(f"{args.id}: login code (15 minutes) {found['code']}\n")
+    elif args.user_command == "block":
+        client.call({"op": "user.block", "id": args.id})
+        out.write(f"{args.id}: blocked\n")
+    else:
+        for person in client.call({"op": "user.list"})["users"]:
+            roles = ", ".join(
+                f"{role} ({'all projects' if projects == '*' else ','.join(projects)})"
+                for role, projects in person["roles"]
+            )
+            out.write(
+                f"{person['id']} · {person['name']} · {person['status']} · {roles}\n"
+            )
+    return 0
+
+
+def create(args, client, *, out) -> int:
+    """A card in Inbox as root (the host's own writes: the maintainer's task cards)."""
+    request = {
+        "op": "card.create",
+        "title": args.title,
+        "project": args.project,
+        "description": args.description,
+    }
+    if args.assignee:
+        request["assignee"] = args.assignee
+    out.write(view.line(client.call(request)["card"]) + "\n")
+    return 0
+
+
+def edit(args, client, *, out) -> int:
+    """Field changes and a comment on one card as root, at the revision just read."""
+    changes = {
+        key: value
+        for key, value in (
+            ("status", args.status),
+            ("assignee", args.assignee),
+            ("priority", args.priority),
+        )
+        if value is not None
+    }
+    if args.duplicate_of is not None:
+        # a duplicate is closed as Cancelled, naming the card that stays; ``-s Cancelled`` alone cancels
+        if changes.get("status", "Cancelled") != "Cancelled":
+            raise Usage("--duplicate-of closes the card as Cancelled: no other status goes with it")
+        changes["status"] = "Cancelled"
+    if not changes and not args.check_ac and not args.uncheck_ac and args.comment is None:
+        raise Usage("edit needs a change or a comment")
+    record = client.call({"op": "card.get", "card": args.card})["card"]
+    if args.check_ac or args.uncheck_ac:
+        acceptance = [dict(a) for a in record["acceptance"]]
+        for flag, numbers in ((True, args.check_ac), (False, args.uncheck_ac)):
+            for n in numbers:
+                if not 1 <= n <= len(acceptance):
+                    raise Usage(f"acceptance item {n} does not exist")
+                acceptance[n - 1]["checked"] = flag
+        changes["acceptance"] = acceptance
+    request = {"op": "card.edit", "card": args.card, "revision": record["revision"], "changes": changes}
+    if args.duplicate_of is not None:
+        request["canonical"] = args.duplicate_of
+    if args.comment is not None:
+        request["comment"] = args.comment
+    out.write(view.line(client.call(request)["card"]) + "\n")
+    return 0
+
+
+def defer(args, client, *, out) -> int:
+    """As root: the card put off until ``--until`` (a moment with its time zone; the cabinet wakes it then and
+    tells the owner) or woken now with ``--wake``. The operation is the owner's own, signed ``root`` here."""
+    if bool(args.wake) == bool(args.until):
+        raise Usage("defer takes --until <moment> or --wake")
+    if args.wake and args.reason is not None:
+        raise Usage("--reason goes with --until")
+    record = client.call({"op": "card.get", "card": args.card})["card"]
+    if args.wake:
+        client.call({"op": "user.card.undefer", "card": args.card})
+        out.write(view.line(record) + " — woken\n")
+        return 0
+    request = {"op": "user.card.defer", "card": args.card, "until": args.until}
+    if args.reason is not None:
+        request["reason"] = args.reason
+    found = client.call(request)["defer"]
+    out.write(view.line(record) + f" — put off until {found['until']}\n")
+    return 0
+
+
+def push(client, *, err) -> int:
+    """The push sender until it is stopped; 1 when the host has no VAPID key (push.env, the push user's only secret)."""
+    try:
+        cfg = config.load_push()
+    except config.ConfigError as exc:
+        err.write(f"kd-cabinet: {exc}\n")
+        return 1
+    push_worker.run(
+        client or cabinet_client.Client(),
+        send=push_worker.webpush_send,
+        vapid_private=cfg.vapid_private,
+        vapid_subject=cfg.vapid_subject,
+        err=err,
+    )
+    return 0
+
+
+PIPELINE_LINES = (
+    ("mode", "mode"), ("since", "since"), ("protocol", "protocol"), ("schema", "schema"),
+    ("pending", "outcomes waiting for their turn's end"), ("open_waits", "open waits"),
+    ("open_problems", "open problems"), ("continuations_hour", "continuations in the last hour"),
+)
+
+
+def pipeline_status(client, *, out) -> int:
+    """The pipeline's mode and counts, one line per field."""
+    found = client.call({"op": "pipeline.status"})
+    for key, label in PIPELINE_LINES:
+        out.write(f"{label}: {found.get(key, '') if found.get(key, '') != '' else '-'}\n")
+    return 0
+
+
+def pipeline_inventory(args, client, *, out) -> int:
+    """The read-only inventory: one line per open card with something to look at, or JSON."""
+    from kd.cabinet import inventory
+
+    found = client.call({"op": "pipeline.inventory"})
+    if args.json:
+        out.write(json.dumps(found, ensure_ascii=False, indent=2) + "\n")
+    else:
+        out.write(inventory.render(found.get("items") or []) + "\n")
+    return 0
+
+
+def main(argv, *, client=None, out=sys.stdout, err=sys.stderr) -> int:
+    try:
+        args = parse(argv)
+    except Usage as exc:
+        err.write(f"kd-cabinet: {exc}\n")
+        return 2
+    if args.command == "serve":
+        try:
+            return serve(args, out=out, err=err)
+        except Usage as exc:
+            err.write(f"kd-cabinet: {exc}\n")
+            return 2
+    if args.command == "push":
+        return push(client, err=err)
+    if args.command == "release":
+        return release(args, out=out, err=err)
+    if args.command == "health":
+        return health(args, out=out)
+    if args.command == "export":
+        result = exporter.export(
+            client or cabinet_client.Client(), args.board_dir, err=err
+        )
+        out.write(result + "\n")
+        return 1 if result == "error" else 0
+    client = client or cabinet_client.Client()
+    try:
+        if args.command == "user":
+            return user(args, client, out=out, err=err)
+        if args.command == "create":
+            return create(args, client, out=out)
+        if args.command == "edit":
+            return edit(args, client, out=out)
+        if args.command == "defer":
+            return defer(args, client, out=out)
+        if args.command == "pipeline":
+            if args.action == "inventory":
+                return pipeline_inventory(args, client, out=out)
+            return pipeline_status(client, out=out)
+        if args.command == "operation":
+            return operation(args, client, out=out)
+        if args.command == "devcheck":
+            return devcheck(args, client, out=out)
+        if args.command == "contour":
+            return contour(args, client, out=out)
+        if args.command == "cards":
+            for record in cabinet_client.records(
+                client,
+                status=args.status,
+                assignee=args.assignee,
+                project=args.project,
+                label=args.label,
+            ):
+                out.write(view.line(record) + "\n")
+        else:
+            record = client.call({"op": "card.get", "card": args.card})["card"]
+            messages = client.call({"op": "thread.messages", "card": args.card})[
+                "messages"
+            ]
+            out.write(view.card_text(record, messages))
+    except Usage as exc:
+        err.write(f"kd-cabinet: {exc}\n")
+        return 2
+    except cabinet_client.CabinetError as exc:
+        err.write(f"kd-cabinet: {exc}\n")
+        return cabinet_client.exit_code(exc)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

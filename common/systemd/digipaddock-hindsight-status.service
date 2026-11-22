@@ -1,0 +1,27 @@
+[Unit]
+Description=Hindsight read-only diagnostics for the cabinet
+After=hindsight-api.service
+ConditionPathExists=/etc/hindsight/coding-agent.env
+
+[Service]
+Type=oneshot
+# Reads the installed clients of separate agent users; publishes aggregates only.
+EnvironmentFile=/etc/hindsight/coding-agent.env
+ExecStart=/usr/bin/python3 -I /opt/digipaddock/common/bin/kd-hindsight-status
+StateDirectory=digipaddock/hindsight-status
+StateDirectoryMode=0755
+UMask=0022
+TimeoutStartSec=240
+ProtectSystem=strict
+ReadWritePaths=/var/lib/digipaddock/hindsight-status
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryMax=128M

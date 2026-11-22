@@ -1,0 +1,8 @@
+[Unit]
+Description=DigiPaddock: the agents' daily token count
+
+[Service]
+Type=oneshot
+# As root, read agent session transcripts and the cabinet usage ledger. Write the result to the unit journal.
+ExecStart=/usr/local/bin/kd-usage daily
+TimeoutStartSec=300

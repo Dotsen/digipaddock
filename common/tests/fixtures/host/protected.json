@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "protected": [
+    {"kind": "pattern", "path": "/var/www/**/data/keys/**", "deny": ["read"]},
+    {"kind": "pattern", "path": "/var/www/**/app_keys.json", "deny": ["read"]},
+    {"kind": "pattern", "path": "/var/www/**/app_tokens.json", "deny": ["read"]}
+  ]
+}

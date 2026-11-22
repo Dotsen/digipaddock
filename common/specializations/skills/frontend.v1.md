@@ -1,0 +1,11 @@
+# Skill: frontend (v1)
+
+- Svelte 5 with runes: state in `$state`, derived values in `$derived`, effects in `$effect` only for real side effects (DOM, timers, subscriptions) with their cleanup. Never name a top-level binding of a component like a rune it uses (`state`, `derived`, `effect`, `props`): Svelte then reads `$state` as a store subscription and the page breaks with only a warning at build time.
+- Keep logic out of components: parsing, formatting and decisions live in plain TypeScript modules next to them with their own unit tests; a component wires state to markup.
+- Design tokens, not literals: colours, spacing, radii, fonts and sizes come from the CSS custom properties of the app (`var(--…)`), in both themes; a new literal is either a new token, named by its role (`--warn-bg`, not `--yellow-2`), or a stated exception. Never reuse a class name the global stylesheet already gives to the app shell.
+- Adaptive by default: check every screen at 360, 900 and 1440 px wide — no horizontal scroll at 360, touch targets of at least 40 px, long words and long lists wrap or scroll inside their own block, fixed bars never cover the input or the last item.
+- States are part of the screen: empty, loading, error with a retry, long text, many items and no permission each have a defined look; a stale or reconnecting view says so instead of showing old data as fresh.
+- Accessibility: real buttons and links (not clickable `div`s), a visible focus, labels on inputs and icon buttons, text contrast of at least 4.5:1 in both themes, nothing conveyed by colour alone.
+- Every user-visible string comes from the message catalogs in every language of the app; a key added to one catalog is added to all of them.
+- For translation-heavy work select `localization` alongside this skill: it adds placeholder, terminology, quantity and formatting checks. Basic catalog parity remains required even when that skill is not selected; never assume an ICU expression works without checking the project's interpolator.
+- UI checks: run the project's frontend checks (type check, unit tests, build) when the environment allows; when it does not, check the plain TypeScript logic another way and name in the result which checks were not run.

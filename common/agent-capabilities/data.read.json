@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "name": "data.read",
+  "module": "data",
+  "description": "Read-only SQL on the servers' product databases through kd-data (KD-211): only the data user holds the key; the gate's MySQL-only mode runs one SELECT, SHOW, EXPLAIN or DESCRIBE without the secret columns (30 s, 1 MB, masked); every call is journaled.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [
+    {"name": "server-inventory", "access": "via-wrapper"},
+    {"name": "servers-enabled", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-data",
+      "source": "common/bin/kd-data",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "@data@",
+      "executor": "common/bin/kd-data"
+    }
+  ],
+  "validator": null,
+  "setup": "common/install/data_read_setup.sh",
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-data"]
+  },
+  "lifecycle": {
+    "install": ["executor-user", "setup", "wrappers", "channels"],
+    "check": ["executor-user", "setup", "wrappers", "channels"],
+    "disable": ["channels", "setup"]
+  }
+}

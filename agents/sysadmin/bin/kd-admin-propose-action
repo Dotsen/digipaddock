@@ -1,0 +1,16 @@
+#!/usr/bin/python3 -I
+"""kd-admin-propose-action --task KD-<n> --file <action.json> | --json '<action>' — one exact critical command for the
+owner's page. Runs as the agent's own user; the hard denylist is checked already here. The owner
+approves it once on the page this prints; then kd-admin-critical runs it at most once. Exit codes: 0 saved, 1 error,
+2 refused."""
+import os
+import pwd
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+sys.path.insert(0, os.path.join(REPO, "common"))
+
+from kd import admin_cli  # noqa: E402
+
+sys.exit(admin_cli.propose_action_main(sys.argv[1:], user=pwd.getpwuid(os.getuid()).pw_name,
+                                       deny=admin_cli.sysadmin_deny()))

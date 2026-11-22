@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "project": {
+    "id": "start",
+    "route": "@owner",
+    "name": {"en": "Getting started", "ru": "Начало работы"}
+  },
+  "cards": [
+    {
+      "key": "tour",
+      "title": {"en": "A tour of the cabinet", "ru": "Знакомство с кабинетом"},
+      "description": {
+        "en": "The cabinet is where you see and steer the factory.\n\n- **Dashboard** — what waits for you, what runs, what failed, the team at a glance.\n- **Inbox** — every decision that needs you: questions, briefs, plans, pull requests.\n- **Board** — every card by status; a card's thread is the conversation about it.\n- **Agents** — who is on the host, their state and their chats.\n- **Servers** and **Incidents** — the sysadmin's monitor, when the host has the sysadmin.\n- **Feed** — what changed, newest first.\n\nTick the items below as you go and move this card to Done.",
+        "ru": "Кабинет — место, где вы видите фабрику и управляете ею.\n\n- **Дашборд** — что ждёт вас, что выполняется, что сломалось, команда целиком.\n- **Входящие** — всё, что требует вашего решения: вопросы, ТЗ, планы, пул-реквесты.\n- **Доска** — все карточки по статусам; тред карточки — разговор о ней.\n- **Агенты** — кто есть на хосте, их состояние и чаты.\n- **Серверы** и **Инциденты** — мониторинг сисадмина, если он есть на хосте.\n- **Лента** — что изменилось, свежее сверху.\n\nОтмечайте пункты ниже по ходу и переведите карточку в Done."
+      },
+      "acceptance": [
+        {"en": "A second passkey, on the phone (Settings)", "ru": "Второй ключ — на телефоне (Настройки)"},
+        {"en": "Push notifications on (Settings)", "ru": "Push-уведомления включены (Настройки)"},
+        {"en": "The Agents page read: who does what", "ru": "Страница «Агенты» прочитана: кто чем занят"}
+      ]
+    },
+    {
+      "key": "first-task",
+      "requires": "analyst",
+      "title": {"en": "The first task: an idea for the analyst", "ru": "Первая задача: идея для аналитика"},
+      "description": {
+        "en": "Work starts with a dialogue, not with code.\n\n1. Open **Agents → @analyst** and describe an idea in a few sentences: what and why.\n2. The analyst asks its questions in the thread and writes a brief with acceptance criteria into a card.\n3. Read the brief in **Inbox**; your approval starts the work, a question sends it back.\n\nThe agent spends the subscription from the moment you write to it.",
+        "ru": "Работа начинается с диалога, а не с кода.\n\n1. Откройте **Агенты → @analyst** и опишите идею в паре предложений: что и зачем.\n2. Аналитик задаст вопросы в треде и запишет в карточку ТЗ с критериями приёмки.\n3. Прочитайте ТЗ во **Входящих**: одобрение запускает работу, вопрос возвращает ТЗ на доработку.\n\nАгент тратит подписку с момента, когда вы ему написали."
+      },
+      "acceptance": [
+        {"en": "An idea sent to @analyst", "ru": "Идея отправлена @analyst"},
+        {"en": "Its questions answered", "ru": "На вопросы отвечено"},
+        {"en": "The brief approved or sent back", "ru": "ТЗ одобрено или возвращено"}
+      ]
+    },
+    {
+      "key": "first-server",
+      "requires": "sysadmin",
+      "title": {"en": "Connect the first server", "ru": "Подключить первый сервер"},
+      "description": {
+        "en": "The sysadmin reads servers through a read-only gate and changes them only under a plan you signed.\n\n1. Add the server to the sysadmin's inventory in the deployment overlay and release it.\n2. From your own machine: `bash agents/sysadmin/install/deploy_target.sh <alias>` — it puts the gate on the server and pins its host key on the factory host.\n3. The server appears under **Servers** after the monitor's next pass.",
+        "ru": "Сисадмин читает серверы через шлюз только на чтение и меняет их только по плану, который вы подписали.\n\n1. Добавьте сервер в инвентарь сисадмина в overlay развёртывания и выпустите релиз.\n2. Со своей машины: `bash agents/sysadmin/install/deploy_target.sh <alias>` — скрипт ставит шлюз на сервер и закрепляет его ключ на хосте фабрики.\n3. Сервер появится в разделе **Серверы** после следующего прохода монитора."
+      },
+      "acceptance": [
+        {"en": "The server in the inventory", "ru": "Сервер в инвентаре"},
+        {"en": "The gate deployed", "ru": "Шлюз поставлен"},
+        {"en": "The server on the Servers page", "ru": "Сервер на странице «Серверы»"}
+      ]
+    },
+    {
+      "key": "people",
+      "title": {"en": "Invite a partner", "ru": "Пригласить партнёра"},
+      "description": {
+        "en": "A partner sees and discusses only the projects you give them.\n\n1. **Settings → Users**: add a person and give them a role on a project.\n2. Pass them the one-time sign-in code; they add their own passkey on the first sign-in.",
+        "ru": "Партнёр видит и обсуждает только те проекты, которые вы ему открыли.\n\n1. **Настройки → Пользователи**: добавьте человека и дайте ему роль в проекте.\n2. Передайте ему одноразовый код входа; свой ключ он добавит при первом входе."
+      },
+      "acceptance": [
+        {"en": "A person added with a role", "ru": "Человек добавлен с ролью"},
+        {"en": "They signed in with a passkey", "ru": "Он вошёл со своим ключом"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+#!/usr/bin/python3 -I
+"""kd-repo-sync — refresh the repo.read checkouts under the repo service user; see kd/repo_sync.py."""
+import os
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import repo_sync  # noqa: E402
+
+sys.exit(repo_sync.main())

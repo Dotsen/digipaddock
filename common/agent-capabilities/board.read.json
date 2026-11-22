@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "name": "board.read",
+  "module": "board",
+  "description": "Read cards and projects through the base-user executor kd-task and keep the agent's own cabinet chat; kd-task writes need board.write too. kd-notes add appends to the agent's own shared notes under a lock.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [
+    {"name": "board-tasks", "access": "read-grant"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-task",
+      "source": "common/bin/kd-task",
+      "subcommands": ["view", "list", "search", "scope", "result", "message", "thread", "waits", "projects", "chat", "file", "claim", "create", "edit", "handoff", "brief-review"],
+      "approval": "allow",
+      "run_as": "@base@",
+      "executor": "common/bin/kd-task"
+    },
+    {
+      "command": "kd-notes",
+      "source": "common/bin/kd-notes",
+      "subcommands": ["add"],
+      "approval": "allow",
+      "run_as": "self",
+      "executor": null
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-notes", "kd-task"]
+  },
+  "lifecycle": {
+    "install": ["wrappers", "read-grants", "channels"],
+    "check": ["wrappers", "read-grants", "channels"],
+    "disable": ["channels", "read-grants"]
+  }
+}

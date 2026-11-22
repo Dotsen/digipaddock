@@ -1,0 +1,14 @@
+[Unit]
+Description=DigiPaddock: delivery of BOSS's assignments, removal of withdrawn ones, signals to BOSS about answers and grants (kd-nudge deliver)
+OnFailure=digipaddock-alert@digipaddock-board-deliver.service
+# The minute timer and grant path can both start this unit. A burst must not trip the default start limit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# As root, kd-board deliver invokes kd-nudge deliver as the base user. The watch tick is the fallback path.
+ExecStart=/usr/local/bin/kd-board deliver
+TimeoutStartSec=300
+# Keep empty minute ticks out of the journal. systemd and runuser emit info messages. The result is notice.
+SyslogLevel=notice
+LogLevelMax=notice

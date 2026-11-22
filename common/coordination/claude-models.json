@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "models": [
+    {"id": "claude:opus", "upstream": "opus", "title": "Claude Opus"},
+    {"id": "claude:sonnet", "upstream": "sonnet", "title": "Claude Sonnet"},
+    {"id": "claude:haiku", "upstream": "haiku", "title": "Claude Haiku"},
+    {"id": "claude:fable", "upstream": "fable", "title": "Claude Fable"}
+  ]
+}

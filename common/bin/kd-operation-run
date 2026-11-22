@@ -1,0 +1,21 @@
+#!/usr/bin/python3 -I
+"""kd-operation-run <operation-id> — the root runner of the factory's agent.reinstall; see
+``kd.operation_runner``. ``kd-operation-run dev.check <check-id>`` — one dev.check; see
+``kd.devcheck_runner``. The session host starts either as the transient unit ``digipaddock-operation-<id12>``."""
+
+import os
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import devcheck_runner, operation_runner  # noqa: E402
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        print("kd-operation-run: root only", file=sys.stderr)
+        sys.exit(1)
+    os.umask(0o077)
+    if sys.argv[1:2] == ["dev.check"]:
+        sys.exit(devcheck_runner.main(sys.argv[1:]))
+    sys.exit(operation_runner.main(sys.argv[1:]))

@@ -1,0 +1,11 @@
+[Unit]
+Description=DigiPaddock: the cabinet's "Check now", a monitor tick over the requested servers
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@base@
+ExecStart=/usr/local/bin/kd-monitor check-now
+# waits for a running tick (deliver.tick_lock_wait — 290 s), then its own tick (up to ~290 s)
+TimeoutStartSec=620

@@ -1,0 +1,1164 @@
+#!/usr/bin/env python3
+"""kd-release — the root release service on a request of the dev executor.
+The path unit (PathExists) starts it while /var/lib/digipaddock/release/request.json exists. The mirror is updated with
+root's read key (/root/.ssh/forgejo_deploy, the host key — only from the repository), only a sha equal to main on
+Forgejo is released, without symlinks and submodules, and only on top of a revision from main; the switch is release_switch.sh.
+Current requests have a root-owned active.json while being accepted, switched and checked, and a terminal
+result-<request_id>.json under /var/lib/digipaddock/release-result. result.json is the latest terminal result.
+A handled refusal — code 0 and not a word to the owner's Telegram bot (the executor writes); a non-zero code — only a
+failure (OnFailure → kd-alert).
+After the switch the new code checks every installed generated agent (kd.install_apply); one it would refuse to start
+is a failure too: the release stays, the owner learns which agents to reinstall. After the result the new code's
+render_host.sh installs its units and the rules floor (a failure fails the unit, the release stands); then its
+cabinet_setup.sh install updates the cabinet — venv, frontend, units, nginx — and restarts it; a failure there leaves the
+release published and fails the unit (kd-alert says "the cabinet is not updated").
+Before the result the new code asks the factory to reinstall the generated roles it would install differently
+(kd.release_reinstall: operation.request on the PR's card, key release:<rev>); result.json carries "reinstall" —
+pending with the operation id, uncovered with the roles and why, unchecked when the check itself failed (the unit
+fails, the release stands), or none. A postflight that fails only for roles the
+operation reinstalls is not a degraded release; any other failure stays one.
+a release is the pair of one release's repositories in repos.json — the code (role code) and the
+deployment's overlay (role overlay, optional): the request's sha must be main of its own repository, the other
+is taken at its main. Before the switch, in a temporary directory: this installed tree's kd.overlay checks the
+overlay archive as data — paths, file types, no executable file (nothing of an overlay is ever run); then
+the code's privacy scanner (its own privacy-scan.json) and this installed tree's closed scanner (kd/private_scan.py
+with the overlay's host/private_scan.json) over the code tree, then the code's kd.overlay composes code + overlay and
+checks both. The scanners and the composition run in a sandbox (systemd-run: a dynamic unprivileged user, no
+network, the input read-only, no home, no /etc/digipaddock or /var/lib/digipaddock, writes only to its own /tmp);
+any finding or error refuses the release. REVISION is the code's, DEPLOY_REVISION the overlay's, release_id "<rev>+<deploy>" keys the factory's
+operations. --bootstrap <project> (root by hand only: the path unit passes no flag) releases main of that
+project's release once, without a request file, and skips both ancestry checks — the first release of a new history;
+a request root wrote itself (the file is ours, "requester": "root") may omit sha and pr — main as it is.
+--bootstrap <project> [--repos <file>] [--known-hosts <file>] also starts a new host: --repos writes
+/etc/digipaddock/repos.json from the file once (dev_agent.repos checks it; an existing other file refuses),
+--known-hosts pins the forge's host key while there is no tree with its own; on a host with no tree yet the release
+stops after the switch and its result — stage_setup.sh installs the rest. root's request may name "rev" (kd-cabinet
+release <project> --rev <sha|tag>): a commit or a tag v... of the code repository on main, not older than REVISION;
+a tag is verified by git verify-tag against host/allowed_signers of the running tree when that file exists
+(tag_unsigned), the overlay goes at its main.
+kd-release --rollback [<dir>] (root, by hand): back to a kept release (default — the one $base/PREVIOUS names),
+refused when the live cabinet base has a newer schema than that release's code (fix forward); then render_host.sh,
+cabinet_setup.sh install, the e2e runtime, the postflight and the health check, as after a release; result.json says
+"rollback".
+The request's directory also holds files that are not ours, the executor's (.lock, .request.*.tmp) — only request.json is read."""
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))  # common/ of this release tree
+from kd import ids, release_requests  # noqa: E402
+
+try:
+    import fcntl
+except ImportError:  # Windows (tests on the owner's PC): the lock exists only on the server
+    fcntl = None
+
+RELEASE_DIR = "/var/lib/digipaddock/release"
+RESULT_DIR = "/var/lib/digipaddock/release-result"
+MIRROR_DIR = "/var/lib/digipaddock/mirror"
+REPOS = "/etc/digipaddock/repos.json"
+KNOWN_HOSTS = "/opt/digipaddock/common/install/forgejo_known_hosts"
+DEPLOY_KEY = "/root/.ssh/forgejo_deploy"
+LOCK = "/run/digipaddock-release/lock"  # RuntimeDirectory=digipaddock-release: root's directory, agents cannot create it in advance
+# the host key — only the one pinned in the repository: neither TOFU nor the system's shared known_hosts
+def _git_ssh(known_hosts):
+    return (f"ssh -i {DEPLOY_KEY} -o IdentitiesOnly=yes -o BatchMode=yes "
+            f"-o UserKnownHostsFile={known_hosts} -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes "
+            "-o UpdateHostKeys=no")
+
+
+GIT_SSH = _git_ssh(KNOWN_HOSTS)
+# Deployment values of the running release tree: the forge address and the host alias.
+HOST_JSON = "/opt/digipaddock/host/host.json"
+SHA_RE = re.compile(r"[0-9a-f]{40}")
+REV_RE = re.compile(r"[0-9a-f]{7,40}")
+TAG_RE = re.compile(r"v[0-9A-Za-z](?:[0-9A-Za-z._-]{0,62}[0-9A-Za-z])?")  # a release tag v..., no "-" first
+SIGNERS = os.path.join("host", "allowed_signers")  # of the running tree (the overlay's host/): who signs release tags
+PROJECT_RE = re.compile(r"[a-z][a-z0-9-]{0,31}")
+REPO_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}/[A-Za-z0-9_.-]{1,100}")
+PR_MAX = 9_999_999  # a PR number — ^[1-9][0-9]{0,6}$, as in the executor
+CARD_RE = ids.CARD  # the host's card prefix
+REFUSED_RE = re.compile(r"generated runtime refused: ([a-z][a-z0-9_-]{0,31}): ")
+RELEASES = {"digipaddock": {"base": "/opt/digipaddock-releases", "link": "/opt/digipaddock"}}
+CODE, OVERLAY = "code", "overlay"
+ROLES = (CODE, OVERLAY)
+PYTHON = "/usr/bin/python3"  # the preflight runs the released code and the closed scanner, isolated (-I), sandboxed
+# The released code's own composition (kd.overlay: its schema range and allowlist decide), run as root.
+COMPOSE = ("import sys; sys.path.insert(0, sys.argv[1] + '/common'); "
+           "from kd.overlay import main; sys.exit(main(sys.argv[2:]))")
+SCAN = ("import sys; sys.path.insert(0, sys.argv[1] + '/common'); "
+        "from kd.privacy_scan import main; sys.exit(main(sys.argv[2:]))")
+T_SCAN = 60
+# common/ of the tree this file is in: /usr/local/bin/kd-release is a link into the release tree
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+# the closed scanner is the installed release tool's own; the overlay gives only its list
+PRIVATE_SCAN = os.path.join(COMMON, "kd", "private_scan.py")
+# The preflight's sandbox: code of the incoming trees (the public scanner, the composition) and the closed
+# scanner run as a dynamic unprivileged user, without network, home or the release service's secrets; the work
+# directory is bound read-only at SANDBOX_IN, the only writable place is the unit's own /tmp.
+SANDBOX_IN = "/tmp/kd-release-in"
+SANDBOX_HIDDEN = ("/etc/digipaddock", "/var/lib/digipaddock", "/srv", "/run/digipaddock", "/run/digipaddock-release",
+                  "/run/digipaddock-cabinet", "/run/digipaddock-cabinet-http", "/run/digipaddock-session-host",
+                  "/run/digipaddock-review", "/run/digipaddock-model-keys", "/run/digipaddock-transcribe", "/var/www")
+SANDBOX_PROPS = ("DynamicUser=yes", "PrivateNetwork=yes", "PrivateTmp=yes", "PrivateDevices=yes",
+                 "ProtectSystem=strict", "ProtectHome=yes", "NoNewPrivileges=yes", "CapabilityBoundingSet=",
+                 "RestrictAddressFamilies=AF_UNIX", "MemoryMax=1G")
+# the switch of this very tree: the release tree's (the same script as /opt/digipaddock's), or a new host's checkout
+SWITCH = os.path.join(COMMON, "install", "release_switch.sh")
+REQUEST_MAX = 4096
+T_FETCH, T_LOCAL, T_ARCHIVE, T_SWITCH = 60, 10, 60, 120
+T_RENDER = 120  # render_host.sh: the units and the rules floor of the tree, daemon-reload
+T_CABINET = 540  # cabinet_setup.sh install: pip and npm ci on a changed lock, the build
+T_E2E = 600  # e2e_runtime_setup.sh install: npm ci, the build, Chromium on a new Playwright, the copy
+# the outdated roles (new_agent.sh verify of each) and the cabinet's request, at most twice (again after the
+# cabinet's update when the old code could not take it); the whole budget is TimeoutStartSec of digipaddock-release.service (test_kd_release)
+T_REINSTALL = 30
+CABINET_SETUP = "common/install/cabinet_setup.sh"  # of the release just switched to
+E2E_SETUP = "common/install/e2e_runtime_setup.sh"  # kd-e2e's runtime of the new release (review I5)
+E2E_RUNTIME = "/var/lib/digipaddock/e2e/runtime"  # a host without it has no e2e runtime to keep
+# Runs the switched code, isolated (-I), as the postflight of a release.
+POSTFLIGHT = ("import sys; sys.path.insert(0, sys.argv[1] + '/common'); "
+              "from kd.install_apply import report_generated_runtime; sys.exit(report_generated_runtime(sys.argv[1]))")
+REINSTALL = ("import sys; sys.path.insert(0, sys.argv[1] + '/common'); "
+             "from kd.release_reinstall import main; sys.exit(main(sys.argv[1:]))")
+# The session host's restart when this release changed its code: the factory runs it as root.
+HOST_RESTART = ("import sys; sys.path.insert(0, sys.argv[1] + '/common'); "
+                "from kd.release_reinstall import host_main; sys.exit(host_main(sys.argv[1:]))")
+# The health check after the cabinet runs the new code: healthy or degraded, as a notice on the card.
+HEALTH = ("import sys; sys.path.insert(0, sys.argv[1] + '/common'); "
+          "from kd.release_health import main; sys.exit(main(sys.argv[1:]))")
+HEALTH_REPORT = (
+    "import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1] + '/common'); "
+    "from kd.cabinet import config, schema; from kd.release_health import run; "
+    "report = run(Path(sys.argv[1]), origin=config.origin_of(), schema_version=schema.SCHEMA_VERSION, "
+    "postflight=sys.argv[2], restart=sys.argv[3]); print(json.dumps(report)); sys.exit(0 if report['ok'] else 1)"
+)
+T_HEALTH = 900  # above the checks' own worst case: three shell checks, the probe and the cabinet retries (≈ 13 min)
+LOOP_BUDGET = 15  # a second request in the same run — only if the first took less; otherwise PathExists picks it up
+
+
+def _host(key: str) -> str:
+    """One value of host/host.json (KD_HOST_JSON overrides the path); RuntimeError when missing or broken."""
+    path = os.environ.get("KD_HOST_JSON") or HOST_JSON
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle).get(key)
+    except (OSError, ValueError, AttributeError) as exc:
+        raise RuntimeError(f"{path}: unreadable ({exc.__class__.__name__})") from None
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"{path}: no {key}")
+    return value
+
+
+def _forge_url(repo: str) -> str:
+    template = _host("forge_ssh_url")
+    if "{repo}" not in template:
+        raise RuntimeError("host.json: forge_ssh_url has no {repo}")
+    return template.replace("{repo}", repo)
+
+
+def _journal_hint() -> str:
+    try:
+        host = _host("stage_alias")
+    except RuntimeError:
+        host = "the factory host"
+    return f"for the owner: journalctl -u digipaddock-release on {host}"
+
+
+HANDLED = (ValueError, RuntimeError, OSError, KeyError, subprocess.SubprocessError)
+
+
+def _result(result_dir, ts, ok, revision="", previous="", error="", degraded=False, reinstall=None,
+            deploy_revision="", release_id="", deploy_previous="", rollback=False, health="", *,
+            request_id="", failed_steps=None, warnings=None):
+    """Publish the terminal result by request, then update the compatibility view of the latest result."""
+    record = {"ts": ts, "ok": ok, "degraded": degraded, "revision": revision, "previous": previous,
+              "error": error, "deploy_revision": deploy_revision, "release_id": release_id}
+    if deploy_revision:
+        record["deploy_previous"] = deploy_previous
+    if rollback:
+        record["rollback"] = True
+    if reinstall is not None:
+        record["reinstall"] = reinstall
+    if health:
+        record["health"] = health
+    if failed_steps:
+        record["failed_steps"] = failed_steps
+    if warnings:
+        record["warnings"] = warnings
+    if request_id:
+        state = "healthy" if ok else "degraded" if degraded else "refused"
+        record.update(request_id=request_id, state=state)
+        release_requests.write(result_dir, release_requests.result_name(request_id), record)
+    release_requests.write(result_dir, release_requests.LATEST, record)
+    return record
+
+
+def _progress(directory, request_id, ts, state, **release):
+    if request_id:
+        release_requests.write(directory, release_requests.ACTIVE,
+                               dict(request_id=request_id, ts=ts, state=state, **release))
+
+
+def _clear_progress(directory):
+    try:
+        os.unlink(os.path.join(directory, release_requests.ACTIVE))
+    except FileNotFoundError:
+        pass
+
+
+def _recover_progress(directory, current, current_deploy):
+    """A restarted service reports interruption without repeating a potentially completed switch."""
+    active = release_requests.read(directory, release_requests.ACTIVE)
+    if not active:
+        return
+    request_id = active["request_id"]
+    if not release_requests.terminal(directory, request_id):
+        installed = _already_switched(active, current, current_deploy)
+        _interrupted_result(directory, active, installed)
+    _clear_progress(directory)
+
+
+def _already_switched(progress, current, current_deploy):
+    if progress.get("state") == "checking":
+        return True
+    if progress.get("state") != "switching":
+        return False
+    link = RELEASES[progress["release"]]["link"]
+    return (current(link)[:7] == progress["revision"]
+            and (not progress["deploy_revision"] or current_deploy(link)[:7] == progress["deploy_revision"]))
+
+
+def _interrupted_result(directory, progress, installed):
+    pair = {key: progress[key] for key in ("revision", "previous", "deploy_revision", "deploy_previous", "release_id")
+            if installed and key in progress}
+    reason = "release interrupted after switching" if installed else "release interrupted before switching"
+    _result(directory, progress["ts"], False, degraded=installed, error=f"{reason} — {_journal_hint()}",
+            request_id=progress["request_id"], failed_steps={"interrupted": reason}, **pair)
+
+
+def _read_request(path):
+    """(the text of request.json, the file is ours) or None if there is no request. No following of symlinks and no
+    hanging on a FIFO: only a regular file up to 4 KB; anything else — an empty string (then "the request is not an
+    object"). "Ours" — the file's owner is the one kd-release runs as (root): root wrote such a request itself."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "", False  # a symlink (ELOOP), a directory and the like
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > REQUEST_MAX:
+            return "", False
+        ours = not hasattr(os, "geteuid") or st.st_uid == os.geteuid()
+        return os.read(fd, REQUEST_MAX + 1).decode("utf-8", "replace"), ours
+    finally:
+        os.close(fd)
+
+
+def _remove(path) -> bool:
+    try:
+        os.unlink(path)
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        try:
+            shutil.rmtree(path)  # a directory in the request's place
+            return True
+        except OSError as exc:
+            print(f"kd-release: could not remove {path}: {exc.__class__.__name__}", file=sys.stderr)
+            return False
+
+
+def _current_revision(link, name="REVISION"):
+    try:
+        with open(os.path.join(link, name), encoding="utf-8") as f:
+            return f.read().strip().lower()
+    except OSError:
+        return ""
+
+
+def _current_deploy(link):
+    return _current_revision(link, "DEPLOY_REVISION")
+
+
+def _git_out(run, mirror, *args) -> str:
+    p = run(["git", "-C", mirror, *args], capture_output=True, text=True, timeout=T_LOCAL)
+    return (p.stdout or "").strip().lower() if p.returncode == 0 else ""
+
+
+def _switch_default(rev, tar, env=None):
+    p = subprocess.run(["bash", SWITCH, rev], input=tar, capture_output=True, env=env or os.environ, timeout=T_SWITCH)
+    return p.returncode, (p.stdout + p.stderr).decode("utf-8", "replace")
+
+
+def _postflight_default(link):
+    p = subprocess.run(["/usr/bin/python3", "-I", "-c", POSTFLIGHT, link], capture_output=True, text=True,
+                       timeout=T_LOCAL)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def _cabinet_default(link):
+    p = subprocess.run(["bash", f"{link}/{CABINET_SETUP}", "install"], capture_output=True, text=True,
+                       timeout=T_CABINET)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+RENDER = "common/install/render_host.sh"  # of the release switched (or rolled back) to
+
+
+def _render_default(link):
+    p = subprocess.run(["bash", f"{link}/{RENDER}"], capture_output=True, text=True, timeout=T_RENDER)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def _render_units(render, link) -> int:
+    """The tree's units and rules floor; a failure is said here, the caller decides what it fails."""
+    try:
+        rc, text = render(link)
+    except (OSError, subprocess.SubprocessError) as exc:
+        rc, text = 1, exc.__class__.__name__
+    if rc != 0:
+        print(f"kd-release: units not rendered (render_host.sh): {text.strip()[-300:]}", file=sys.stderr)
+    return rc
+
+
+def _e2e_default(link):
+    if not os.path.isdir(E2E_RUNTIME):
+        return 0, ""
+    p = subprocess.run(["bash", f"{link}/{E2E_SETUP}", "install"], capture_output=True, text=True, timeout=T_E2E)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def _update_e2e(e2e, link) -> str:
+    """kd-e2e's runtime on the new code; a failure is said (kd-alert) and left to the health check, the release
+    stands."""
+    try:
+        rc, text = e2e(link)
+    except (OSError, subprocess.SubprocessError) as exc:
+        rc, text = 1, f"did not finish: {exc.__class__.__name__}"
+    if rc != 0:
+        why = "; ".join(line.strip() for line in text.splitlines() if line.strip())
+        print(f"kd-release: e2e runtime not updated (e2e_runtime_setup.sh install): {why[-300:]}", file=sys.stderr)
+        return why[-300:] or "e2e runtime refresh failed"
+    return ""
+
+
+def _reinstall_default(link, rev, card, release_id):
+    """The new code's request to the factory (kd.release_reinstall; the roles are asked for as root); a run
+    that fails names no roles — unchecked, the unit fails on it (review I2)."""
+    try:
+        p = subprocess.run(["/usr/bin/python3", "-I", "-c", REINSTALL, link, rev, *([card] if card else []),
+                            "--release-id", release_id],
+                           capture_output=True, text=True, timeout=T_REINSTALL)
+        if p.returncode == 0:
+            found = json.loads((p.stdout or "").strip().splitlines()[-1])
+            if isinstance(found, dict) and isinstance(found.get("state"), str):
+                return found
+        why = (p.stderr or p.stdout or "").strip()[-200:] or f"exit {p.returncode}"
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
+        why = exc.__class__.__name__
+    return {"state": "unchecked", "agents": [], "why": f"roles not checked: {why}"}
+
+
+def _host_restart_default(link, release_id, rollback=""):
+    """The new code's request to restart the session host when the release changed its code (kd.release_reinstall
+    host_main; ``rollback`` — the rollback's stamp); a run that fails asks nothing — unchecked, the health check
+    names the host's other code."""
+    try:
+        p = subprocess.run(["/usr/bin/python3", "-I", "-c", HOST_RESTART, link, release_id,
+                            *(["--rollback", rollback] if rollback else [])],
+                           capture_output=True, text=True, timeout=T_REINSTALL)
+        if p.returncode == 0:
+            found = json.loads((p.stdout or "").strip().splitlines()[-1])
+            if isinstance(found, dict) and isinstance(found.get("state"), str):
+                return found
+        why = (p.stderr or p.stdout or "").strip()[-200:] or f"exit {p.returncode}"
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
+        why = exc.__class__.__name__
+    return {"state": "unchecked", "why": why}
+
+
+def _restart_host(host, link, release_id, **rollback) -> str:
+    """The host's restart asked for (its operation, said) or not needed (''); a request not made is said and left
+    to the health check, which names the host's other code."""
+    found = host(link, release_id, **rollback)
+    if found.get("operation"):
+        print(f"kd-release: session host restart — operation {found['operation']} ({found.get('state')})")
+        return str(found["operation"])
+    if found.get("state") != "none":
+        print(f"kd-release: session host restart not requested: {str(found.get('why') or '?')[:300]}",
+              file=sys.stderr)
+    return ""
+
+
+def _health_default(link, rev, card, postflight="", restart="", *, announce=True):
+    """The switched code's health check (kd.release_health): (0, '') healthy; (1, <failed checks>) degraded — the
+    notice on the card is the module's own; (2, why) when the check itself did not run. ``restart`` — the session
+    host's restart operation this release asked for."""
+    try:
+        argv = ["/usr/bin/python3", "-I", "-c", HEALTH, link, rev, *([card] if card else [])]
+        if postflight:
+            argv += ["--postflight", postflight[:400]]
+        if restart:
+            argv += ["--host-restart", restart]
+        if not announce:
+            # Call run directly so a manually selected older tree also supports the report-only check.
+            argv = ["/usr/bin/python3", "-I", "-c", HEALTH_REPORT, link, postflight[:400], restart]
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=T_HEALTH)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 2, f"the check did not finish: {exc.__class__.__name__}"
+    if p.returncode == 0:
+        return 0, ""
+    try:
+        found = json.loads((p.stdout or "").strip().splitlines()[-1])
+        names = ", ".join(c["name"] for c in found["checks"] if not c["ok"])
+    except (ValueError, IndexError, KeyError, TypeError):
+        names = (p.stderr or p.stdout or "").strip()[-200:] or f"exit {p.returncode}"
+    return (1 if p.returncode == 1 else 2), names
+
+
+def _covered(text, reinstall) -> bool:
+    """The postflight failed only for roles the factory's operation reinstalls (or will: a deferred request is asked
+    again after the cabinet's update, and a refusal then fails the unit)."""
+    if not ((reinstall.get("state") in ("pending", "running") and reinstall.get("operation"))
+            or (reinstall.get("state") == "deferred" and reinstall.get("key"))):
+        return False
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    names = [REFUSED_RE.match(line) for line in lines]
+    return bool(lines) and all(names) and {m.group(1) for m in names} <= set(reinstall.get("agents") or ())
+
+
+def _update_cabinet(cabinet, link) -> int:
+    """The cabinet on the new code; 0, or the line for kd-alert and a non-zero code (the release stands)."""
+    try:
+        rc, text = cabinet(link)
+    except (OSError, subprocess.SubprocessError) as exc:
+        rc, text = 1, f"did not finish: {exc.__class__.__name__}"
+    if rc != 0:
+        why = "; ".join(line.strip() for line in text.splitlines() if line.strip())
+        print(f"kd-release: cabinet not updated (cabinet_setup.sh install): {why[-300:]}", file=sys.stderr)
+    return rc
+
+
+def _fields(request, ours=False):
+    """(project, repo, sha, rev) from a request; ValueError — the wrong shape (sha — only a full one, 40 hex). sha None —
+    a request root wrote itself ("requester": "root", without sha and pr): main as it is, or its "rev" — a commit
+    (7–40 hex) or a tag v...; rev — only in such a request."""
+    if not isinstance(request, dict):
+        raise ValueError("the request is not a JSON object of up to 4 KB")
+    project, repo, sha, n = request.get("project"), request.get("repo"), request.get("sha"), request.get("pr")
+    card, rev = request.get("card", ""), request.get("rev")
+    bad = ValueError("bad request fields (sha — full, 40 hex; card — KD-<n>)")
+    if (not isinstance(project, str) or not PROJECT_RE.fullmatch(project) or not isinstance(repo, str)
+            or not REPO_RE.fullmatch(repo) or not isinstance(card, str) or (card and not CARD_RE.fullmatch(card))):
+        raise bad
+    if ours and request.get("requester") == "root" and sha is None and n is None:
+        if rev is not None and (not isinstance(rev, str) or not (REV_RE.fullmatch(rev) or TAG_RE.fullmatch(rev))
+                                or ".." in rev):
+            raise ValueError("rev — a commit (7–40 hex) or a tag v...")
+        return project, repo, None, rev
+    if rev is not None:
+        raise ValueError("rev — only in a request of root (kd-cabinet release --rev)")
+    if not isinstance(sha, str) or not SHA_RE.fullmatch(sha) or type(n) is not int or not 1 <= n <= PR_MAX:
+        raise bad
+    return project, repo, sha, None
+
+
+def _request_id(request, fields):
+    if "request_id" not in request:
+        return ""  # already queued by an older caller
+    request_id = request["request_id"]
+    release_requests.result_name(request_id)
+    project, repo, sha, _ = fields
+    if sha is not None and request_id != release_requests.forge_id(project, repo, request["pr"], sha):
+        raise ValueError("release request ID does not match the merge")
+    return request_id
+
+
+def _entries(registry, project, repo):
+    """(release, role of the requested project, {role: entry}): root's registry decides what is released and with
+    what — one repository of each role per release, the code one required."""
+    entry = registry.get(project) if isinstance(registry, dict) else None
+    if not isinstance(entry, dict) or entry.get("repo") != repo or not isinstance(entry.get("release"), str) \
+            or entry["release"] not in RELEASES:
+        raise ValueError(f"project {project}: not in the registry or without a release")
+    release, entries = entry["release"], {}
+    for name, other in registry.items():
+        if not isinstance(other, dict) or other.get("release") != release:
+            continue
+        role = other.get("role", CODE)
+        if role not in ROLES:
+            raise ValueError(f"project {name}: role {role!r} — only code or overlay")
+        if role in entries:
+            raise ValueError(f"release {release}: two entries of role {role}")
+        if not isinstance(other.get("repo"), str) or not REPO_RE.fullmatch(other["repo"]):
+            raise ValueError(f"project {name}: repo is not <owner>/<name>")
+        if other.get("base", "main") != "main":  # the registry's rule (dev_agent.repos): a release releases main
+            raise ValueError(f"project {name}: a release releases main, but the registry's base is {other['base']!r}")
+        entries[role] = other
+    if CODE not in entries:
+        raise ValueError(f"release {release}: no code repository (role code)")
+    if OVERLAY not in entries:  # no tree works without host/host.json
+        raise ValueError(f"release: overlay_incompatible: release {release} has no overlay (role overlay in repos.json)"
+                         " — not releasing")
+    return release, entry.get("role", CODE), entries
+
+
+def _mirror(run, mirror_dir, repo, known_hosts=KNOWN_HOSTS):
+    mirror = os.path.join(mirror_dir, repo.split("/", 1)[1] + ".git")
+    git_env = {**os.environ, "GIT_SSH_COMMAND": GIT_SSH if known_hosts == KNOWN_HOSTS else _git_ssh(known_hosts)}
+    if os.path.isdir(mirror):
+        p = run(["git", "-C", mirror, "fetch", "--prune", "--quiet", "origin"], capture_output=True, text=True,
+                env=git_env, timeout=T_FETCH)
+    else:  # the first request for a repository clones the mirror (stage_setup.sh only creates the directory)
+        p = run(["git", "clone", "--mirror", "--quiet", _forge_url(repo), mirror], capture_output=True, text=True,
+                env=git_env, timeout=T_FETCH)
+    if p.returncode != 0:
+        raise RuntimeError(f"git mirror: {(p.stderr or '').replace(DEPLOY_KEY, '<read key>').strip()[-300:]}")
+    return mirror
+
+
+def _main_head(run, mirror, role, sha):
+    """main of the mirror (a release's base, _entries refuses another): the requested sha when the request
+    names one; no symlinks or submodules in it."""
+    head = _git_out(run, mirror, "rev-parse", "refs/heads/main")
+    if sha is not None and head != sha:
+        raise RuntimeError(f"main moved on — run the release again (main {head[:7] or '?'}, requested {sha[:7]})")
+    if not SHA_RE.fullmatch(head):
+        raise RuntimeError(f"{role}: main not read")
+    return _plain(run, mirror, head)
+
+
+def _plain(run, mirror, head):
+    """``head`` when its tree has no symlinks or submodules."""
+    p = run(["git", "-C", mirror, "ls-tree", "-r", head], capture_output=True, text=True, timeout=T_LOCAL)
+    if p.returncode != 0:
+        raise RuntimeError("git ls-tree failed")
+    odd = [ln.split("\t", 1)[-1] for ln in (p.stdout or "").splitlines() if ln.split(" ", 1)[0] in ("120000", "160000")]
+    if odd:
+        raise RuntimeError(f"a symlink or a submodule in the release — not releasing: {', '.join(odd[:5])}")
+    return head
+
+
+def _rev_head(run, mirror, rev, signers):
+    """The commit root named: a commit or a tag v... of the mirror, on main; a tag signed by one of
+    ``signers`` (allowed_signers) when that file exists. RuntimeError rev_unknown | rev_not_on_main | tag_unsigned."""
+    tag = not REV_RE.fullmatch(rev)
+    ref = f"refs/tags/{rev}" if tag else rev
+    head = _git_out(run, mirror, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
+    if not SHA_RE.fullmatch(head):
+        raise RuntimeError(f"rev_unknown: {rev} — not in the mirror")
+    on_main = run(["git", "-C", mirror, "merge-base", "--is-ancestor", head, "refs/heads/main"], capture_output=True,
+                  text=True, timeout=T_LOCAL)
+    if on_main.returncode != 0:
+        raise RuntimeError(f"rev_not_on_main: {rev} ({head[:7]}) — not from main")
+    if tag and os.path.isfile(signers):
+        # the ref rev-parse took the commit from; the signed object names its tag — an old signed tag moved under
+        # a new name would carry the old one
+        p = run(["git", "-C", mirror, "-c", "gpg.format=ssh", "-c", f"gpg.ssh.allowedSignersFile={signers}",
+                 "verify-tag", "--format=%(tag)", ref], capture_output=True, text=True, timeout=T_LOCAL)
+        if p.returncode != 0:
+            raise RuntimeError(f"tag_unsigned: {rev} — no signature from {signers}: {(p.stderr or '').strip()[-200:]}")
+        named = (p.stdout or "").strip()
+        if named != rev:
+            raise RuntimeError(f"tag_unsigned: {rev} — the signed tag is {named[:80] or '(no name)'}")
+    elif tag:
+        print(f"kd-release: tag {rev} without a signature check — no {signers}", file=sys.stderr)
+    return _plain(run, mirror, head)
+
+
+def _descends(run, mirror, previous, head) -> bool:
+    if not REV_RE.fullmatch(previous):
+        return False
+    known = run(["git", "-C", mirror, "rev-parse", "--verify", "--quiet", previous + "^{commit}"],
+                capture_output=True, text=True, timeout=T_LOCAL)
+    if known.returncode != 0:
+        return False
+    ancestor = run(["git", "-C", mirror, "merge-base", "--is-ancestor", previous, head], capture_output=True,
+                   text=True, timeout=T_LOCAL)
+    return ancestor.returncode == 0
+
+
+def _archive(run, mirror, head) -> bytes:
+    p = run(["git", "-C", mirror, "archive", "--format=tar", head], capture_output=True, timeout=T_ARCHIVE)
+    if p.returncode != 0:
+        raise RuntimeError("git archive failed")
+    return p.stdout
+
+
+def _installed_overlay():
+    """kd.overlay of this very release tree — the installed tool, not the code being released."""
+    sys.path.insert(0, COMMON)
+    try:
+        from kd import overlay
+    finally:
+        sys.path.pop(0)
+    return overlay
+
+
+def _unpack(data, dest):
+    """Regular files and directories only (kd.overlay of this very release tree)."""
+    overlay = _installed_overlay()
+    try:
+        overlay.unpack(data, dest)
+    except (overlay.OverlayError, tarfile.TarError) as exc:
+        raise RuntimeError(f"release: archive: {exc}") from None
+
+
+def _overlay_data(overlay_tar):
+    """The overlay archive is data: this installed tree's check of paths, types and modes, before any
+    scanner or composition runs; an executable or a script refuses the release (overlay_invalid)."""
+    overlay = _installed_overlay()
+    try:
+        errors = overlay.data_errors(overlay_tar)
+    except (overlay.OverlayError, tarfile.TarError) as exc:
+        errors = [str(exc)]
+    if errors:
+        raise RuntimeError(f"release: overlay_invalid: {'; '.join(errors[:3])[:300]}")
+
+
+def _isolated(argv, timeout):
+    return subprocess.run([PYTHON, "-I", *argv], capture_output=True, text=True, timeout=timeout)
+
+
+def _readable(work):
+    """The sandbox's user reads the input: directories 0755, files 0644 (the parent of ``work`` stays root's 0700)."""
+    os.chmod(work, 0o755)
+    for dirpath, dirnames, filenames in os.walk(work):
+        for name in dirnames:
+            os.chmod(os.path.join(dirpath, name), 0o755)
+        for name in filenames:
+            os.chmod(os.path.join(dirpath, name), 0o644)
+
+
+# PRIVATE_SCAN inside the sandbox: copied into the read-only input, wherever the installed tree lives (a bootstrap
+# checkout under /root is hidden there)
+SANDBOX_SCAN = f"{SANDBOX_IN}/private_scan.py"
+SANDBOX_FAILED = (200, 242)  # systemd's exit codes of a unit it could not set up (EXIT_CHDIR … EXIT_*)
+
+
+def _sandbox_argv(argv, work, timeout):
+    """systemd-run of PYTHON -I ``argv`` in the preflight's sandbox; ``work`` is SANDBOX_IN there, read-only."""
+    props = [*SANDBOX_PROPS, f"RuntimeMaxSec={timeout}",
+             f"BindReadOnlyPaths={work}:{SANDBOX_IN}",
+             "InaccessiblePaths=" + " ".join("-" + path for path in SANDBOX_HIDDEN)]
+    out = ["systemd-run", "--wait", "--pipe", "--collect", "--quiet"]
+    for prop in props:
+        out += ["-p", prop]
+    return out + ["--", PYTHON, "-I", *argv]
+
+
+def _sandboxed(argv, work, timeout):
+    """(exit code, stdout bytes, stderr text) of PYTHON -I ``argv`` in the sandbox."""
+    _readable(work)
+    p = subprocess.run(_sandbox_argv(argv, work, timeout), stdin=subprocess.DEVNULL, capture_output=True,
+                       timeout=timeout + 30)
+    err = (p.stderr or b"").decode("utf-8", "replace")
+    if SANDBOX_FAILED[0] <= p.returncode <= SANDBOX_FAILED[1]:  # systemd's own: the unit never ran the step
+        raise RuntimeError(f"release: sandbox failed: exit {p.returncode}: {err.strip()[-200:]}")
+    return p.returncode, p.stdout or b"", err
+
+
+def _public_findings(work):
+    """The released code's privacy scanner with its own privacy-scan.json: ["<path>:<line>: <kind>", …]."""
+    code = f"{SANDBOX_IN}/code"
+    rc, out, err = _sandboxed(["-c", SCAN, code, code, "--config", f"{code}/privacy-scan.json"], work, T_SCAN)
+    if rc == 0:
+        return []
+    text = out.decode("utf-8", "replace")
+    findings = [":".join(line.split(":")[:3]) for line in text.splitlines() if line.strip()]
+    if rc == 1 and findings:  # 1 with nothing found is Python's own exit on an uncaught exception
+        return findings
+    raise RuntimeError(f"release: privacy: scanner failed: {(err or text).strip()[-200:]}")
+
+
+def _closed_default(work):
+    """This installed tree's closed scanner with the overlay's literal list over the code tree:
+    ["<path>:<line>: private literal", …] — the literal itself stays out of the result."""
+    if not os.path.isfile(os.path.join(work, "overlay", "host", "private_scan.json")):
+        raise RuntimeError("release: privacy: overlay has no host/private_scan.json (the closed scanner's list)")
+    if not os.path.isfile(PRIVATE_SCAN):
+        raise RuntimeError(f"release: privacy: the installed tree has no closed scanner ({PRIVATE_SCAN})")
+    shutil.copyfile(PRIVATE_SCAN, os.path.join(work, os.path.basename(SANDBOX_SCAN)))
+    rc, out, err = _sandboxed([SANDBOX_SCAN, "--list", f"{SANDBOX_IN}/overlay/host/private_scan.json",
+                               f"{SANDBOX_IN}/code"], work, T_SCAN)
+    if rc == 0:
+        return []
+    text, prefix = out.decode("utf-8", "replace"), f"{SANDBOX_IN}/code/"
+    findings = [":".join(line[len(prefix):].split(":")[:2] if line.startswith(prefix) else line.split(":")[:2])
+                + ": private literal" for line in text.splitlines() if line.strip()]
+    if rc == 1 and findings:
+        return findings
+    raise RuntimeError(f"release: privacy: closed scanner failed: {(err or text).strip()[-200:]}")
+
+
+def _compose(work, deploy_rev):
+    """The released code's kd.overlay composes code + overlay in the sandbox; the tar comes back on stdout."""
+    rc, out, err = _sandboxed(["-c", COMPOSE, f"{SANDBOX_IN}/code", "release", f"{SANDBOX_IN}/code.tar",
+                               f"{SANDBOX_IN}/overlay.tar", deploy_rev, "-"], work, T_SCAN)
+    if rc in (3, 4):
+        line = (out.decode("utf-8", "replace").strip().splitlines() or [""])[-1]
+        if line:
+            raise RuntimeError(f"release: {line[:300]}")
+    if rc != 0 or not out:
+        raise RuntimeError(f"release: overlay_invalid: composition failed: {err.strip()[-200:] or f'exit {rc}'}")
+    return out
+
+
+def _preflight(code_tar, overlay_tar, deploy_rev, closed_scanner):
+    """The release tar: the overlay checked as data by this installed tree, the code tree scanned (the code's
+    scanner, the installed closed one with the overlay's list), then the code's kd.overlay composes code + overlay
+    and checks both — the scanners and the composition in the sandbox. RuntimeError("release: privacy|
+    overlay_invalid|overlay_incompatible: …") refuses the release."""
+    if overlay_tar is not None:
+        _overlay_data(overlay_tar)
+    with tempfile.TemporaryDirectory(prefix="kd-release.") as tmp:
+        work = os.path.join(tmp, "in")
+        _unpack(code_tar, os.path.join(work, "code"))
+        findings = _public_findings(work)
+        if overlay_tar is not None:
+            _unpack(overlay_tar, os.path.join(work, "overlay"))
+            findings += closed_scanner(work)
+        if findings:
+            raise RuntimeError(f"release: privacy: {len(findings)} findings, first: {findings[0]}")
+        if overlay_tar is None:
+            return code_tar
+        for name, data in (("code.tar", code_tar), ("overlay.tar", overlay_tar)):
+            with open(os.path.join(work, name), "wb") as handle:
+                handle.write(data)
+        return _compose(work, deploy_rev)
+
+
+def _mirror_default():
+    """The GitHub mirror right after a healthy release: systemd runs it, one at a time with its timer."""
+    p = subprocess.run(["systemctl", "start", "--no-block", "digipaddock-mirror.service"], capture_output=True, text=True,
+                       timeout=T_LOCAL)
+    return p.returncode, (p.stderr or p.stdout or "")
+
+
+def process(request, result_dir, mirror_dir, repos_path, run, switch, current, postflight=_postflight_default,
+            cabinet=_cabinet_default, reinstall=_reinstall_default, health=_health_default, e2e=_e2e_default, *,
+            current_deploy=_current_deploy, closed_scanner=_closed_default, bootstrap=False, ours=False,
+            mirror=_mirror_default, render=_render_default, host=_host_restart_default, known_hosts=KNOWN_HOSTS,
+            allowed_signers=None) -> int:
+    """One request: 0 — released, 1 — a handled refusal (the outcome is in result.json). An unexpected exception — the
+    outcome "failure" and the exception goes up: the service fails, OnFailure calls kd-alert."""
+    request_id = ""
+    prepared = {}
+    ts = str(request.get("ts", "")) if isinstance(request, dict) else ""
+    if isinstance(request, dict) and "card" in request:  # a request written before the card prefix moved
+        request = {**request, "card": ids.canonical(request["card"])}
+    try:
+        fields = _fields(request, ours)
+        request_id = _request_id(request, fields)
+        project, repo, sha, wanted = fields
+        # root's registry, not the forge agent's request, decides which repository to release and where
+        with open(repos_path, encoding="utf-8") as f:
+            registry = json.load(f)
+        release, role, entries = _entries(registry, project, repo)
+        if wanted is not None and role != CODE:
+            raise ValueError("rev — a commit or a tag of the code repository (role code); the overlay comes with its own main")
+        target = RELEASES[release]
+        mirrors, heads = {}, {}
+        for each in ROLES:
+            if each in entries:
+                mirrors[each] = _mirror(run, mirror_dir, entries[each]["repo"], known_hosts)
+                heads[each] = _main_head(run, mirrors[each], each, sha if each == role else None)
+        if wanted is not None:
+            heads[CODE] = _rev_head(run, mirrors[CODE], wanted,
+                                    allowed_signers or os.path.join(target["link"], SIGNERS))
+        head, deploy_head = heads[CODE], heads.get(OVERLAY, "")
+        # no release on top of a revision that is not from main (a branch released from a PC): the owner decides, not a card
+        previous = current(target["link"])
+        previous_deploy = current_deploy(target["link"]) if deploy_head else ""
+        if bootstrap:
+            print("kd-release: bootstrap — ancestry checks skipped", file=sys.stderr)
+        else:
+            if not _descends(run, mirrors[CODE], previous, head):
+                raise RuntimeError(f"stage runs a commit not from main ({previous[:12] or '?'}) — a release from a PC;"
+                                   " the owner decides")
+            # the first overlay release has no DEPLOY_REVISION to descend from
+            if previous_deploy and not _descends(run, mirrors[OVERLAY], previous_deploy, deploy_head):
+                raise RuntimeError(f"stage runs an overlay not from main ({previous_deploy[:12]}) — the owner decides")
+        rev, deploy_rev = head[:7], deploy_head[:7]  # REVISION and DEPLOY_REVISION — 7 characters
+        code_tar = _archive(run, mirrors[CODE], head)
+        overlay_tar = _archive(run, mirrors[OVERLAY], deploy_head) if deploy_head else None
+        tar = _preflight(code_tar, overlay_tar, deploy_rev, closed_scanner)
+        release_id = f"{rev}+{deploy_rev}" if deploy_rev else rev
+        prepared = dict(revision=rev, previous=previous[:7], deploy_revision=deploy_rev,
+                        deploy_previous=previous_deploy[:7], release_id=release_id)
+        _progress(result_dir, request_id, ts, "switching", release=release, **prepared)
+        if switch is _switch_default:
+            rc, text = switch(rev, tar, {**os.environ, "KD_RELEASE_BASE": target["base"], "KD_RELEASE_LINK": target["link"]})
+        else:
+            rc, text = switch(rev, tar)
+        if rc != 0:
+            raise RuntimeError(f"release_switch: {text.strip()[-300:]}")
+    except HANDLED as exc:
+        why = str(exc)[:300]
+        print(f"kd-release: {why}", file=sys.stderr)  # before the outcome is written: its failure (the service will fail) will not hide the reason
+        if prepared and _already_switched(
+            dict(state="switching", release=release, **prepared), current, current_deploy
+        ):
+            _result(result_dir, ts, False, error=why, request_id=request_id, degraded=True,
+                    failed_steps={"switch": why}, **prepared)
+            raise
+        _result(result_dir, ts, False, error=why, request_id=request_id)
+        return 1
+    except Exception as exc:
+        # the line "kd-release: …" is the reason for kd-alert (it reads this run's journal)
+        print(f"kd-release: failure: {exc.__class__.__name__}: {str(exc)[:200]}", file=sys.stderr)
+        installed = bool(prepared) and _already_switched(
+            dict(state="switching", release=release, **prepared), current, current_deploy
+        )
+        _result(result_dir, ts, False, error=f"kd-release failure — {_journal_hint()}",
+                request_id=request_id, degraded=installed, **(prepared if installed else {}))
+        raise
+    # the code is already switched: a failure to write the outcome is not "the release is rejected" but a real failure
+    # (the service fails → kd-alert)
+    print(f"kd-release: REVISION {previous[:7]} → {rev}"
+          + (f", DEPLOY_REVISION {previous_deploy[:7]} → {deploy_rev}" if deploy_rev else ""))
+    if bootstrap and not previous:
+        # a new host's first tree: no units, cabinet or roles to update yet — stage_setup.sh installs them
+        _result(result_dir, ts, True, revision=rev, deploy_revision=deploy_rev, release_id=release_id)
+        print("kd-release: the first tree — next stage_setup.sh (bootstrap.sh base)")
+        return 0
+    _progress(result_dir, request_id, ts, "checking", **prepared)
+    card = request.get("card", "")
+    try:
+        final = _verify_release(target["link"], rev, card, release_id, postflight, reinstall,
+                                render, cabinet, host, e2e, health, mirror)
+    except Exception as exc:
+        print(f"kd-release: verification stopped: {exc.__class__.__name__}", file=sys.stderr)
+        _result(result_dir, ts, False, degraded=True, request_id=request_id, health="unchecked",
+                error=f"release verification stopped — {_journal_hint()}",
+                failed_steps={"verification": exc.__class__.__name__}, **prepared)
+        raise
+    failures = final["failed_steps"]
+    error = "; ".join(failures.values())
+    try:
+        record = _result(result_dir, ts, not failures, degraded=bool(failures), request_id=request_id,
+                         error=error, **prepared, **final)
+    except OSError as exc:
+        print(f"kd-release: released, but the result is not written: {exc.__class__.__name__}", file=sys.stderr)
+        raise
+    if health is _health_default:
+        _notice_release(record, card)
+    if failures:
+        # The result is already durable. Keep the unit's failure signal for kd-alert.
+        raise RuntimeError(error)
+    return 0
+
+
+def _verify_release(link, rev, card, release_id, postflight, reinstall, render, cabinet, host, e2e, health, mirror):
+    failures, warnings = {}, {}
+    try:
+        rc, text = postflight(link)
+    except (OSError, subprocess.SubprocessError) as exc:
+        rc, text = 1, f"the check did not finish: {exc.__class__.__name__}"
+    why = "; ".join(line.strip() for line in text.splitlines() if line.strip()) if rc != 0 else ""
+    roles = reinstall(link, rev, card, release_id)
+    if roles.get("state") in ("pending", "running"):
+        print(f"kd-release: reinstall {','.join(roles.get('agents') or [])} — operation {roles.get('operation')}")
+    if rc != 0 and _covered(text, roles):
+        rc, why = 0, ""
+    if rc != 0:
+        failures["postflight"] = f"generated runtime postflight failed: {why[-200:]}"
+        print("kd-release: released, but the generated agents will not start until reinstalled"
+              f" (new_agent.sh --install <agent>): {why[-300:]}", file=sys.stderr)
+    if _render_units(render, link):
+        failures["render"] = "render_host.sh failed"
+    cabinet_rc = _update_cabinet(cabinet, link)
+    if cabinet_rc:
+        failures["cabinet"] = "cabinet update failed (cabinet_setup.sh install)"
+    if not cabinet_rc and roles.get("retry"):
+        again = reinstall(link, rev, card, release_id)
+        print(f"kd-release: reinstall after the cabinet update: {again.get('state')}"
+              f" {','.join(again.get('agents') or [])} {again.get('operation') or again.get('why') or ''}".rstrip())
+        if again.get("state") in ("uncovered", "deferred", "unchecked"):
+            failures["reinstall"] = f"deferred reinstall request failed: {str(again.get('why') or '?')[:200]}"
+            print(f"kd-release: {failures['reinstall']}", file=sys.stderr)
+        roles = {**roles, **again}
+    if roles.get("state") == "unchecked" and "reinstall" not in failures:
+        failures["reinstall"] = f"roles not checked after the release: {str(roles.get('why') or '?')[:300]}"
+        print(f"kd-release: {failures['reinstall']} (new_agent.sh --verify <agent>)", file=sys.stderr)
+    restart = _restart_host(host, link, release_id)
+    e2e_warning = _update_e2e(e2e, link)
+    if e2e_warning:
+        warnings["e2e"] = e2e_warning
+    options = {"restart": restart} if restart else {}
+    if health is _health_default:
+        options["announce"] = False
+    health_rc, unhealthy = health(link, rev, card, why, **options)
+    if health_rc != 0:
+        failures["health"] = f"release health check failed: {unhealthy[-200:]}"
+        print(f"kd-release: the check after the release failed: {unhealthy[-300:]}", file=sys.stderr)
+    if not failures:
+        try:  # the mirror has its own timer and alert
+            rc, text = mirror()
+        except (OSError, subprocess.SubprocessError) as exc:
+            rc, text = 1, exc.__class__.__name__
+        if rc != 0:
+            warnings["mirror"] = f"the GitHub mirror is not started: {text.strip()[-200:]}"
+            print(warnings["mirror"], file=sys.stderr)
+    return dict(reinstall=roles, failed_steps=failures, warnings=warnings,
+                health={0: "healthy", 1: "degraded"}.get(health_rc, "unchecked"))
+
+
+def _notice_release(record, card):
+    # The running tree formats the notice from the terminal outcome, including non-health failures.
+    from kd.cabinet.client import post_notice
+    from kd.release_health import notice
+
+    checks = [{"name": name, "ok": False, "detail": why} for name, why in record.get("failed_steps", {}).items()]
+    notice({"ok": record["ok"], "checks": checks or [{"name": "health", "ok": True, "detail": ""}]},
+           record["revision"], card, post=post_notice)
+
+
+CABINET_DB = "/var/lib/digipaddock/cabinet/cabinet.db"
+SCHEMA = ("import sys; sys.path.insert(0, sys.argv[1] + '/common'); "
+          "from kd.cabinet.schema import SCHEMA_VERSION; print(SCHEMA_VERSION)")
+
+
+def _db_version_default():
+    """The live cabinet base's schema (what store.Store.schema_version reads), read-only; 0 without a base."""
+    import sqlite3
+
+    if not os.path.exists(CABINET_DB):
+        return 0
+    conn = sqlite3.connect(f"file:{CABINET_DB}?mode=ro", uri=True)
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row else 0
+
+
+def _target_schema_default(target):
+    p = _isolated(["-c", SCHEMA, target], T_LOCAL)
+    if p.returncode != 0:
+        raise RuntimeError(f"rollback: schema of {target} not read: {(p.stderr or '').strip()[-200:]}")
+    return int((p.stdout or "").strip())
+
+
+def _switch_rollback_default(target):
+    p = subprocess.run(["bash", SWITCH, "--rollback", target], capture_output=True, text=True, timeout=T_SWITCH)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def rollback(target, *, result_dir=RESULT_DIR, base=RELEASES["digipaddock"]["base"],
+             link=RELEASES["digipaddock"]["link"], db_version=_db_version_default,
+             target_schema=_target_schema_default, switch_rollback=_switch_rollback_default, render=_render_default,
+             cabinet=_cabinet_default, e2e=_e2e_default, postflight=_postflight_default, health=_health_default,
+             current=_current_revision, host=_host_restart_default) -> int:
+    """0 — rolled back and healthy; 1 — refused, nothing switched; 3 — switched, a step after it failed."""
+    ts = f"{time.time():.3f}"
+    previous = current(link)
+    try:
+        if not target:
+            try:
+                with open(os.path.join(base, "PREVIOUS"), encoding="utf-8") as f:
+                    target = f.read().strip()
+            except OSError:
+                raise RuntimeError(f"rollback: {base}/PREVIOUS is missing — name the release directory") from None
+        target = os.path.realpath(target)
+        # its schema.py runs as root below: the switch's own rule (a directory right under the base) comes first
+        if os.path.dirname(target) != os.path.realpath(base) or not os.path.isdir(target):
+            raise RuntimeError(f"rollback refused: {target} is not a release under {base}")
+        live, want = db_version(), target_schema(target)
+        if want < live:
+            raise RuntimeError(f"rollback refused: cabinet schema {live} > {want}; fix forward")
+        rc, text = switch_rollback(target)
+        if rc != 0:
+            raise RuntimeError(f"release_switch --rollback: {text.strip()[-300:]}")
+    except HANDLED as exc:
+        why = str(exc)[:300]
+        print(f"kd-release: {why}", file=sys.stderr)
+        _result(result_dir, ts, False, previous=previous[:7], error=why, rollback=True)
+        return 1
+    rev = current(link)
+    print(f"kd-release: rollback REVISION {previous[:7]} → {rev[:7]} ({target})")
+    failed = []
+    if _render_units(render, link) != 0:
+        failed.append("render_host.sh")
+    if _update_cabinet(cabinet, link) != 0:
+        failed.append("cabinet_setup.sh install")
+    _update_e2e(e2e, link)  # its runtime was built from the code rolled back from
+    try:
+        rc, text = postflight(link)
+    except (OSError, subprocess.SubprocessError) as exc:
+        rc, text = 1, f"the check did not finish: {exc.__class__.__name__}"
+    why = "; ".join(line.strip() for line in text.splitlines() if line.strip()) if rc != 0 else ""
+    if rc != 0:
+        failed.append("postflight")
+        print(f"kd-release: the generated agents will not start until reinstalled: {why[-300:]}", file=sys.stderr)
+    # the host pinned the release rolled back from: the factory restarts it onto this code (review M3)
+    restart = _restart_host(host, link, rev[:7], rollback=ts)
+    health_rc, unhealthy = health(link, rev[:7], "", why, **({"restart": restart} if restart else {}))
+    if health_rc != 0:
+        failed.append("health")
+        print(f"kd-release: the check after the rollback failed: {unhealthy[-300:]}", file=sys.stderr)
+    _result(result_dir, ts, not failed, revision=rev[:7], previous=previous[:7], degraded=bool(failed),
+            error="; ".join(failed), rollback=True)
+    return 3 if failed else 0
+
+
+def _bootstrap_options(rest):
+    """{"--repos": file, "--known-hosts": file} after --bootstrap <project>; None — not that shape."""
+    found = {}
+    while rest:
+        if len(rest) < 2 or rest[0] not in ("--repos", "--known-hosts") or rest[0] in found or not rest[1]:
+            return None
+        found[rest[0]] = rest[1]
+        rest = rest[2:]
+    return found
+
+
+def _given_registry(path, repos_path) -> bool:
+    """A new host's /etc/digipaddock/repos.json from ``path``: checked by the rule add_repo.sh reads it
+    with, written once — the same content again is fine, another one refuses."""
+    dev = os.path.join(os.path.dirname(COMMON), "agents", "dev")
+    if dev not in sys.path:
+        sys.path.insert(0, dev)
+    from dev_agent import repos  # noqa: PLC0415
+
+    try:
+        repos.load(path)
+        with open(path, encoding="utf-8") as f:
+            given = json.load(f)
+    except (repos.RepoError, OSError, ValueError) as exc:
+        print(f"kd-release: --repos: {exc}", file=sys.stderr)
+        return False
+    try:
+        with open(repos_path, encoding="utf-8") as f:
+            there = json.load(f)
+    except FileNotFoundError:
+        there = None
+    except (OSError, ValueError) as exc:
+        print(f"kd-release: {repos_path} is not readable: {exc.__class__.__name__}", file=sys.stderr)
+        return False
+    if there is not None:
+        if there != given:
+            print(f"kd-release: repos.json is already there and differs ({repos_path}) — change it with add_repo.sh", file=sys.stderr)
+            return False
+        return True
+    os.makedirs(os.path.dirname(repos_path), mode=0o755, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(repos_path), prefix=".repos.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(given, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, repos_path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    print(f"kd-release: {repos_path} written from {path}")
+    return True
+
+
+def main(argv=None, *, release_dir=RELEASE_DIR, result_dir=RESULT_DIR, mirror_dir=MIRROR_DIR, repos_path=REPOS,
+         run=subprocess.run, switch=_switch_default, current=_current_revision, lock_path=LOCK, clock=time.monotonic,
+         postflight=_postflight_default, cabinet=_cabinet_default, reinstall=_reinstall_default,
+         health=_health_default, e2e=_e2e_default, current_deploy=_current_deploy, closed_scanner=_closed_default,
+         mirror=_mirror_default, render=_render_default, host=_host_restart_default, allowed_signers=None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        # under systemd stdout is a pipe: its lines go to the journal in order with stderr's, which kd-alert reads
+        sys.stdout.reconfigure(line_buffering=True)
+    args = list(sys.argv[1:] if argv is None else argv)
+    extra = _bootstrap_options(args[2:]) if args[:1] == ["--bootstrap"] and len(args) >= 2 else None
+    if args[:1] == ["--rollback"] and len(args) <= 2:
+        target = args[1] if len(args) == 2 else None
+    elif args == [] or extra is not None:
+        target = False
+    else:
+        print("usage: kd-release [--bootstrap <project> [--repos <file>] [--known-hosts <file>] | --rollback [<dir>]]",
+              file=sys.stderr)
+        return 2
+    bootstrap = args[:1] == ["--bootstrap"]
+    lock = None
+    if fcntl is not None and lock_path:
+        os.makedirs(os.path.dirname(lock_path), mode=0o755, exist_ok=True)  # a run by hand, without RuntimeDirectory
+        lock = open(lock_path, "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        _recover_progress(result_dir, current, current_deploy)
+        if target is not False:
+            return rollback(target, result_dir=result_dir, render=render, cabinet=cabinet, e2e=e2e,
+                            postflight=postflight, health=health, current=current, host=host)
+        if bootstrap:
+            # root by hand, the first release of a new history: main of the project's release as it is,
+            # no request file — a pending request.json stays for the path unit
+            if "--repos" in extra and not _given_registry(extra["--repos"], repos_path):
+                return 1
+            known_hosts = KNOWN_HOSTS
+            if "--known-hosts" in extra:
+                if any(current(each["link"]) for each in RELEASES.values()):
+                    print(f"kd-release: --known-hosts is not needed: the tree is there, the key is {KNOWN_HOSTS}", file=sys.stderr)
+                else:
+                    known_hosts = extra["--known-hosts"]
+            os.makedirs(result_dir, mode=0o755, exist_ok=True)
+            os.makedirs(mirror_dir, mode=0o700, exist_ok=True)
+            try:
+                with open(repos_path, encoding="utf-8") as f:
+                    repo = (json.load(f).get(args[1]) or {}).get("repo", "")
+            except (OSError, ValueError, AttributeError):
+                repo = ""
+            request = {"project": args[1], "repo": repo if isinstance(repo, str) else "", "requester": "root",
+                       "ts": f"{time.time():.3f}"}
+            # its code is the release's: bootstrap.sh reads a refused first tree as a failure
+            return process(request, result_dir, mirror_dir, repos_path, run, switch, current, postflight, cabinet,
+                           reinstall, health, e2e, current_deploy=current_deploy, closed_scanner=closed_scanner,
+                           bootstrap=True, ours=True, mirror=mirror, render=render, host=host,
+                           known_hosts=known_hosts, allowed_signers=allowed_signers)
+        start = clock()
+        path = os.path.join(release_dir, "request.json")
+        while True:
+            found = _read_request(path)
+            if found is None:
+                return 0
+            raw, ours = found
+            try:
+                request = json.loads(raw)
+            except ValueError:
+                request = raw
+            if isinstance(request, dict) and "card" in request:
+                request["card"] = ids.canonical(request["card"])
+            try:
+                request_id = _request_id(request, _fields(request, ours))
+            except ValueError:
+                request_id = ""  # process will record the handled refusal
+            if request_id and release_requests.terminal(result_dir, request_id):
+                if not _remove(path):
+                    return 0
+                continue
+            _progress(result_dir, request_id, str(request.get("ts", "")) if request_id else "", "accepted")
+            removed = _remove(path)
+            try:
+                process(request, result_dir, mirror_dir, repos_path, run, switch, current, postflight, cabinet,
+                        reinstall, health, e2e, current_deploy=current_deploy, closed_scanner=closed_scanner,
+                        ours=ours, mirror=mirror, render=render, host=host, allowed_signers=allowed_signers)
+            finally:
+                if request_id and release_requests.terminal(result_dir, request_id):
+                    _clear_progress(result_dir)
+            if not removed or clock() - start >= LOOP_BUDGET:
+                return 0  # the next run by PathExists takes the rest
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

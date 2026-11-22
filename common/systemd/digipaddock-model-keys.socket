@@ -1,0 +1,13 @@
+[Unit]
+Description=DigiPaddock: owner-signed provider keys
+
+[Socket]
+ListenStream=/run/digipaddock-model-keys/keys.sock
+SocketUser=root
+SocketGroup=@cabinet@
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

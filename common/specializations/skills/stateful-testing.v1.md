@@ -1,0 +1,12 @@
+# Skill: stateful-testing (v1)
+
+- Start from the task's observable contract. List states, allowed transitions, refused transitions, terminal states and invariants. State what a user or another client must observe; do not copy implementation branches into assertions.
+- Trace one action across durable state, events/outbox, delivery, external effect and acknowledgement. Name which writes share a transaction and where a crash can split them. An acknowledgement is not evidence that the effect happened.
+- Repetition: deliver the same command/key twice, including after a lost response. Assert the intended number of effects and stable identity. Test a genuinely new key separately; deduplication must not swallow new work.
+- Concurrency: use two independent clients with the same observed revision. Exactly the permitted write wins; the loser receives a conflict and must reread. Verify that notes or status changes do not overwrite another client's scope. Use barriers and explicit scheduling, not random sleeps.
+- Restart: stop an isolated test instance at a named boundary, reopen its durable store, and resume through the public recovery path. Assert no duplicate effect, no false success and a usable queue/slot. Never stop live agents or use a production database for a probe.
+- For a timeout distinguish not accepted, accepted but response lost, effect in progress, and effect completed but acknowledgement lost. Verify the documented retry policy and terminal failure reason instead of assuming every timeout is safe to retry.
+- Cover cancellation, stale grants, moved assignee, changed scope and removed dependencies where the task crosses those boundaries. Rejected or revoked work must not run later from a queue.
+- Control clock and scheduling explicitly. Use a temporary durable database, real serialization/transactions and minimal fakes at external boundaries. Check the resulting record/event/effect, not merely that a mock was called.
+- Demonstrate a useful check against a known defect and its correction when practical. Keep the example small and safe. Record the invariant, initial state, commands, observed result and code revision. Do not add a large matrix when one boundary test covers the risk.
+- Preserve the specialization's output and write limits: implementer/test-author may return test commits; reviewer returns concrete findings; tester runs scratch probes and proposes permanent tests. Missing requirements or unavailable recovery tools are limitations or missing inputs, never invented behavior or additional authority.

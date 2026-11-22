@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "name": "analyst",
+  "model": "opus",
+  "profile": "analyst",
+  "capabilities": ["board.read", "board.write", "data.read", "docs.read", "host.read", "monitor.read", "net.egress", "repo.read", "usage.read"],
+  "runtime": {"sandbox_profile": "analyst-v1", "working_directory": "work"}
+}

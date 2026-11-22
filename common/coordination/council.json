@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "critics_max": 10,
+  "rounds_max": 5,
+  "rounds_default": 3,
+  "min_lines_default": 100,
+  "min_lines_max": 100000,
+  "jobs_per_day": 60,
+  "head_wait_minutes": 20,
+  "stalled_hours": 1
+}

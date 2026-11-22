@@ -1,0 +1,33 @@
+[Unit]
+Description=DigiPaddock: main of the public repository to GitHub through both privacy scanners
+# exit 1 — new main blocked by a scanner (once per SHA), 2 — git or a scanner could not run
+OnFailure=digipaddock-alert@digipaddock-mirror.service
+After=network-online.target
+Wants=network-online.target
+# no GitHub key — the mirror is not set up on this host (mirror_setup.sh install): skipped, no alert
+ConditionPathExists=/etc/digipaddock/mirror/github_deploy
+# the key may come first (the window makes it early); the state directory is mirror_setup.sh install's own
+ConditionPathIsDirectory=/var/lib/digipaddock/github-mirror
+# kd-release starts it after every healthy release, besides the timer
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# root: the forge read key /root/.ssh/forgejo_deploy and the GitHub push key /etc/digipaddock/mirror/github_deploy
+Environment=HOME=/root LANG=C.UTF-8 PATH=/usr/bin:/bin
+UMask=0077
+ExecStart=/usr/local/bin/kd-mirror
+TimeoutStartSec=300
+ProtectSystem=strict
+ReadWritePaths=/var/lib/digipaddock/github-mirror
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=512M

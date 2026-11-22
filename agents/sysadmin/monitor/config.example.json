@@ -1,0 +1,224 @@
+{
+  "close_after": 3,
+  "repeat_window_days": 7,
+  "quiet_hours": {
+    "start": "23:00",
+    "end": "08:00"
+  },
+  "morning_at": "08:00",
+  "max_wakes_per_hour": 6,
+  "fallback_after_min": 30,
+  "parallel": 4,
+  "tick_budget_s": 200,
+  "call_timeout_s": 30,
+  "message_max_chars": 3500,
+  "external_text_max": 200,
+  "unreachable_after": 3,
+  "critical_unreachable": [
+    "example-prod",
+    "example-stage"
+  ],
+  "home_server": "example-stage",
+  "every_min": {
+    "certs": 360,
+    "backup": 60,
+    "sec": 60,
+    "ports": 60,
+    "wgpeers": 60,
+    "updates": 1440,
+    "reboot": 1440,
+    "autoupdates": 1440,
+    "eol": 1440,
+    "cores": 1440
+  },
+  "disk_pct": {
+    "warn": 85,
+    "crit": 95
+  },
+  "mem_available_pct": {
+    "warn": 10,
+    "crit": 5
+  },
+  "mem_available_mb": {
+    "node-b": {
+      "warn": 100,
+      "crit": 50
+    }
+  },
+  "mem_psi": {
+    "some_avg300": 10,
+    "full_avg60": 5
+  },
+  "swap_io": {
+    "warn_pages_s": 1000,
+    "window_min": 10
+  },
+  "units_ignore": [
+    "digipaddock-monitor.service",
+    "digipaddock-alert@*.service"
+  ],
+  "units_confirm": [
+    "cron-*"
+  ],
+  "units_required": {
+    "example-stage": [
+      "hindsight-api.service",
+      "hindsight-worker.service",
+      "postgresql@18-main.service",
+      "digipaddock-cabinet.socket",
+      "digipaddock-cabinet-http.socket",
+      "digipaddock-cabinet-push.service",
+      "digipaddock-session-host.socket",
+      "digipaddock-review.socket",
+      "digipaddock-board-sync.path",
+      "digipaddock-board-sync.timer",
+      "digipaddock-board-watch.timer",
+      "digipaddock-board-deliver.timer",
+      "digipaddock-repo-sync.timer",
+      "digipaddock-cabinet-export.timer",
+      "digipaddock-usage.timer"
+    ]
+  },
+  "units_required_after": 2,
+  "wg_stale_min": 5,
+  "vpn_nodes": [
+    "node-a",
+    "node-b"
+  ],
+  "heartbeat": {
+    "server": "example-prod",
+    "table": "app_vpn_heartbeat",
+    "max_age_min": {
+      "default": 15,
+      "prod-1": 20,
+      "node-a": 75
+    },
+    "names": {
+      "node-a": "node-a",
+      "example-prod": "prod-1"
+    },
+    "ignore_prefix": [
+      "mobile-"
+    ]
+  },
+  "mysql": {
+    "server": "example-prod",
+    "query_warn_s": 120,
+    "query_crit_s": 600,
+    "mdl_crit_s": 30,
+    "conn_warn_pct": 80,
+    "ignore_commands": [
+      "Sleep",
+      "Daemon",
+      "Binlog Dump",
+      "Binlog Dump GTID"
+    ],
+    "ignore_users": [
+      "system user",
+      "event_scheduler"
+    ],
+    "ignore_info_prefixes": [
+      "SELECT /*!40001 SQL_NO_CACHE */"
+    ]
+  },
+  "certs": {
+    "servers": [
+      "example-prod",
+      "example-stage"
+    ],
+    "warn_days": 14,
+    "crit_days": 3
+  },
+  "backup": {
+    "server": "node-b",
+    "path": "/backups",
+    "warn_h": 26,
+    "crit_h": 50
+  },
+  "monitoring": {
+    "server": "example-prod",
+    "problems_file": "/var/log/example/monitoring_problems.json",
+    "alert_log": "/var/log/example/monitoring_alert.log",
+    "max_age_min": 30,
+    "consumers_table": "app_consumer_heartbeat",
+    "consumers_stale_min": 15,
+    "critical_id_prefixes": [
+      "api_health:",
+      "vpn_country:"
+    ],
+    "ignore_id_prefixes": [
+      "disk:",
+      "parsing_fail:"
+    ]
+  },
+  "security": {
+    "critical_servers": [
+      "example-prod",
+      "example-stage"
+    ],
+    "auth_log_lines": 1500,
+    "auth_log_lines_max": 6000,
+    "pending_ips_max": 5,
+    "journal_servers": [],
+    "dnf_servers": [],
+    "wg_servers": [
+      "example-prod"
+    ],
+    "critical_packages": [
+      "openssh-server",
+      "openssl",
+      "libssl*",
+      "linux-image-*",
+      "sudo",
+      "libc6",
+      "nginx*",
+      "mysql-server*",
+      "php*",
+      "wireguard*",
+      "systemd",
+      "kernel*",
+      "glibc*",
+      "openssl-libs*"
+    ],
+    "updates": {
+      "warn_days": 3,
+      "critical_warn_days": 1,
+      "critical_any_days": 7,
+      "crit_days": 7
+    },
+    "reboot_warn_days": 7,
+    "eol": {
+      "warn_days": 90,
+      "dates": {
+        "ubuntu": {
+          "20.04": "2025-05-31",
+          "22.04": "2027-04-30",
+          "24.04": "2029-04-30",
+          "26.04": "2031-04-30"
+        },
+        "debian": {
+          "11": "2026-08-31",
+          "12": "2028-06-30"
+        },
+        "almalinux": {
+          "8": "2029-03-01",
+          "9": "2032-05-31"
+        }
+      }
+    },
+    "load": {
+      "warn_x": 2,
+      "crit_x": 4,
+      "streak": 3
+    },
+    "units_ignore": [
+      "snap-*.mount",
+      "snap.*"
+    ],
+    "ports_ignore": [],
+    "health_after": 3,
+    "snapshot_history_days": 30,
+    "expect_max_min": 120,
+    "plan_windows": true
+  }
+}

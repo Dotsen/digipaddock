@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "description": "kd-host-read (KD-9101 stage A): journal units every agent reads, agents with the full journal, readable platform paths and the records never shown. A unit is listed only after its output was checked for secrets and session content: hindsight-* (agents' memory) and digipaddock-monitor (sysadmin only) are not.",
+  "units": [
+    "digipaddock-alert-watch.service",
+    "digipaddock-board-boss-digest.service",
+    "digipaddock-board-deliver.service",
+    "digipaddock-board-sync.service",
+    "digipaddock-board-watch.service",
+    "digipaddock-cabinet-export.service",
+    "digipaddock-cabinet-push.service",
+    "digipaddock-cabinet.service",
+    "digipaddock-release.service",
+    "digipaddock-repo-sync.service",
+    "digipaddock-review.service",
+    "digipaddock-session-host.service",
+    "digipaddock-usage.service",
+    "nginx.service"
+  ],
+  "full_journal": ["sysadmin"],
+  "roots": {
+    "resolve": "/run/systemd/resolve",
+    "admin-proposals": "/var/lib/digipaddock/admin-proposals",
+    "attention": "/var/lib/digipaddock/attention",
+    "boss-grants": "/var/lib/digipaddock/boss-promotions/grants",
+    "boss-proposals": "/var/lib/digipaddock/boss-promotions/proposals",
+    "hindsight-since": "/var/lib/digipaddock/hindsight-since",
+    "release": "/var/lib/digipaddock/release",
+    "release-result": "/var/lib/digipaddock/release-result",
+    "usage": "/var/lib/digipaddock/usage.jsonl",
+    "nginx": "/var/log/nginx/board",
+    "devcheck": "/var/log/digipaddock-devcheck",
+    "egress": "/var/log/digipaddock-egress",
+    "data": "/var/log/digipaddock-data"
+  },
+  "private_comm": ["login", "pkexec", "polkitd", "runuser", "sshd", "sshd-session", "su", "sudo", "unix_chkpwd"],
+  "private_identifiers": ["login", "pkexec", "polkitd", "runuser", "sshd", "sshd-session", "su", "sudo", "unix_chkpwd"],
+  "audit_identifiers": ["kd-permission"]
+}

@@ -1,0 +1,53 @@
+#!/usr/bin/python3 -I
+"""kd-host-read — the platform's journal, systemd state and files for an agent; see ``kd.host_read``.
+
+    kd-host-read journalctl -u <unit> [-n N] [--since T] ... | journalctl --units
+    kd-host-read systemctl status|show|cat|list-units|... [units]
+    kd-host-read ls|stat|cat|head|tail|grep ... <path> | paths
+    kd-host-read sys df|free|uptime|ss|ps|ip
+
+Runs as the host reader (``naming.service_user("observe")``): another caller re-executes itself through its
+``host`` capability channel, ``kd-cap run host`` with this exact path. The channel names the agent
+(``KD_AGENT``); the caller's environment and cwd are not used.
+"""
+
+import os
+import signal
+import sys
+
+try:
+    import pwd
+except ImportError:  # Windows: tests only
+    pwd = None
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import cap_client, host_read, naming  # noqa: E402
+
+EXECUTOR = "/opt/digipaddock/common/bin/kd-host-read"
+
+
+def reexec_argv(argv):
+    """The same call through the host channel: its service runs as the host reader."""
+    return [cap_client.CLIENT, "run", "host", EXECUTOR, *argv]
+
+
+if __name__ == "__main__":
+    reader = pwd.getpwnam(naming.service_user("observe"))
+    if os.geteuid() != reader.pw_uid:
+        os.execv(cap_client.CLIENT, reexec_argv(sys.argv[1:]))
+    agent = os.environ.get("KD_AGENT", "")
+    os.environ.clear()
+    os.environ.update(host_read.clean_env())
+    os.chdir("/")
+    os.umask(0o077)
+    # one call never outlives its limit, whatever it reads (a pattern, a slow file)
+    signal.alarm(host_read.TIMEOUT + 5)
+    try:
+        catalog = host_read.load_catalog(os.path.join(COMMON, "coordination", "host-read.json"))
+        disabled = host_read.load_disabled()
+    except (OSError, ValueError) as exc:
+        sys.stdout.write(f"kd-host-read: switched off ({exc.__class__.__name__}: the catalog or {host_read.STATE})\n")
+        sys.exit(host_read.EXIT_DENIED)
+    sys.exit(host_read.main(sys.argv[1:], agent=agent, catalog=catalog, disabled=disabled, out=sys.stdout))

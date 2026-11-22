@@ -1,0 +1,12 @@
+# Skill: e2e-testing (v2)
+
+- Derive a small set of user-visible scenarios from acceptance criteria. Name the application revision, test data, expected outcome and failure evidence. A unit test or a successful health request is not an end-to-end result.
+- Use only an authorized test runtime. For the prepared cabinet bundle use `kd-e2e run cabinet-smoke --card KD-n`; it accepts a catalog name, not a URL, shell command, config path or browser flags. A missing runtime/capability is blocked.
+- The runtime's suites are fixed catalog entries, and `kd-e2e` reports the revision it tested. A scenario no suite covers cannot be run through it: report it as not run, with that reason, and propose adding it to a suite as a separate change. A tested revision other than your change's is not evidence for your change. Never disable the agent sandbox, bind a local server from it, use production accounts or broaden network access.
+- Select stable role/name or explicit test-id locators and web-first assertions. Avoid CSS implementation details and arbitrary sleeps. Wait for the expected state rather than retrying an entire effect without knowing whether it happened.
+- Isolate cookies, local storage, application data and test identities. Control external dependencies with fixtures or registered local stubs. Never turn off Chromium's own sandbox or use a live customer database to make a scenario pass.
+- Cover the task's relevant error, loading, empty, long-text and long-list states, navigation and reconnection. Exercise representative widths 360, 900 and 1440; a screenshot alone is not an assertion on behavior.
+- Retain a trace/screenshot on failure and a compact result with revision, scenario, commands and outcome. Keep artifacts private: they may contain synthetic session credentials, and real credentials must never be used. Do not publish raw traces without checking their contents.
+- Validate a useful check against an intentionally defective fixture and its corrected behavior when practical. An unavailable browser, namespace or test origin is blocked, not passed. Report the exact checks not run.
+- Use the existing specialization's result format and limits. A persistent agent may request the prepared executor through its granted capability; workers currently lack that channel and must report the limitation instead of trying a fallback.
+- Follow the project's pinned Playwright version and its best practices: https://playwright.dev/docs/best-practices. This skill grants knowledge, not tools or access.

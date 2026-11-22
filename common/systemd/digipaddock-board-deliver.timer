@@ -1,0 +1,10 @@
+[Unit]
+Description=DigiPaddock: once a minute — an assignment or a signal not delivered to a busy pane
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

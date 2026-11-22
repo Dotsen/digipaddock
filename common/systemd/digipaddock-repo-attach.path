@@ -1,0 +1,11 @@
+[Unit]
+Description=DigiPaddock: the owner's request from the cabinet to attach a repository → kd-repo-attach
+
+[Path]
+# PathExists is checked again when the service exits, so a notification arriving during a run is kept.
+# The service clears the notification at the start. Requests stay queued in the cabinet.
+PathExists=/var/lib/digipaddock/repo-attach/request
+Unit=digipaddock-repo-attach.service
+
+[Install]
+WantedBy=multi-user.target

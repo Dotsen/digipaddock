@@ -1,0 +1,14 @@
+#!/usr/bin/python3 -I
+"""kd-admin-propose --task KD-<n> --file <plan.json> | --json '<plan>' — the sysadmin's plan of typed operations for
+one admin card. Runs as the agent's own user: the plan is untrusted data until the owner approves it on the
+page whose link this prints. Exit codes: 0 saved, 1 error, 2 refused."""
+import os
+import pwd
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+sys.path.insert(0, os.path.join(REPO, "common"))
+
+from kd import admin_cli  # noqa: E402
+
+sys.exit(admin_cli.propose_main(sys.argv[1:], user=pwd.getpwuid(os.getuid()).pw_name))

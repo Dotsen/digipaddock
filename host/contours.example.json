@@ -1,0 +1,8 @@
+{
+  "example-ci": {
+    "host": "local",
+    "components": ["example-app", "example-app-deploy"],
+    "exclusive": false,
+    "parallel": 2
+  }
+}

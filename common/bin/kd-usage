@@ -1,0 +1,693 @@
+#!/usr/bin/env python3
+"""kd-usage daily [--date YYYY-MM-DD] | show [--days N] — the tokens of all agents by Claude Code's session transcripts.
+
+daily (by a timer at 00:30 in the host's zone, as root): counts a day in the host's zone (host.json timezone; yesterday
+by default), writes a line per agent × model into /var/lib/digipaddock/usage.jsonl (a repeat for the same day replaces
+that day's lines) and prints the total to stdout (the unit's journal). It sends nothing anywhere: the owner sees
+yesterday's usage in the cabinet's digest at 09:00.
+show — a table for the last N days (7 by default), sends nothing; the column cost is the journal line's cost_usd in
+dollars (an estimate by the cabinet's model prices, not a bill; no price or a hindsight line — "-"); the monitor's
+turns (the category monitor — the "Monitor" thread, before it — the monitor's wakes in the chat) — a separate line
+"agent/monitor" from the cabinet's journal: they are already inside the agent's lines.
+The transcripts are in the homes of all agent users (agent and those from /etc/digipaddock/agents.json); a session from
+a subdirectory of an agent's folder (dev — from work/) counts for the agent by the folders /srv/digipaddock-agents/* (agent_of).
+The transcripts lie in the agent's tree (it can replace them): symlinks are not read, only numbers are taken.
+The turns of host sessions and worker jobs come from the cabinet's usage journal (usage.day, as root): from an agent's
+first stamp there its transcripts and result records are not counted; the cabinet did not answer — only the files and
+a line about it.
+The Hindsight server is a separate category hindsight, not an agent: its claude-code provider gives the CLI its own
+CLAUDE_CONFIG_DIR (mkdtemp hindsight-claude-code-) inside the unit's PrivateTmp, so the transcripts are read from there
+(root only) and vanish with the unit's restart. A day the process did not cover in full is "incomplete data"; no unit
+was found — "no data" (a line without numbers, not a zero). The accounting starts on the release day (the release's
+REVISION); a repeat for a day does not replace a record of better completeness with a worse one.
+"""
+import argparse
+import json
+import os
+import re
+import socket
+import stat
+import sys
+import tempfile
+from datetime import date, datetime, timedelta, timezone
+
+NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+PROJECT_PREFIX = "-srv-digipaddock-agents-"
+AGENTS_DIR = "/srv/digipaddock-agents"
+DATA_DIR = "/var/lib/digipaddock"
+RESULTS_DIR = DATA_DIR + "/worker/results"  # kd-worker result records (C06), readable by the base user
+COMMON_PATH = "/opt/digipaddock/common"
+FIELDS = ("requests", "sessions", "input", "output", "cache_write", "cache_read")
+REQUESTS = ("request", "requests")
+SESSIONS = ("session", "sessions")
+USAGE_KEYS = {"input": "input_tokens", "output": "output_tokens",
+              "cache_write": "cache_creation_input_tokens", "cache_read": "cache_read_input_tokens"}
+CACHE_WARN_PCT = 70
+CACHE_WARN_MIN_REQUESTS = 20
+CABINET_AWAY = "⚠️ the cabinet did not answer — counted from the session files only"
+HINDSIGHT = "hindsight"  # category (and agent field) of the Hindsight server's own LLM calls
+HINDSIGHT_TMP = "/tmp"
+HINDSIGHT_UNITS = ("hindsight-api.service", "hindsight-worker.service")
+HINDSIGHT_CONFIG_PREFIX = "hindsight-claude-code-"
+HINDSIGHT_OWNER = 0  # systemd makes PrivateTmp folders as root
+RELEASE_MARK = "/opt/digipaddock/REVISION"  # written by release_switch.sh: its mtime is the release day
+HINDSIGHT_SINCE = "hindsight-since"  # beside usage.jsonl: the first day of Hindsight accounting, pinned once
+COVERAGE = ("none", "partial", "full")  # worse to better
+COVERAGE_TEXT = {"none": "no data", "partial": "partial data"}
+NO_MODEL = "-"  # a hindsight row of a day without calls (or without data)
+
+
+def parse_ts(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def zone():
+    """The host's zone (host.json timezone): the ledger's days are its days."""
+    sys.path.insert(0, COMMON_PATH)
+    try:
+        from kd import clock  # noqa: PLC0415
+    finally:
+        sys.path.remove(COMMON_PATH)
+    return clock.zone()
+
+
+def host_day(value):
+    return parse_ts(value).astimezone(zone()).strftime("%Y-%m-%d")
+
+
+def agent_folders(base=AGENTS_DIR):
+    """The names of the agents' folders (/srv/digipaddock-agents/<name>, directories); no directory — empty."""
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return []
+    return sorted(n for n in names if NAME_RE.match(n) and os.path.isdir(os.path.join(base, n)))
+
+
+def agent_of(project, folders=()):
+    """The agent by the transcript directory -srv-digipaddock-agents-<tail>: Claude Code names it by the session's cwd,
+    replacing / and other non-[A-Za-z0-9] with -. A session from a subdirectory of an agent's folder is the same agent
+    (dev starts from work/ — agent-launch under a strict sandbox; claude -p — from the clone): the longest agent folder
+    that the tail equals or starts with, followed by "-". Not by the suffix -work: that way neither an agent of that
+    name nor deeper subdirectories get lost. No folder found — the tail as it is (the agent does not vanish from the digest)."""
+    tail = project[len(PROJECT_PREFIX):]
+    best = ""
+    for name in folders:
+        key = re.sub(r"[^A-Za-z0-9]", "-", name)
+        if (tail == key or tail.startswith(key + "-")) and len(name) > len(best):
+            best = name
+    return best or tail
+
+
+def transcripts(roots, folders=()):
+    """(agent, path) of every .jsonl of the agents' projects in all roots (a home per agent user); symlinks are not taken.
+    roots — a path or a list of paths; folders — the names of the agents' folders (agent_of)."""
+    for root in ([roots] if isinstance(roots, (str, os.PathLike)) else roots):
+        try:
+            projects = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for project in projects:
+            path = os.path.join(root, project)
+            agent = agent_of(project, folders)
+            if not (project.startswith(PROJECT_PREFIX) and NAME_RE.match(agent)) or os.path.islink(path):
+                continue
+            for dirpath, _, files in os.walk(path, followlinks=False):
+                for name in sorted(files):
+                    file = os.path.join(dirpath, name)
+                    if name.endswith(".jsonl") and not os.path.islink(file):
+                        yield agent, file
+
+
+def read_lines(path):
+    """The lines of a regular file; not a file (a FIFO, a socket, a device) or a symlink — empty."""
+    if not stat.S_ISREG(os.lstat(path).st_mode):
+        return
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, encoding="utf-8", errors="replace") as handle:
+        yield from handle
+
+
+def assistant_usage(raw, day):
+    """(the record, the answer's key, the model or None, the numbers) of a model answer line within the host's day;
+    another line — None."""
+    try:
+        entry = json.loads(raw)
+        message = entry["message"]
+        usage = message["usage"]
+        if entry["type"] != "assistant" or host_day(entry["timestamp"]) != day:
+            return None
+        key = (message.get("id"), entry.get("requestId"))
+        numbers = {name: int(usage.get(src) or 0) for name, src in USAGE_KEYS.items()}
+        return entry, key, message.get("model"), numbers
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def scan(roots, day, agent_sessions=None, folders=(), since=None, counted=None):
+    """{(agent, model): numbers} for the host's day over all roots (roots — a path or a list). One API answer
+    (message.id + requestId) is counted once across all roots, by the maximum of each field (streaming lines carry an
+    incomplete output). agent_sessions, if given, is filled with {agent: a set of sessionId} to count an agent's
+    sessions without double counting on a model change. folders — the agents' folders: subdirectories reduce to the
+    agent. since — {agent: moment}: from it the cabinet counts the agent's usage, lines not earlier are skipped;
+    counted — {agent: the sessionId the cabinet counted}: if given, only their lines are skipped (an agent's panel
+    after the return from the host is counted by the files)."""
+    since = since or {}
+    records, anonymous = {}, 0
+    for agent, path in transcripts(roots, folders):
+        try:
+            for raw in read_lines(path):
+                found = assistant_usage(raw, day)
+                if found is None:
+                    continue
+                entry, key, model, numbers = found
+                model = str(model or "?")
+                if agent in since and parse_ts(entry["timestamp"]) >= since[agent] and (
+                        counted is None or entry.get("sessionId") in counted.get(agent, ())):
+                    continue
+                if key == (None, None):
+                    anonymous += 1
+                    key = anonymous
+                record = records.setdefault(key, [agent, model, dict.fromkeys(USAGE_KEYS, 0), set()])
+                record[2] = {name: max(record[2][name], value) for name, value in numbers.items()}
+                if entry.get("sessionId"):
+                    record[3].add(entry["sessionId"])
+        except OSError:
+            continue
+    rows, sessions = {}, {}
+    for agent, model, numbers, ids in records.values():
+        row = rows.setdefault((agent, model), dict.fromkeys(FIELDS, 0))
+        row["requests"] += 1
+        for name, value in numbers.items():
+            row[name] += value
+        sessions.setdefault((agent, model), set()).update(ids)
+        if agent_sessions is not None:
+            agent_sessions.setdefault(agent, set()).update(ids)
+    for key, ids in sessions.items():
+        rows[key]["sessions"] = len(ids)
+    return rows
+
+
+def _real_dir(path):
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _systemd_dir(path, owner, mode=None):
+    """A directory (not a symlink) owned by owner and, if given, with exactly the mode mode — otherwise None; present — its lstat."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != owner or (mode is not None and stat.S_IMODE(st.st_mode) != mode):
+        return None
+    return st
+
+
+def hindsight_units(tmp_root, units=HINDSIGHT_UNITS, owner=None):
+    """{unit: [(its /tmp, the start moment)]}: a unit's PrivateTmp is <tmp>/systemd-private-<boot>-<unit>-<x>/tmp.
+    systemd creates the outer directory at the unit's start (root, 0700) with a single tmp/ (root) inside — its mtime is
+    the start of the process. /tmp is open to everyone: a directory of another owner or with another mode is a forgery,
+    skipped; symlinks are skipped. Two directories of one unit (one left after a systemd crash) — the start is the
+    earlier: the gap between them cannot be seen."""
+    owner = HINDSIGHT_OWNER if owner is None else owner
+    found = {unit: [] for unit in units}
+    try:
+        names = sorted(os.listdir(tmp_root))
+    except OSError:
+        return found
+    for name in names:
+        outer = os.path.join(str(tmp_root), name)
+        unit = next((u for u in units if name.startswith("systemd-private-") and f"-{u}-" in name), None)
+        if unit is None:
+            continue
+        st = _systemd_dir(outer, owner, 0o700)
+        if st is None or _systemd_dir(os.path.join(outer, "tmp"), owner) is None:
+            continue
+        found[unit].append((os.path.join(outer, "tmp"), datetime.fromtimestamp(st.st_mtime, timezone.utc)))
+    return found
+
+
+def hindsight_transcripts(private_tmp):
+    """The .jsonl of the CLI's transcripts in the provider's account directories (hindsight-claude-code-*/projects);
+    symlinks are not taken."""
+    try:
+        names = sorted(os.listdir(private_tmp))
+    except OSError:
+        return
+    for name in names:
+        projects = os.path.join(private_tmp, name, "projects")
+        if not name.startswith(HINDSIGHT_CONFIG_PREFIX) or not _real_dir(os.path.join(private_tmp, name)) \
+                or not _real_dir(projects):
+            continue
+        for dirpath, _, files in os.walk(projects, followlinks=False):
+            for file in sorted(files):
+                path = os.path.join(dirpath, file)
+                if file.endswith(".jsonl") and not os.path.islink(path):
+                    yield path
+
+
+def scan_hindsight(tmp_root, day, units=HINDSIGHT_UNITS, owner=None):
+    """({model: numbers}, completeness) of Hindsight's calls within the host's day. A call is an API answer (message.id +
+    requestId) once across all units, by the maximum of a field, as with agents. Completeness: every unit has run since
+    the start of the day — full; none saw the day (no unit, or it started after the day's end) — none; otherwise — partial."""
+    start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=zone())
+    end = start + timedelta(days=1)
+    states, records, anonymous = [], {}, 0
+    for unit, places in hindsight_units(tmp_root, units, owner).items():
+        began = min((t for _, t in places), default=None)
+        states.append("none" if began is None or began >= end else "full" if began <= start else "partial")
+        for private, _ in places:
+            for path in hindsight_transcripts(private):
+                try:
+                    for raw in read_lines(path):
+                        found = assistant_usage(raw, day)
+                        if found is None:
+                            continue
+                        entry, key, model, numbers = found
+                        if key == (None, None):
+                            anonymous += 1
+                            key = anonymous
+                        record = records.setdefault(key, [str(model or "unknown"), dict.fromkeys(USAGE_KEYS, 0), set()])
+                        record[1] = {name: max(record[1][name], value) for name, value in numbers.items()}
+                        if entry.get("sessionId"):
+                            record[2].add(entry["sessionId"])
+                except OSError:
+                    continue
+    rows, sessions = {}, {}
+    for model, numbers, ids in records.values():
+        row = rows.setdefault(model, dict.fromkeys(FIELDS, 0))
+        row["requests"] += 1
+        for name, value in numbers.items():
+            row[name] += value
+        sessions.setdefault(model, set()).update(ids)
+    for model, ids in sessions.items():
+        rows[model]["sessions"] = len(ids)
+    coverage = "full" if all(s == "full" for s in states) else "none" if all(s == "none" for s in states) else "partial"
+    if rows and coverage == "none":
+        coverage = "partial"  # a call of the day was read, so the source covered some of it
+    return rows, coverage
+
+
+def is_hindsight(row):
+    return row.get("category") == HINDSIGHT
+
+
+def hindsight_ledger(day, rows, coverage):
+    """The lines of the category hindsight for a day: by model; no calls — one line "-" with zeros (a confirmed zero
+    only at full); no data — a line without numbers."""
+    base = {"day": day, "agent": HINDSIGHT, "category": HINDSIGHT, "coverage": coverage}
+    if not rows:
+        return [{**base, "model": NO_MODEL}] if coverage == "none" else [{**base, "model": NO_MODEL, **dict.fromkeys(FIELDS, 0)}]
+    return [{**base, "model": model, **row} for model, row in sorted(rows.items())]
+
+
+def hindsight_since(data_dir):
+    """The first day of Hindsight's accounting — from the file hindsight-since next to the journal (root may write it by
+    hand). No file — the earliest hindsight lines in the journal, otherwise the release day (the mtime of the release's
+    REVISION, in the host's zone), and that day is written to the file at once: the next release no longer moves the
+    start. Nothing at all — None."""
+    mark = os.path.join(str(data_dir), HINDSIGHT_SINCE)
+    try:
+        with open(mark, encoding="utf-8") as handle:
+            return iso_date(handle.read().strip())
+    except (OSError, ValueError, argparse.ArgumentTypeError):
+        pass
+    days = [r["day"] for r in load(os.path.join(str(data_dir), "usage.jsonl"))
+            if is_hindsight(r) and isinstance(r.get("day"), str)]
+    if days:
+        first = min(days)
+    else:
+        try:
+            first = datetime.fromtimestamp(os.stat(RELEASE_MARK).st_mtime, timezone.utc).astimezone(zone()).strftime(
+                "%Y-%m-%d")
+        except OSError:
+            return None
+    os.makedirs(str(data_dir), mode=0o755, exist_ok=True)
+    with open(mark, "w", encoding="utf-8") as handle:
+        handle.write(first + "\n")
+    os.chmod(mark, 0o644)
+    return first
+
+
+def _tokens(rows):
+    return sum(int(r.get(f) or 0) for r in rows for f in ("input", "output", "cache_write"))
+
+
+def better_hindsight(old, new):
+    """A repeat for a day: a worse completeness does not replace a better one, of two incomplete ones the larger stays
+    (the data vanishes with the unit's restart, a repeat will not bring it back)."""
+    if not old:
+        return new
+    rank = lambda rows: COVERAGE.index(rows[0].get("coverage")) if rows[0].get("coverage") in COVERAGE else 0  # noqa: E731
+    if rank(new) != rank(old):
+        return new if rank(new) > rank(old) else old
+    if new[0].get("coverage") == "partial" and _tokens(new) < _tokens(old):
+        return old
+    return new
+
+
+def fmt(n):
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{n // 1000}k"
+    return f"{n / 1_000_000:.2f}M"
+
+
+def plural(n, forms):
+    """1 request, 2 requests: ``forms`` is (singular, plural)."""
+    return f"{n} {forms[0] if n == 1 else forms[1]}"
+
+
+def short_model(model):
+    return model[len("claude-"):] if model.startswith("claude-") else model
+
+
+def cache_hit(row):
+    """The share of cache reads in the whole input, in percent; None — there was no input."""
+    total = row.get("input", 0) + row.get("cache_read", 0) + row.get("cache_write", 0)
+    return round(100 * row.get("cache_read", 0) / total) if total else None
+
+
+def hindsight_text(rows):
+    """A line of the category hindsight: as an agent's, but without the cache warning (the owner's decision) and with
+    the completeness."""
+    if not rows:
+        return ""
+    coverage = rows[0].get("coverage")
+    if coverage not in ("partial", "full"):
+        return f"{HINDSIGHT}: {COVERAGE_TEXT['none']}"
+    total = {f: sum(int(r.get(f) or 0) for r in rows) for f in FIELDS}
+    text = (f"{HINDSIGHT}: {plural(total['requests'], REQUESTS)} · output {fmt(total['output'])}"
+            f" · cache: write {fmt(total['cache_write'])}, read {fmt(total['cache_read'])} · input {fmt(total['input'])}")
+    hit = cache_hit(total)
+    if hit is not None:
+        text += f" · cache {hit}%"
+    models = sorted(((r["model"], int(r.get("requests") or 0)) for r in rows if r.get("model") != NO_MODEL),
+                    key=lambda item: (-item[1], item[0]))
+    if len(models) > 1:
+        text += " · models: " + ", ".join(f"{short_model(m)} {n}" for m, n in models)
+    if coverage == "partial":
+        text += f" · ⚠️ {COVERAGE_TEXT['partial']}"
+    return text
+
+
+def build_text(rows, day, hostname, agent_sessions=None, note="", hindsight=None):
+    zone_name = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=zone()).strftime("%Z")
+    head = f"📊 {hostname} · tokens for {day[8:]}.{day[5:7]} ({zone_name})"
+    tail = [t for t in (hindsight_text(hindsight or []), note) if t]
+    if not rows:
+        return "\n".join([f"{head}: no agent worked", *tail])
+    lines = [head]
+    for agent in sorted({a for a, _ in rows}):
+        models = {m: r for (a, m), r in rows.items() if a == agent}
+        total = {f: sum(r[f] for r in models.values()) for f in FIELDS}
+        jobs = sum(r.get("jobs", 0) for r in models.values())
+        sessions = total["sessions"]
+        if agent_sessions and agent in agent_sessions:
+            # an agent's sessions — by the transcripts' sessionId, the host's — by the cabinet, worker ones — by jobs
+            sessions = len(agent_sessions[agent]) + sum(r.get("hosted", 0) for r in models.values()) + jobs
+        text = (f"{agent}: {plural(total['requests'], REQUESTS)}, {plural(sessions, SESSIONS)} · output {fmt(total['output'])}"
+                f" · cache: write {fmt(total['cache_write'])}, read {fmt(total['cache_read'])}"
+                f" · input {fmt(total['input'])}")
+        hit = cache_hit(total)
+        if hit is not None:
+            warn = "⚠️ " if hit < CACHE_WARN_PCT and total["requests"] >= CACHE_WARN_MIN_REQUESTS else ""
+            text += f" · {warn}cache {hit}%"
+        if len(models) > 1:
+            ordered = sorted(models.items(), key=lambda item: (-item[1]["requests"], item[0]))
+            text += " · models: " + ", ".join(f"{short_model(m)} {r['requests']}" for m, r in ordered)
+        if jobs:
+            text += f" · worker: {jobs} job"
+        cost = sum(r.get("cost_usd", 0.0) for r in models.values())
+        if cost > 0:
+            text += f" · ${cost:.2f}"
+        lines.append(text)
+    return "\n".join(lines + tail)
+
+
+def worker_rows(results_dir, day, since=None):
+    """{(agent, model): numbers} of worker sessions (C06) within the host's day by kd-worker's result records:
+    <32 hex>.json, regular files; a broken record is skipped. A request is a session's turn, a session is a job. since —
+    as in scan: a job that ended not earlier is counted by the cabinet."""
+    since = since or {}
+    rows = {}
+    try:
+        names = sorted(os.listdir(results_dir))
+    except OSError:
+        return rows
+    for name in names:
+        path = os.path.join(str(results_dir), name)
+        if not re.fullmatch(r"[0-9a-f]{32}\.json", name) or os.path.islink(path):
+            continue
+        try:
+            record = json.loads("".join(read_lines(path)))
+            usage, agent, ended = record["usage"], record["agent"], record["ended"]
+            if record.get("schema_version") != 1 or not NAME_RE.match(agent) or not isinstance(ended, (int, float)):
+                continue
+            when = datetime.fromtimestamp(ended, timezone.utc).astimezone(zone()).strftime("%Y-%m-%d")
+            model = str(usage.get("model") or "?")
+            numbers = {f: int(usage.get(f, 0) or 0) for f in ("requests", "input", "output", "cache_write", "cache_read")}
+            cost = float(usage.get("cost_usd", 0.0) or 0.0)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if when != day or (agent in since and ended >= since[agent].timestamp()):
+            continue
+        row = rows.setdefault((agent, model), {f: 0 for f in FIELDS} | {"jobs": 0, "cost_usd": 0.0})
+        for f, n in numbers.items():
+            row[f] += n
+        row["sessions"] += 1
+        row["jobs"] += 1
+        row["cost_usd"] = round(row["cost_usd"] + cost, 6)
+    return rows
+
+
+def merge(rows, extra_rows):
+    """The lines of worker sessions and of the cabinet — into the agent's totals, by model."""
+    for key, extra in extra_rows.items():
+        row = rows.setdefault(key, {f: 0 for f in FIELDS})
+        for f in FIELDS:
+            row[f] = row.get(f, 0) + extra[f]
+        for f in ("jobs", "hosted"):
+            if extra.get(f):
+                row[f] = row.get(f, 0) + extra[f]
+        row["cost_usd"] = round(row.get("cost_usd", 0.0) + extra.get("cost_usd", 0.0), 6)
+    return rows
+
+
+def day_window(day):
+    """[start, end) of the host's day in UTC — the way the cabinet stamps (YYYY-MM-DDTHH:MM:SSZ)."""
+    start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=zone())
+    stamp = lambda moment: moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    return stamp(start), stamp(start + timedelta(days=1))
+
+
+def default_cabinet():
+    """A client of the cabinet's socket (as root — the principal root)."""
+    sys.path.insert(0, COMMON_PATH)
+    try:
+        from kd.cabinet import client  # noqa: PLC0415
+    finally:
+        sys.path.remove(COMMON_PATH)
+    return client.Client()
+
+
+def cabinet_usage(day, cabinet):
+    """({(agent, model): numbers}, {agent: the first stamp}, {agent: the counted sessionId} or None) of the turns and
+    jobs of the session host within the host's day by the cabinet's usage journal. hosted — the host's sessions, jobs —
+    jobs; a line's sessions are both. The cabinet counts an agent's sessions and jobs once for all models: they are in
+    the line of the first model."""
+    start, end = day_window(day)
+    answer = cabinet.call({"op": "usage.day", "start": start, "end": end})
+    rows = {}
+    for r in answer["rows"]:
+        agent, model = str(r["agent"]), str(r["model"])
+        if not NAME_RE.match(agent):
+            continue
+        hosted, jobs = int(r["sessions"]), int(r["jobs"])
+        rows[(agent, model)] = {"requests": int(r["requests"]), "sessions": hosted + jobs, "input": int(r["input"]),
+                                "output": int(r["output"]), "cache_write": int(r["cache_write"]),
+                                "cache_read": int(r["cache_read"]), "hosted": hosted, "jobs": jobs,
+                                "cost_usd": round(float(r["cost"]), 6)}
+    for agent, numbers in (answer.get("agents") or {}).items():
+        mine = sorted(m for a, m in rows if a == agent)
+        for n, model in enumerate(mine):
+            hosted, jobs = (int(numbers["sessions"]), int(numbers["jobs"])) if n == 0 else (0, 0)
+            rows[(agent, model)].update(hosted=hosted, jobs=jobs, sessions=hosted + jobs)
+    since = {str(a): parse_ts(t) for a, t in answer["since"].items() if NAME_RE.match(str(a))}
+    counted = answer.get("counted")
+    if counted is not None:
+        counted = {str(a): {str(i) for i in ids} for a, ids in counted.items()}
+    return rows, since, counted
+
+
+def load(store):
+    try:
+        with open(store, encoding="utf-8", errors="replace") as handle:
+            lines = list(handle)
+    except OSError:
+        return []
+    rows = []
+    for text in lines:
+        try:
+            row = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def save_day(data_dir, day, rows, hindsight=None):
+    """An agent's lines for a day are replaced; hindsight lines — by the record of better completeness (better_hindsight),
+    without hindsight (the accounting has not started) they stay as they were. Returns that day's hindsight lines after
+    the write."""
+    data_dir = str(data_dir)
+    store = os.path.join(data_dir, "usage.jsonl")
+    os.makedirs(data_dir, mode=0o755, exist_ok=True)
+    old = load(store)
+    kept = [r for r in old if r.get("day") != day]
+    hindsight_old = [r for r in old if r.get("day") == day and is_hindsight(r)]
+    hindsight = better_hindsight(hindsight_old, hindsight) if hindsight else hindsight_old
+    fresh = [{"day": day, "agent": a, "model": m, **row} for (a, m), row in sorted(rows.items())] + hindsight
+    fd, tmp = tempfile.mkstemp(dir=data_dir, prefix=".usage-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for r in sorted(kept + fresh, key=lambda r: (r.get("day", ""), r.get("agent", ""), r.get("model", ""))):
+                handle.write(json.dumps(r, ensure_ascii=False) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, store)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return hindsight
+
+
+def iso_date(value):
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            pass
+    raise argparse.ArgumentTypeError(f"bad date: {value}")
+
+
+def projects_roots(registry=None, stderr=None):
+    """The transcript directories of all agent users: /home/<u>/.claude/projects for the base user and for every user
+    from /etc/digipaddock/agents.json (dev runs under its own). The registry cannot be read — only the base one and a
+    line on stderr: the digest must not lose an agent silently."""
+    sys.path.insert(0, COMMON_PATH)
+    try:
+        from kd import naming  # noqa: PLC0415
+        users = [naming.base_user()]
+        try:
+            from kd import agents  # noqa: PLC0415
+            users = agents.users(registry or agents.REGISTRY)
+        except Exception as exc:  # noqa: BLE001 — the registry is broken
+            print(f"kd-usage: the agent registry /etc/digipaddock/agents.json is not read ({exc}) — counting only"
+                  f" {users[0]}", file=stderr or sys.stderr)
+    finally:
+        sys.path.remove(COMMON_PATH)
+    return [f"/home/{u}/.claude/projects" for u in users]
+
+
+def category_rows(cabinet, days, today):
+    """The lines of the cabinet's categories (monitor — the monitor's turns, those before the "Monitor" thread too) for
+    the last days days of the host: they are already inside the agent's lines, here — a separate line "agent/category"."""
+    out = []
+    for back in range(days - 1, -1, -1):
+        day = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=back)).strftime("%Y-%m-%d")
+        start, end = day_window(day)
+        for r in cabinet.call({"op": "usage.day", "start": start, "end": end}).get("categories") or []:
+            agent, category = str(r["agent"]), str(r["category"])
+            if not NAME_RE.match(agent) or not NAME_RE.match(category):
+                continue
+            out.append({"day": day, "agent": f"{agent}/{category}", "model": str(r["model"]),
+                        "requests": int(r["requests"]), "sessions": int(r["turns"]), "input": int(r["input"]),
+                        "output": int(r["output"]), "cache_write": int(r["cache_write"]),
+                        "cache_read": int(r["cache_read"]), "cost_usd": round(float(r["cost"]), 6),
+                        "category": category})
+    return out
+
+
+def cost_cell(row):
+    """the row's cost_usd in dollars (an estimate at the cabinet's model prices, not a bill); a row without
+    one and a hindsight row — «-»."""
+    cost = row.get("cost_usd")
+    if is_hindsight(row) or isinstance(cost, bool) or not isinstance(cost, (int, float)):
+        return "-"
+    return f"${cost:.2f}"
+
+
+def show(data_dir, days, today, stdout, categories=()):
+    first = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    head = ("day", "agent", "model", "requests", "sessions", "output", "cache_write", "cache_read", "input",
+            "cache_hit", "cost", "data")
+    table = [head]
+    for r in load(os.path.join(str(data_dir), "usage.jsonl")):
+        if r.get("day", "") >= first:
+            # hindsight without data — dashes, not zeros; for agents a missing field is 0, as before
+            missing = "-" if is_hindsight(r) else "0"
+            hit = cache_hit(r) if not is_hindsight(r) or "input" in r else None
+            table.append((r["day"], r["agent"], r["model"], *(str(r.get(f, missing)) for f in
+                          ("requests", "sessions", "output", "cache_write", "cache_read", "input")),
+                          f"{hit}%" if hit is not None else "-", cost_cell(r),
+                          COVERAGE_TEXT.get(r.get("coverage"), "") if is_hindsight(r) else ""))
+    # a category's share of its agent (turns in «sessions», the cost in «data»), after the day's agents
+    for r in categories:
+        hit = cache_hit(r)
+        table.append((r["day"], r["agent"], r["model"], *(str(r[f]) for f in
+                      ("requests", "sessions", "output", "cache_write", "cache_read", "input")),
+                      f"{hit}%" if hit is not None else "-", cost_cell(r), f"{r['category']} · ${r['cost_usd']:.2f}"))
+    table[1:] = sorted(table[1:], key=lambda row: row[0])  # by day; within a day the order above stays
+    widths = [max(len(row[i]) for row in table) for i in range(len(head))]
+    for row in table:
+        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip(), file=stdout)
+
+
+def main(argv=None, root=None, data_dir=DATA_DIR, now=None, hostname=None, stdout=None, stderr=None,
+         agents_dir=AGENTS_DIR, results_dir=RESULTS_DIR, cabinet=None, hindsight_tmp=None):
+    stdout, stderr = stdout or sys.stdout, stderr or sys.stderr
+    parser = argparse.ArgumentParser(prog="kd-usage")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("daily").add_argument("--date", type=iso_date)
+    sub.add_parser("show").add_argument("--days", type=int, default=7)
+    try:
+        args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    except SystemExit as exc:
+        return 2 if exc.code else 0
+    now = now or datetime.now(timezone.utc)
+    today = now.astimezone(zone()).strftime("%Y-%m-%d")
+    if args.cmd == "show":
+        days = max(args.days, 1)
+        try:  # the monitor's turns per day — from the cabinet's ledger; without it the file's rows only
+            categories = category_rows(cabinet if cabinet is not None else default_cabinet(), days, today)
+        except Exception as exc:  # noqa: BLE001
+            categories = []
+            print(f"kd-usage: the cabinet did not answer ({exc.__class__.__name__}) — no category rows", file=stderr)
+        show(data_dir, days, today, stdout, categories)
+        return 0
+    day = args.date or (now.astimezone(zone()) - timedelta(days=1)).strftime("%Y-%m-%d")
+    agent_sessions, hosted, since, counted, note = {}, {}, {}, None, ""
+    try:
+        hosted, since, counted = cabinet_usage(day, cabinet if cabinet is not None else default_cabinet())
+    except Exception as exc:  # noqa: BLE001 — no cabinet or it did not answer: the day is counted all the same
+        note = CABINET_AWAY
+        print(f"kd-usage: the cabinet did not answer ({exc.__class__.__name__}: {exc}) — counting from the files only", file=stderr)
+    roots = projects_roots(stderr=stderr) if root is None else root
+    rows = scan(roots, day, agent_sessions, agent_folders(agents_dir), since, counted)
+    rows = merge(merge(rows, worker_rows(results_dir, day, since)), hosted)
+    hindsight, first = None, hindsight_since(data_dir)
+    if first is not None and day >= first:
+        hindsight = hindsight_ledger(day, *scan_hindsight(hindsight_tmp or HINDSIGHT_TMP, day))
+    hindsight = save_day(data_dir, day, rows, hindsight)
+    print(build_text(rows, day, hostname or socket.gethostname(), agent_sessions, note, hindsight), file=stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

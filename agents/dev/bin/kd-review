@@ -1,0 +1,13 @@
+#!/var/lib/digipaddock/venv/cabinet/bin/python -I
+"""kd-review — the Forgejo approver for the owner's signature in the cabinet: digipaddock-review.service under
+<prefix>-review, ``signers add|remove|list`` and ``check`` as root; the logic is dev_agent/review.py."""
+import os
+import sys
+
+os.umask(0o077)
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from dev_agent.review import main  # noqa: E402
+
+sys.exit(main())

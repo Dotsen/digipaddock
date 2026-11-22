@@ -1,0 +1,5 @@
+#!/bin/bash
+# kd-admin-run --task KD-<n> --op <i> — one operation of the owner's approved plan for an admin card (KD-188).
+# The executor runs as the exec service user behind the exec channel (KD-194): it alone holds the exec key and writes the journal;
+# server, unit and command come from the stored grant, never from these arguments.
+exec /opt/digipaddock/common/bin/kd-cap run exec /opt/digipaddock/agents/sysadmin/bin/admin_run.py --agent "${KD_AGENT:-unknown}" "$@"

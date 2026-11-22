@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "worker.request",
+  "module": "worker",
+  "description": "Order, watch, read and cancel worker jobs of the agents that own slots through the base-user executor kd-worker: the card names the agent, the registry names the specialization and its limits; no command, path, model, prompt, settings or limit travels with the request.",
+  "shell": "none",
+  "dependencies": ["board.read"],
+  "conflicts": ["board.write", "forge.review", "git.develop", "monitor.manage", "servers.execute", "servers.read"],
+  "resources": [
+    {"name": "worker-jobs", "access": "via-wrapper"},
+    {"name": "board-tasks", "access": "via-wrapper"},
+    {"name": "agent-registry", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-worker",
+      "source": "common/bin/kd-worker",
+      "subcommands": ["request", "status", "result", "cancel"],
+      "approval": "allow",
+      "run_as": "@base@",
+      "executor": "common/bin/kd-worker"
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-worker"]
+  },
+  "lifecycle": {
+    "install": ["wrappers", "channels"],
+    "check": ["wrappers", "channels"],
+    "disable": ["channels"]
+  }
+}

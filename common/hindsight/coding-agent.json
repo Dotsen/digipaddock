@@ -1,0 +1,25 @@
+{
+  "serverMode": "self-hosted",
+  "apiUrl": "http://127.0.0.1:9077",
+  "optInOnly": true,
+  "optInPaths": ["/srv/digipaddock-agents"],
+  "retainSessions": false,
+  "autoInject": "pages",
+  "codebaseSurvey": false,
+  "autoSeed": false,
+  "gitIngest": "none",
+  "pageRefreshEveryTurns": 30,
+  "pageTriggerCron": "H H(3-5) * * *",
+  "reflectBudget": "low",
+  "autoUpdate": false,
+  "logLevel": "info",
+  "mapPathToBank": {
+    "/srv/digipaddock-agents/analyst": "coding-agent::analyst",
+    "/srv/digipaddock-agents/boss": "coding-agent::boss",
+    "/srv/digipaddock-agents/dev": "coding-agent::dev",
+    "/srv/digipaddock-agents/sysadmin": "coding-agent::sysadmin"
+  },
+  "banks": {
+    "coding-agent::dev": {"gitIngest": "message", "autoSeed": true}
+  }
+}

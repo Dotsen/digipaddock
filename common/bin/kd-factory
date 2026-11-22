@@ -1,0 +1,45 @@
+#!/usr/bin/python3 -I
+"""kd-factory — the developer's factory operations; see ``kd.factory_cli``.
+
+    kd-factory plan KD-<n> --operations '<JSON>' --intent T --basis T
+    kd-factory reinstall KD-<n> --agents a[,b] --key <key>
+    kd-factory status <operation-id>
+
+Runs as the base user, a board executor of the cabinet: another caller re-executes itself through its base
+capability channel, ``kd-cap run base`` with this exact path. The channel tells who called —
+``KD_AGENT`` is the channel's agent and ``KD_CALLER_USER`` the peer's Unix user (SO_PEERCRED); nothing the
+caller passes names the agent, and its environment and cwd are not used.
+"""
+
+import os
+import sys
+
+try:
+    import pwd
+except ImportError:  # Windows: tests only
+    pwd = None
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import cap_client, factory_cli, naming  # noqa: E402
+from kd.cabinet import client as cabinet_client  # noqa: E402
+
+EXECUTOR = "/opt/digipaddock/common/bin/kd-factory"
+
+
+def reexec_argv(argv):
+    """The same call through the base channel: its service runs as the base user."""
+    return [cap_client.CLIENT, "run", "base", EXECUTOR, *argv]
+
+
+if __name__ == "__main__":
+    base = pwd.getpwnam(naming.base_user())
+    if os.geteuid() != base.pw_uid:
+        os.execv(cap_client.CLIENT, reexec_argv(sys.argv[1:]))
+    environ = {k: os.environ.get(k, "") for k in ("KD_AGENT", "KD_CALLER_USER")}
+    os.environ.clear()
+    os.environ.update(PATH="/usr/local/bin:/usr/bin:/bin", LANG="C.UTF-8", HOME=base.pw_dir)
+    os.chdir("/")
+    os.umask(0o077)
+    sys.exit(factory_cli.main(sys.argv[1:], environ=environ, client=cabinet_client.Client()))

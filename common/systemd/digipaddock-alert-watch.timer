@@ -1,0 +1,9 @@
+[Unit]
+Description=DigiPaddock: a Telegram duplicate of what the cabinet cannot send itself (every minute)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

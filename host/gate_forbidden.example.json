@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "forbidden": [
+    "(^|/)app_keys\\.json$",
+    "(^|/)api_log(/|$)"
+  ]
+}

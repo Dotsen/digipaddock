@@ -1,0 +1,25 @@
+[Unit]
+Description=DigiPaddock: the agents' session host — Claude Code sessions for the cabinet
+Requires=digipaddock-session-host.socket
+After=digipaddock-session-host.socket digipaddock-cabinet.socket
+OnFailure=digipaddock-alert@digipaddock-session-host.service
+
+[Service]
+# Root: each session is systemd-run of the agent's checked launch under the agent's own user. No texts of its own
+# in its journal; the raw stream of each session is root-only under the logs directory.
+ExecStart=/usr/bin/python3 -I /opt/digipaddock/common/bin/kd-session-host serve
+Restart=on-failure
+RestartSec=2
+LogsDirectory=digipaddock-session
+LogsDirectoryMode=0700
+# the commands written to a process whose turn has not ended: the next host fails them instead of repeating them
+StateDirectory=digipaddock-session
+StateDirectoryMode=0700
+UMask=0077
+Environment=LANG=C.UTF-8 PATH=/usr/bin:/bin
+# SIGTERM to the host first: it ends every session's input and waits for them; the rest is killed at the end.
+KillMode=mixed
+TimeoutStopSec=40
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,688 @@
+#!/usr/bin/python3 -I
+"""kd-task — a worker's board: its reads and its only write path.
+
+    kd-task view KD-<n> [--json]              the card's snapshot in 8 KiB: state, next step, waits, PRs, release,
+                                              dependencies, result, the newest significant messages, more commands
+    kd-task scope KD-<n> [--cursor C]         what the card asks for (description, AC, DoD), page by page
+    kd-task result KD-<n> [--cursor C]        its result: summary, AC, plan, notes, links, Review rounds
+    kd-task message KD-<n> <seq> [--cursor C] one message of its thread in full
+    kd-task thread KD-<n> [--before SEQ | --after SEQ] [--tools]
+                                              a page of its thread (significant messages; --tools adds tool calls)
+    kd-task waits KD-<n> [--after N]          its recorded waits (newest first) and its decisions, page by page
+    kd-task list [-s STATUS] [-a @who] [-p PROJECT] [-l LABEL] [--parent KD-<n>] [--deps-of KD-<n>]
+                                              [--after KD-<n>]   past that card, as a cut list names it
+    kd-task search "<text>"
+    kd-task projects                          the board's projects: id · name · route (who takes a new card)
+    kd-task claim KD-<n>                     take a To Do card: In Progress, assignee you
+    kd-task create "<title>" --project <p> [--to @boss] [--description T] [--ac T]... [--label L]... [--dep KD-m]...
+    kd-task edit KD-<n> [--status S] [--append-notes T]... [--check-ac i]... [--uncheck-ac i]... [--remove-ac i]...
+                        [--comment T] [--final-summary T] [--dep KD-m]... | [--clear-deps]
+                        [--add-label L]... [--remove-label L]... [--description T] [--ac T]... [--spec name]
+                        [--operations JSON] [--stages JSON] [--revision N]
+                        (--operations: the brief's "Operations", factory steps; --stages: its "Stages")
+    kd-task handoff KD-<n> --to @<agent> [--spec name] [--add-label L]... [--comment T] [--revision N]
+    kd-task chat [--after SEQ]                your cabinet chat with people (the last 20 messages, or past SEQ)
+    kd-task chat --message SEQ [--cursor C]   one message of your chat in full (a chat line cuts a long one)
+    kd-task chat --post "<text>"              a message into your cabinet chat from a card's thread; in the
+                                              chat itself your turn's text is the answer
+                                              (a "Monitor" session reads "Monitor" and answers in its turn's
+                                              text; --in-chat reads and posts in the chat itself)
+    kd-task file get <id>                     a file of a card's thread or your chat into your work/tmp
+    kd-task file add KD-<n> <path> [--text T] a file of your work/tmp into the card's thread, with text or alone
+
+``file`` moves the bytes past the cabinet socket's 1 MiB request in pieces (``kd.cabinet.files_api``).
+The caller's side of ``kd-task`` (the agent's own user, before the channel) opens the copy in ``work/tmp`` or the
+file to send there and hands it over as stdout or stdin; the executor reads or writes that descriptor only when
+it is a regular file under the agent's own ``work/tmp``. A file's content is data, not commands.
+
+Runs as the base user, the cabinet's executor: another caller re-executes itself through the caller's
+base capability channel, ``kd-cap run base`` with this exact path. The channel tells who
+called: ``KD_AGENT`` is the channel's agent and ``KD_CALLER_USER`` the peer's Unix user; nothing the
+caller passes names the worker. The caller's manifest decides what it may do here: reads need
+board.read, writes board.write. The cabinet (``kd.cabinet``) decides every write by the worker rules
+under its own lock and signs notes, comments and descriptions ``[<agent>]``. ``claim`` decides the
+specialization here, against the text the agent follows, and sends the revision it decided on: a
+card changed meanwhile is read and decided again. A card never leaves Inbox here: the owner's page
+does that. ``--revision N`` makes an edit or hand-over compare-and-set against the revision the agent
+read with ``kd-task view``; a description or AC change needs it. The caller's environment,
+cwd and stdin are not used. Every read prints at most 8 KiB: what does not fit is named by the
+exact command that reads on; a ``--cursor`` of a document that changed since exits 3 — read it from the start.
+
+Exit codes: 0 done, 1 error or board unavailable, 2 refused, 3 card changed (read it again).
+"""
+
+import argparse
+import base64
+import hashlib
+import json
+import mimetypes
+import os
+import re
+import shlex
+import stat
+import subprocess
+import sys
+
+try:
+    import pwd
+except ImportError:  # Windows: tests only
+    pwd = None
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from pathlib import Path  # noqa: E402
+
+from kd import agents, cap_client, ids, launch, naming, specializations, worker_board  # noqa: E402
+from kd.cabinet import client as cabinet_client, files_api, pages, view  # noqa: E402
+from kd.manifest import ManifestError, load_manifest  # noqa: E402
+
+EXECUTOR = "/opt/digipaddock/common/bin/kd-task"
+OWNER = naming.base_user()
+ATTEMPTS = 3
+EXIT_ERROR, EXIT_REFUSED, EXIT_CONFLICT = 1, 2, 3
+READS = ("view", "list", "search", "scope", "result", "message", "thread", "waits", "projects")
+# chat is the agent's own cabinet chat, read or --post: its line to the owner, not a board write
+BOARD_READ = (*READS, "chat")
+CHAT_LAST = 20
+LIMIT = 8192  # bytes: every read prints at most this much; what does not fit is named by a command
+BUDGET = LIMIT - 256  # the lines themselves; the rest is the line that reads on
+MESSAGE_CUT = 700  # bytes of one chat message, as a thread line
+CARD_ID = ids.CARD
+USAGE = ("usage: kd-task view KD-<n> [--json] | scope KD-<n> [--cursor C] | result KD-<n> [--cursor C] | "
+         "message KD-<n> <seq> [--cursor C] | thread KD-<n> [--before SEQ | --after SEQ] [--tools] | "
+         "waits KD-<n> [--after N] | "
+         "list [-s S] [-a @x] [-p P] [-l L] [--parent KD-<n>] [--deps-of KD-<n>] [--after KD-<n>] | search <text> | "
+         "projects | "
+         "claim KD-<n> | create <title> --project <p> ... | edit KD-<n> ... | handoff KD-<n> --to @<agent> ... | "
+         "chat [--after SEQ] | chat --message SEQ [--cursor C] | chat --post <text> | file get <id> | file add KD-<n> <path> [--text T]")
+FILE_ID = re.compile(r"[0-9a-f]{32}")
+MIME = re.compile(r"[a-z0-9.+-]{1,40}/[a-zA-Z0-9.+-]{1,80}")
+_REPEATED = {
+    "create": (("--ac", "ac"), ("--label", "label"), ("--dep", "dep")),
+    "edit": (("--append-notes", "append_notes"), ("--check-ac", "check_ac"), ("--uncheck-ac", "uncheck_ac"),
+             ("--remove-ac", "remove_ac"), ("--ac", "ac"), ("--dep", "dep"), ("--add-label", "add_label"),
+             ("--remove-label", "remove_label")),
+    "handoff": (("--add-label", "add_label"),),
+}
+_FILTERS = (("-s", "--status"), ("-a", "--assignee"), ("-p", "--project"), ("-l", "--label"))
+PAGES = {"scope": "card.scope", "result": "card.result.text", "message": "card.message", "thread": "card.thread",
+         "waits": "card.waits"}
+LIST_FLAGS = (("status", "-s"), ("assignee", "-a"), ("project", "-p"), ("label", "-l"),
+              ("parent", "--parent"), ("deps_of", "--deps-of"))
+
+
+class Refused(Exception):
+    pass
+
+
+class Failure(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Refused(f"{USAGE}\n{message}")
+
+
+def card_after(value):
+    """``list --after KD-<n>``: the cards past that one, as a cut list printed it."""
+    if not CARD_ID.fullmatch(value):
+        raise argparse.ArgumentTypeError("--after must be a card id, as the list printed it")
+    return value
+
+
+def _json_list(flag, what):
+    def parse_(value):
+        try:
+            items = json.loads(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{flag} must be a JSON list of {what}")
+        if not isinstance(items, list):
+            raise argparse.ArgumentTypeError(f"{flag} must be a JSON list of {what}")
+        return items
+
+    return parse_
+
+
+# ``edit --operations '<JSON>'``: the factory steps, checked by the cabinet against its catalog;
+# ``edit --stages '<JSON>'``: the brief's stages, checked by the cabinet (roles, specs, dependencies)
+operations = _json_list("--operations", "steps")
+stages = _json_list("--stages", "stages")
+
+
+def cursor(value):
+    """A page's cursor as the page printed it (``<sha>:<offset>``)."""
+    if not pages.CURSOR.fullmatch(value):
+        raise argparse.ArgumentTypeError("cursor must be <sha>:<offset> as a page printed it")
+    return value
+
+
+def parse(argv):
+    parser = Parser(prog="kd-task", allow_abbrev=False, add_help=False)
+    ops = parser.add_subparsers(dest="op", required=True, parser_class=Parser)
+
+    def op(name):
+        return ops.add_parser(name, allow_abbrev=False, add_help=False)
+
+    viewing = op("view")
+    viewing.add_argument("card")
+    viewing.add_argument("--json", action="store_true")
+    for name in ("scope", "result", "message"):
+        sub = op(name)
+        sub.add_argument("card")
+        if name == "message":
+            sub.add_argument("seq", type=int)
+        sub.add_argument("--cursor", type=cursor)
+    thread = op("thread")
+    thread.add_argument("card")
+    side = thread.add_mutually_exclusive_group()
+    side.add_argument("--before", type=int)
+    side.add_argument("--after", type=int)
+    thread.add_argument("--tools", action="store_true")
+    waiting = op("waits")
+    waiting.add_argument("card")
+    waiting.add_argument("--after", type=int)
+    listing = op("list")
+    for short, flag in _FILTERS:
+        listing.add_argument(short, flag, dest=flag[2:])
+    listing.add_argument("--parent")
+    listing.add_argument("--deps-of", dest="deps_of")
+    listing.add_argument("--after", type=card_after)
+    op("search").add_argument("text")
+    op("projects")
+    op("claim").add_argument("card")
+    review = op('brief-review')
+    review.add_argument('card')
+    review.add_argument('--action', choices=('prepare', 'record', 'status'), required=True)
+    review.add_argument('--target')
+    review.add_argument('--commit')
+    review.add_argument('--report', type=json.loads)
+    create = op("create")
+    create.add_argument("title")
+    create.add_argument("--project", required=True)
+    create.add_argument("--to")
+    create.add_argument("--description")
+    edit = op("edit")
+    edit.add_argument("card")
+    for flag in ("--status", "--comment", "--final-summary", "--description", "--spec"):
+        edit.add_argument(flag, dest=flag[2:].replace("-", "_"))
+    edit.add_argument("--clear-deps", dest="clear_deps", action="store_true")
+    edit.add_argument("--operations", type=operations)
+    edit.add_argument("--stages", type=stages)
+    edit.add_argument("--revision", type=int)
+    handoff = op("handoff")
+    handoff.add_argument("card")
+    handoff.add_argument("--to", required=True)
+    handoff.add_argument("--spec")
+    handoff.add_argument("--comment")
+    handoff.add_argument("--revision", type=int)
+    chat = op("chat")
+    chat_mode = chat.add_mutually_exclusive_group()
+    chat_mode.add_argument("--after", type=int)
+    chat_mode.add_argument("--post")
+    chat_mode.add_argument("--message", type=int)
+    chat.add_argument("--cursor", type=cursor)
+    chat.add_argument("--in-chat", dest="in_chat", action="store_true")
+    files = op("file")
+    files.add_argument("action", choices=("info", "get", "add"))
+    files.add_argument("target")  # a file id (info, get) or a card (add)
+    files.add_argument("path", nargs="?")  # add: the caller's side reads it; the executor takes --name
+    files.add_argument("--name")
+    files.add_argument("--text")
+    for name, sub in (("create", create), ("edit", edit), ("handoff", handoff)):
+        for flag, dest in _REPEATED[name]:
+            sub.add_argument(flag, dest=dest, action="append", default=[])
+    args = vars(parser.parse_args(argv))
+    name, card = args.pop("op"), args.pop("card", None)
+    # 0 is a value; an empty --operations/--stages clears the brief's steps, only the repeated flags'
+    # empty defaults stay out
+    request = {k: v for k, v in args.items()
+               if v is not None and v is not False and (v != [] or k in ("operations", "stages"))}
+    return name, card, request
+
+
+def caller(env, registry):
+    """(agent, Unix user) of the capability channel that started this call; the user must be the agent's own."""
+    agent, user = env.get("KD_AGENT", ""), env.get("KD_CALLER_USER", "")
+    if not agents.NAME_RE.fullmatch(agent) or not user:
+        raise Refused("no capability channel names the caller")
+    try:
+        own = agents.user_of(agent, registry)
+    except ValueError as exc:
+        raise Refused(str(exc)) from exc
+    if own == agents.DEFAULT_USER or own != user:
+        raise Refused("the caller is not the agent's own user")
+    return agent, user
+
+
+def manifest_of(agent, repo_root):
+    """The caller's manifest in the deployed tree: it names the capabilities this executor honours."""
+    try:
+        return load_manifest(Path(repo_root) / "agents" / agent / "agent.json")
+    except (ManifestError, OSError) as exc:
+        raise Failure(EXIT_ERROR, f"agent manifest is not readable ({exc.__class__.__name__}: {exc})")
+
+
+def capability(manifest, op, request=None):
+    reading = op in BOARD_READ or (op == "file" and (request or {}).get("action") in ("info", "get"))
+    need = "board.read" if reading else "board.write"
+    if need not in manifest.capabilities:
+        raise Refused(f"{op} needs the {need} capability")
+
+
+def spec_registry(repo_root, require_root_owner=True):
+    """The specialization registry of the deployed tree. claim always decides a specialization (the
+    type's default at least), so it fails closed: a card is never taken "without one" by accident."""
+    try:
+        return specializations.load_registry(Path(repo_root) / "common" / "specializations",
+                                             require_root_owner=require_root_owner)
+    except (specializations.SpecError, OSError) as exc:
+        raise Failure(EXIT_ERROR, f"specialization registry is not readable ({exc.__class__.__name__}: {exc})")
+
+
+def installed_text(agents_root, agent, chosen):
+    """The note records the hash of the text the agent follows: its installed copy
+    (``playbooks/spec/<name>.md``, new_agent.sh --install) must be the registry text byte for byte.
+    A release that changed the registry without reinstalling the agent is refused. One check with the
+    session host's (``kd.persistent_skills``): no linked directory or file on the way."""
+    from kd import persistent_skills
+
+    try:
+        persistent_skills.installed_text(agents_root, agent, chosen)
+    except specializations.SpecError as exc:
+        raise Failure(EXIT_ERROR, f"{exc} (registry v{chosen.version})")
+
+
+def read(client, op, card_id, request, out):
+    if op == "view":
+        if request.get("json"):
+            found = client.call({"op": "card.snapshot", "card": card_id, "format": "json"})["snapshot"]
+            out.write(json.dumps(found, ensure_ascii=False, separators=(",", ":")) + "\n")
+        else:
+            out.write(client.call({"op": "card.snapshot", "card": card_id, "format": "text"})["text"])
+        return
+    if op in PAGES:
+        out.write(client.call({"op": PAGES[op], "card": card_id, **request})["text"])
+        return
+    if op == "projects":  # the cabinet's table is the only source of projects
+        for project in cabinet_client.projects(client):
+            out.write(f"{project['id']} · {project['name']} · {project['route']}\n")
+        return
+    if op == "list":
+        after = request.pop("after", None)
+        records = cabinet_client.records(client, **request)
+        if after is not None:
+            records = [r for r in records if r["n"] > int(after.rsplit("-", 1)[1])]
+        lines = [view.line(r) for r in records]
+        shown = fitting(lines)
+        lines = lines[:shown]
+        if shown < len(records):
+            flags = "".join(f" {flag} {shlex.quote(request[key])}" for key, flag in LIST_FLAGS if key in request)
+            lines.append(f"more: kd-task list{flags} --after {records[shown - 1]['id']}")
+    else:
+        records = client.call({"op": "card.search", "text": request["text"]})["cards"]
+        lines = [view.line(r) for r in records]
+        shown = fitting(lines)
+        lines = lines[:shown]
+        if shown < len(records):
+            lines.append(f"more: {len(records) - shown} more cards — narrow the search")
+    for line in lines:
+        out.write(line + "\n")
+
+
+def fitting(lines):
+    """How many of ``lines`` fit in ``BUDGET`` bytes, one at least."""
+    used = 0
+    for count, line in enumerate(lines):
+        used += len(line.encode("utf-8")) + 1
+        if count and used > BUDGET:
+            return count
+    return len(lines)
+
+
+def chat(client, agent, request, out, session=""):
+    """The agent's own chat thread in the cabinet: read it, or post one message to it. ``session`` — the
+    session unit the call came from (the channel's): a "Monitor" session reads "Monitor", unless
+    it names its chat (``--in-chat``: what the owner needs of an attention tick)."""
+    mine = {"session": session} if session else {}
+    flag = ""
+    if request.get("in_chat"):
+        mine["space"], flag = "chat", " --in-chat"
+    if "post" in request:
+        message = client.call({"op": "agent.chat.post", "agent": agent, "text": request["post"], **mine})["message"]
+        out.write(f"ok chat #{message['seq']}\n")
+        return
+    if "message" in request:
+        page = {"op": "agent.chat.message", "agent": agent, "seq": request["message"], **mine}
+        out.write(client.call({**page, **({"cursor": request["cursor"]} if "cursor" in request else {})})["text"])
+        return
+    if "cursor" in request:
+        raise Refused("chat: --cursor goes with --message SEQ, as the page printed it")
+    after = request.get("after")
+    messages = client.call({"op": "agent.chat.read", "agent": agent, "after": after or 0, **mine})["messages"]
+    if after is None:
+        messages = messages[-CHAT_LAST:]
+    lines = []
+    for m in messages:
+        body = " ".join(view.message_text(m, with_files=False).splitlines())
+        raw = body.encode("utf-8")
+        if len(raw) > MESSAGE_CUT:  # the cut names the command that reads the message whole
+            body = raw[:MESSAGE_CUT].decode("utf-8", "ignore") + f"… (kd-task chat{flag} --message {m['seq']})"
+        files = [view.file_line(f) for f in view.files_of(m)]  # never cut: their ids are what file get takes
+        body = " · ".join(([body] if body else []) + files)
+        lines.append(f"#{m['seq']} {m['author']} {m['created']}: {body}")
+    shown = fitting(lines[::-1])  # the newest fit; the older are named
+    if shown < len(lines):
+        out.write(f"older: {len(lines) - shown} messages before #{messages[-shown]['seq']} not shown\n")
+    for line in lines[len(lines) - shown:]:
+        out.write(line + "\n")
+
+
+def stream_path(stream) -> str:
+    """Where an open descriptor of this process points: the kernel's word, not the caller's."""
+    return os.readlink(f"/proc/self/fd/{stream.fileno()}")
+
+
+def own_tmp(stream, agent, agents_root, repo_root, *, what) -> None:
+    """The descriptor is a regular file under the agent's own ``work/tmp``: a file goes nowhere else."""
+    if agents_root is None:
+        try:
+            agents_root = launch.configured_agents_root(Path(repo_root))
+        except launch.LaunchError as exc:
+            raise Failure(EXIT_ERROR, str(exc))
+    tmp = os.path.join(os.path.realpath(agents_root), agent, "work", "tmp") + os.sep
+    try:
+        path = stream_path(stream)
+        regular = stat.S_ISREG(os.fstat(stream.fileno()).st_mode)
+    except (OSError, ValueError, AttributeError):
+        path, regular = "", False
+    if not regular or not path.startswith(tmp):
+        raise Refused(f"file {what}: only a file of your own work/tmp")
+
+
+def file_op(client, agent, request, *, agents_root, repo_root, out, data_in, data_out, err):
+    """``file info`` (a file's facts as JSON), ``file get`` (its bytes to stdout, a file of the agent's work/tmp) and
+    ``file add`` (stdin, a file of the agent's work/tmp, into the card's thread) — piece by piece past the socket's
+    1 MiB request (``kd.cabinet.files_api``)."""
+    action, target = request["action"], request["target"]
+    if action in ("info", "get"):
+        if not FILE_ID.fullmatch(target):
+            raise Refused("file: the id is the 32 hex digits kd-task view or chat shows")
+        info = client.call({"op": "agent.file.info", "agent": agent, "id": target})["file"]
+        if action == "info":
+            out.write(json.dumps(info, ensure_ascii=False) + "\n")
+            return
+        own_tmp(data_out, agent, agents_root, repo_root, what="get")
+        digest, offset = hashlib.sha256(), 0
+        while offset < info["size"]:
+            piece = base64.b64decode(client.call({
+                "op": "agent.file.read", "agent": agent, "id": target, "offset": offset,
+                "length": files_api.CHUNK_MAX})["data"])
+            if not piece:
+                raise Failure(EXIT_ERROR, f"file {target}: the bytes end at {offset} of {info['size']}")
+            data_out.write(piece)
+            digest.update(piece)
+            offset += len(piece)
+        data_out.flush()
+        if digest.hexdigest() != info["sha256"]:
+            raise Failure(EXIT_ERROR, f"file {target}: the bytes read are not the file's (sha256 differs)")
+        err.write(f"ok file {target} {offset} bytes sha256 {info['sha256']}\n")
+        return
+    if not CARD_ID.fullmatch(target):
+        raise Refused("file add: the card is KD-<n>")
+    name = request.get("name") or ""
+    if not name:
+        raise Refused("file add: the file's name is missing (--name)")
+    own_tmp(data_in, agent, agents_root, repo_root, what="add")
+    if request.get("text") is not None:
+        worker_board._text(request["text"])  # refused before 20 MB go up, as the cabinet would refuse it after
+    mime, encoding = mimetypes.guess_type(name)
+    if encoding == "gzip":
+        mime = "application/gzip"  # a.tar.gz is a gzip file, not a tar one
+    elif encoding is not None or not mime or not MIME.fullmatch(mime):
+        mime = "application/octet-stream"
+    upload, digest, size = None, hashlib.sha256(), 0
+    while True:
+        piece = data_in.read(files_api.CHUNK_MAX)
+        if not piece:
+            break
+        request_ = {"op": "agent.file.chunk", "agent": agent, "offset": size,
+                    "data": base64.b64encode(piece).decode("ascii")}
+        if upload is not None:
+            request_["upload"] = upload
+        upload = client.call(request_)["upload"]
+        digest.update(piece)
+        size += len(piece)
+    if upload is None:
+        raise Refused("file add: the file is empty")
+    add = {"op": "agent.file.add", "agent": agent, "card": target, "upload": upload, "name": name, "mime": mime,
+           "size": size, "sha256": digest.hexdigest()}
+    if request.get("text") is not None:
+        add["text"] = request["text"]
+    message = client.call(add)["message"]
+    file_id = message["payload"]["files"][0]["id"]
+    out.write(f"ok {target} file {file_id} #{message['seq']} {size} bytes\n")
+
+
+def claim(client, agent, manifest, card_id, *, repo_root, require_root_owner, agents_root, out):
+    registry = None
+    for _ in range(ATTEMPTS):
+        card = cabinet_client.boss_card(client, card_id)  # the revision and the decision come from one read
+        worker_board.claimable(card, f"@{agent}")  # judged before the label: no advice about a foreign card
+        if registry is None:
+            registry = spec_registry(repo_root, require_root_owner)
+        if agents_root is None:
+            try:
+                agents_root = launch.configured_agents_root(Path(repo_root))
+            except launch.LaunchError as exc:
+                raise Failure(EXIT_ERROR, str(exc))
+        # The label (or the type's default) names the text the work follows; the note records its
+        # version and hash (spec 5.8.4). A foreign label is never guessed.
+        try:
+            chosen = specializations.select(registry, manifest.profile, manifest.capabilities, card.labels)
+            skills = specializations.skills_from_labels(registry, chosen, card.labels)
+        except specializations.SpecError as exc:
+            raise Refused(f"{card.id}: {exc}; hand the card to @boss with kd-task handoff")
+        request = {"op": "worker.claim", "agent": agent, "card": card.id, "revision": card.revision}
+        if chosen is not None:
+            installed_text(agents_root, agent, chosen)
+            from kd.persistent_skills import installed_text as checked_text
+            for skill in skills:
+                try:
+                    checked_text(agents_root, agent, skill, skill=True)
+                except specializations.SpecError as exc:
+                    raise Refused(str(exc)) from exc
+            request["note"] = specializations.note(chosen, skills)
+        try:
+            record = client.call(request)["card"]
+        except cabinet_client.CabinetError as exc:
+            if exc.kind == "conflict":
+                continue
+            raise
+        tail = f" spec {chosen.name} v{chosen.version}" if chosen is not None else ""
+        out.write(f"ok {record['id']} claim revision {record['revision']}{tail}\n")
+        for skill in skills:
+            out.write(f"read {agents_root}/{agent}/playbooks/skill/{skill.name}.md "
+                      f"skill {skill.name} v{skill.version} sha256={skill.sha256}\n")
+        return
+    raise Failure(EXIT_CONFLICT, f"{card_id}: the card changed {ATTEMPTS} times while deciding; retry later")
+
+
+def selection_edit(client, agent, manifest, card_id, request, *, repo_root, require_root_owner, agents_root):
+    """Check the prospective installed instructions before changing labels; CAS binds that check to the card."""
+    changed = request.get("spec") is not None or any(
+        str(v).startswith("skill:") for key in ("add_label", "remove_label") for v in request.get(key, ())
+    )
+    if not changed:
+        return None
+    card = client.call({"op": "card.get", "card": card_id})["card"]
+    if card.get("assignee") != "@" + agent:
+        raise Refused("instruction selection is only for your own card")
+    labels = [v for v in card.get("labels", ()) if v not in request.get("remove_label", ())
+              and not (request.get("spec") is not None and v.startswith("spec:"))]
+    labels += [v for v in request.get("add_label", ()) if v not in labels]
+    if request.get("spec") is not None:
+        labels.append("spec:" + request["spec"])
+    registry = spec_registry(repo_root, require_root_owner)
+    try:
+        spec = specializations.select(registry, manifest.profile, manifest.capabilities, labels)
+        skills = specializations.skills_from_labels(registry, spec, labels)
+        if spec is None:
+            raise specializations.SpecError("no specialization for this agent")
+        root = agents_root or launch.configured_agents_root(Path(repo_root))
+        from kd.persistent_skills import installed_text as checked_text
+
+        paths = [checked_text(root, agent, spec)] + [checked_text(root, agent, s, skill=True) for s in skills]
+    except (specializations.SpecError, launch.LaunchError) as exc:
+        raise Refused(str(exc)) from exc
+    request.setdefault("revision", card["revision"])
+    return spec, skills, paths
+
+
+def main(argv, *, env, client=None, registry_path=agents.REGISTRY, repo_root=specializations.REPO_ROOT,
+         require_root_owner=True, agents_root=None, out=sys.stdout, err=sys.stderr, data_in=None,
+         data_out=None) -> int:
+    try:
+        agent, _ = caller(env, registry_path)
+        op, card_id, request = parse(argv)
+        manifest = manifest_of(agent, repo_root)
+        capability(manifest, op, request)
+        client = client or cabinet_client.Client()
+        if op in READS:
+            read(client, op, card_id, request, out)
+        elif op == "chat":
+            chat(client, agent, request, out, session=env.get("KD_CALLER_SESSION", ""))
+        elif op == "file":
+            try:
+                file_op(client, agent, request, agents_root=agents_root, repo_root=repo_root, out=out, err=err,
+                        data_in=data_in if data_in is not None else sys.stdin.buffer,
+                        data_out=data_out if data_out is not None else sys.stdout.buffer)
+            except OSError as exc:  # the descriptor refused a read or a write (a full disk, a read-only fd)
+                raise Failure(EXIT_ERROR, f"file {request['action']}: {exc.strerror or exc}")
+        elif op == "claim":
+            claim(client, agent, manifest, card_id, repo_root=repo_root, require_root_owner=require_root_owner,
+                  agents_root=agents_root, out=out)
+        elif op == 'brief-review':
+            out.write(json.dumps(client.call({'op': op, 'agent': agent, 'card': card_id, **request}), ensure_ascii=False) + '\n')
+        else:
+            target = {"card": card_id} if card_id else {}
+            selected = selection_edit(client, agent, manifest, card_id, request, repo_root=repo_root,
+                                      require_root_owner=require_root_owner, agents_root=agents_root) if op == "edit" else None
+            record = client.call({"op": f"worker.{op}", "agent": agent, **target, **request})["card"]
+            if op == "create":
+                out.write(f"ok {record['id']} create\n")
+            else:
+                suffix = f" -> {request['to']}" if op == "handoff" else ""
+                out.write(f"ok {record['id']} {op}{suffix} revision {record['revision']}\n")
+            if selected is not None:
+                spec, skills, paths = selected
+                out.write("Current checked instructions (replace the earlier selection for this card):\n")
+                out.write(json.dumps(specializations.provenance(spec, skills), sort_keys=True) + "\n")
+                out.write("Installed files checked: " + ", ".join(paths) + "\n")
+                out.write("\n\n".join([spec.text, *(s.text for s in skills)]) + "\nEnd checked instructions.\n")
+        return 0
+    except (Refused, worker_board.Refused) as exc:
+        err.write(f"kd-task: {exc}\n")
+        return EXIT_REFUSED
+    except Failure as exc:
+        err.write(f"kd-task: {exc}\n")
+        return exc.code
+    except cabinet_client.CabinetError as exc:
+        err.write(f"kd-task: {exc}\n")
+        return cabinet_client.exit_code(exc)
+
+
+def reexec_argv(argv):
+    return [cap_client.CLIENT, "run", "base", EXECUTOR, *argv]
+
+
+def caller_tmp(repo_root=specializations.REPO_ROOT, registry=agents.REGISTRY) -> str:
+    """The calling agent's ``work/tmp``, from its own user (the caller's side, before the channel)."""
+    user = pwd.getpwuid(os.geteuid()).pw_name
+    agent = agents.agent_of_user(user, registry)
+    if agent is None:
+        raise Refused(f"user {user} is not the user of an agent on this host")
+    try:
+        return os.path.join(launch.configured_agents_root(Path(repo_root)), agent, "work", "tmp")
+    except launch.LaunchError as exc:
+        raise Failure(EXIT_ERROR, str(exc))
+
+
+def copy_name(file_id: str, name: str) -> str:
+    """``<8 hex of the id>-<the file's name>``: a plain name for the copy in work/tmp."""
+    base = re.split(r"[\\/]", name or "")[-1]
+    base = "".join(c for c in base if ord(c) >= 32 and c != "\x7f").strip().lstrip(".") or "file"
+    base = base.encode("utf-8")[:200].decode("utf-8", "ignore")  # a name is at most 255 bytes, not characters
+    return f"{file_id[:8]}-{base}"
+
+
+def front_file(argv, *, tmp=None, run=subprocess.run, cwd=None, out=sys.stdout, err=sys.stderr) -> int:
+    """``kd-task file get|add`` on the caller's side (the agent's own user): it opens the copy in ``work/tmp`` (get)
+    or the file to send from there (add) and hands it to the executor as stdout or stdin; the executor checks the
+    descriptor again. ``info`` goes to the executor as it is."""
+    try:
+        _, _, request = parse(argv)
+        action, target = request["action"], request["target"]
+        channel = [cap_client.CLIENT, "run", "base", EXECUTOR, "file"]
+        if action == "info":
+            return run(channel + ["info", target]).returncode
+        tmp = os.path.realpath(tmp or caller_tmp())
+        if action == "get":
+            if not FILE_ID.fullmatch(target):
+                raise Refused("file get: the id is the 32 hex digits kd-task view or chat shows")
+            found = run(channel + ["info", target], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if found.returncode:
+                err.write(found.stderr.decode("utf-8", "replace"))
+                return found.returncode
+            info = json.loads(found.stdout.decode("utf-8"))
+            path = os.path.join(tmp, copy_name(target, info.get("name", "")))
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                done = run(channel + ["get", target], stdout=handle, stderr=subprocess.PIPE)
+            if done.returncode:
+                os.unlink(path)
+                err.write(done.stderr.decode("utf-8", "replace"))
+                return done.returncode
+            out.write(f"ok file {target} -> {path} · {info.get('mime', '')} · {view.size_text(info.get('size'))}\n")
+            return 0
+        path = request.get("path")
+        if not path:
+            raise Refused("file add: name the file of your work/tmp: kd-task file add KD-<n> <path> [--text T]")
+        real = os.path.realpath(os.path.join(cwd or os.getcwd(), path))
+        if not real.startswith(tmp + os.sep):
+            raise Refused(f"file add: only a file of your own work/tmp ({tmp})")
+        fd = os.open(real, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise Refused("file add: not a regular file")
+            args = channel + ["add", target, "--name", os.path.basename(real)]
+            if request.get("text") is not None:
+                args += ["--text", request["text"]]
+            return run(args, stdin=fd).returncode
+        finally:
+            os.close(fd)
+    except Refused as exc:
+        err.write(f"kd-task: {exc}\n")
+        return EXIT_REFUSED
+    except Failure as exc:
+        err.write(f"kd-task: {exc}\n")
+        return exc.code
+    except (OSError, ValueError) as exc:
+        err.write(f"kd-task: file: {exc}\n")
+        return EXIT_ERROR
+
+
+if __name__ == "__main__":
+    owner = pwd.getpwnam(OWNER)
+    if os.geteuid() != owner.pw_uid:
+        if sys.argv[1:2] == ["file"]:
+            sys.exit(front_file(sys.argv[1:]))
+        os.execv(cap_client.CLIENT, reexec_argv(sys.argv[1:]))
+    channel = {k: os.environ.get(k, "") for k in ("KD_AGENT", "KD_CALLER_USER", "KD_CALLER_SESSION")}
+    os.environ.clear()
+    os.environ.update(HOME=owner.pw_dir, PATH="/usr/bin:/bin", LANG="C.UTF-8")
+    os.chdir("/")
+    sys.exit(main(sys.argv[1:], env=channel))

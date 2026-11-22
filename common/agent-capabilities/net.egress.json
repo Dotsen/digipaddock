@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "name": "net.egress",
+  "module": "net",
+  "description": "A session reaches an exit's hosts through the sandbox proxy and the VPN tunnel: a card's probe exit while the owner's consent lives, or the host's standing exit in every session (of every host — the web tools too). The launch adds the names, rules and proxy; this capability opens nothing by itself.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [
+    {"name": "egress-config", "access": "read-direct"}
+  ],
+  "wrappers": [],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": []
+  },
+  "lifecycle": {
+    "install": [],
+    "check": [],
+    "disable": []
+  }
+}

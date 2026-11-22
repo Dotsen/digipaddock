@@ -1,0 +1,974 @@
+plan for agent boss
+  user digi-boss, profile coordinator, model sonnet, sandbox coordinator-v1
+  capabilities agent.nudge, board.coordinate, board.read, data.read, host.read, monitor.read, net.egress, usage.read, worker.request
+  capability install steps data.read:executor-user, host.read:executor-user, data.read:setup, host.read:setup, agent.nudge:wrappers, board.coordinate:wrappers, board.read:wrappers, data.read:wrappers, host.read:wrappers, monitor.read:wrappers, usage.read:wrappers, worker.request:wrappers, board.read:read-grants, agent.nudge:channels, board.coordinate:channels, board.read:channels, data.read:channels, host.read:channels, monitor.read:channels, worker.request:channels
+actions, in order: the board grant is deferred (step 40); every ACL and channel grant follows policy publication:
+  1. package bubblewrap: apt-get install; bwrap is missing
+  2. package socat: apt-get install; socat is missing
+  3. service-user digi-data: create: system user, no login shell, home /home/digi-data 0700
+  4. service-user digi-observe: create: system user, no login shell, home /home/digi-observe 0700
+  5. user digi-boss: common/install/add_user.sh digi-boss --prepare: useradd --create-home --user-group --shell /bin/bash; /home/digi-boss and /home/digi 0750
+  6. group digipaddock-cabinet: digi-boss joins it through common/install/cabinet_setup.sh grant: the board's socket (KD-225)
+  7. download /home/digi-boss/.local/bin/claude: Claude Code, the base user's version, from https://claude.ai/install.sh (network)
+  8. dir /home/digi-boss/.config: digi-boss:digi-boss 0700, made by digi-boss
+  9. plugin hindsight: if /etc/hindsight/coding-agent.env exists: @vectorize-io/hindsight-coding-agents through npx for digi-boss (network)
+ 10. file /home/digi-boss/.hindsight/coding-agent.json: digi-boss:digi-boss 0600, made by digi-boss if Hindsight runs: holds the API key (value not shown)
+ 11. registry /etc/digipaddock/agents.json: set boss = {"runtime": "generated", "user": "digi-boss"}
+ 12. dir /srv/digipaddock-agents/boss: root:root 0755
+ 13. dir /srv/digipaddock-agents/boss/.claude: root:root 0755
+ 14. file /srv/digipaddock-agents/boss/CLAUDE.md: root:root 0644 sha256=68883d36665b7f9245ebfc9e364b872744e3014114f462866fb700bd65ca49a0 bytes=566
+ 15. file /srv/digipaddock-agents/boss/.claude/policy.json: root:root 0644 sha256=1941a90a7cbd652506702c813577c2cfde444a0b8b76e2afa122a1c4b9804773 bytes=17420
+ 16. file /srv/digipaddock-agents/boss/.claude/settings.json: root:root 0644 sha256=b15c90f86a4504f85d77d3039463539bb413d87a178025e346d7db6a48e1379c bytes=8050
+ 17. file /srv/digipaddock-agents/boss/.claude/launch-settings.json: root:root 0644 sha256=087c8c2f0daca4a34549387bca3c1527443b3342d0405d61c3a9683305c871ac bytes=2779
+ 18. dir /srv/digipaddock-agents/boss/playbooks: root:root 0755
+ 19. file /srv/digipaddock-agents/boss/playbooks/escalation.md: root:root 0644 sha256=0be5ca9d5bf583330e4cb802e5aec2f4c966658a901a6e04691445146e1626f7 bytes=86
+ 20. dir /srv/digipaddock-agents/boss/memory: digi-boss:digi-boss 0750
+ 21. file /srv/digipaddock-agents/boss/memory/notes.md: digi-boss:digi-boss 0640, created empty by digi-boss if absent
+ 22. dir /srv/digipaddock-agents/boss/work: digi-boss:digi-boss 0750
+ 23. file /srv/digipaddock-agents/boss/work/CLAUDE.local.md: root:root 0644 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 bytes=0
+ 24. file /srv/digipaddock-agents/boss/work/CLAUDE.md: root:root 0644 sha256=7a699afed5a4457b5f70acddc8349ba3e6a3d546d0653ae1458b9f78177ad75e bytes=101
+ 25. link /usr/local/bin/kd-boss-board: -> /opt/digipaddock/common/bin/kd-boss-board
+ 26. link /usr/local/bin/kd-data: -> /opt/digipaddock/common/bin/kd-data
+ 27. link /usr/local/bin/kd-host-read: -> /opt/digipaddock/common/bin/kd-host-read
+ 28. link /usr/local/bin/kd-monitor-read: -> /opt/digipaddock/common/bin/kd-monitor-read
+ 29. link /usr/local/bin/kd-notes: -> /opt/digipaddock/common/bin/kd-notes
+ 30. link /usr/local/bin/kd-nudge: -> /opt/digipaddock/common/bin/kd-nudge
+ 31. link /usr/local/bin/kd-task: -> /opt/digipaddock/common/bin/kd-task
+ 32. link /usr/local/bin/kd-usage: -> /opt/digipaddock/common/bin/kd-usage
+ 33. link /usr/local/bin/kd-worker: -> /opt/digipaddock/common/bin/kd-worker
+ 34. trust /home/digi-boss/.claude.json: by digi-boss: hasTrustDialogAccepted for /srv/digipaddock-agents/boss and /srv/digipaddock-agents/boss/work
+ 35. migrate /srv/digipaddock-agents/boss/memory/notes.md: by digi-boss, once: original to memory/legacy/, one-card entries to memory/tasks/, map memory/legacy/migration.md; session folders memory/tasks, memory/chats, work/tmp/cards, work/tmp/chats
+ 36. file /etc/apparmor.d/bwrap: root:root 0644 sha256=cb4c604a3a3ef312a33bd0768511a5187a73c941b52d1ef9da0cbbb9f9eaa357 bytes=138
+ 37. reload apparmor: host-wide: bwrap may create user namespaces for every user (accepted host risk for the sandbox, spec 5.2b)
+ 38. setup /opt/digipaddock/common/install/data_read_setup.sh: data.read: install, check and disable as root with boss digi-boss
+ 39. setup /opt/digipaddock/common/install/host_read_setup.sh: host.read: install, check and disable as root with boss digi-boss
+ 40. board-grant /srv/digipaddock-agents/board/backlog: read: decided by kd.board_grant from the compiled acl; common/install/add_user.sh --grant applies it after policy publication
+ 41. acl /srv/digipaddock-agents/board/backlog: u:digi-boss:rX,d:u:digi-boss:rX (by root, on the directory itself)
+ 42. acl /srv/digipaddock-agents/board/backlog/**: directories u:digi-boss:rX,d:u:digi-boss:rX, files u:digi-boss:rX (only entries owned by digi, set by digi)
+ 43. verify digi-boss: can write nothing in /srv/digipaddock-agents/board/backlog
+ 44. file /etc/systemd/system/digipaddock-cap.target: root:root 0644 sha256=7a2a0be949ff4160f5209b95ba74de0fd3671f2ee981f9243055a254c0bfed78 bytes=103
+ 45. file /etc/systemd/system/digipaddock-cap-boss-base.socket: root:root 0644 sha256=04d21bf95344a09afb3782f2ffc1ec44d03090f5aadafd44887ee428bf4083f1 bytes=306
+ 46. file /etc/systemd/system/digipaddock-cap-boss-base@.service: root:root 0644 sha256=8a3dab67270113902802ac91a51ec845356193f4d7984013387138b49e9bc98f bytes=422
+ 47. file /etc/systemd/system/digipaddock-cap-boss-data.socket: root:root 0644 sha256=2826189f41587e7080c76660686f6c6dadb7d99ee3ab0b1ef3736d131fe61358 bytes=306
+ 48. file /etc/systemd/system/digipaddock-cap-boss-data@.service: root:root 0644 sha256=15b2731eb1253d8c4d0f71c5b71b433ca5dd7c17a63b63598ab63d13a3ff5338 bytes=427
+ 49. file /etc/systemd/system/digipaddock-cap-boss-host.socket: root:root 0644 sha256=6a81f1e81edd71b64c19a41b114b6cea7f3514b6c5fd2e4c06bcf7c710e5d8d8 bytes=306
+ 50. file /etc/systemd/system/digipaddock-cap-boss-host@.service: root:root 0644 sha256=1f30cb018a6264cfd69a5c0ad3fa2e0f64a8ab2a62cdb114b08d6c7ef40bd41c bytes=430
+ 51. file /etc/systemd/system/digipaddock-cap-boss-self.socket: root:root 0644 sha256=4b770b04d6f6b8f4b4c5332d8dae2f988331b13a6768ddc00220264f1a55f551 bytes=301
+ 52. file /etc/systemd/system/digipaddock-cap-boss-self@.service: root:root 0644 sha256=1ef8175cd5a5859d8192c8b107088ad39d7d7fcfbc916500cdc0ef9bc1a2aae3 bytes=427
+ 53. file /etc/tmpfiles.d/digipaddock-cap-boss.conf: root:root 0644 sha256=e69ca5c3477439daed2a91c720217b71e9331f66924ebc1ef8cfef92f0c4cf18 bytes=335
+ 54. dir /etc/digipaddock/agent-bin/boss: root:root 0755, only these links; first in the agent's PATH
+ 55. link /etc/digipaddock/agent-bin/boss/kd-boss-board: -> /opt/digipaddock/common/bin/kd-cap
+ 56. link /etc/digipaddock/agent-bin/boss/kd-data: -> /opt/digipaddock/common/bin/kd-cap
+ 57. link /etc/digipaddock/agent-bin/boss/kd-host-read: -> /opt/digipaddock/common/bin/kd-cap
+ 58. link /etc/digipaddock/agent-bin/boss/kd-monitor-read: -> /opt/digipaddock/common/bin/kd-cap
+ 59. link /etc/digipaddock/agent-bin/boss/kd-notes: -> /opt/digipaddock/common/bin/kd-cap
+ 60. link /etc/digipaddock/agent-bin/boss/kd-nudge: -> /opt/digipaddock/common/bin/kd-cap
+ 61. link /etc/digipaddock/agent-bin/boss/kd-task: -> /opt/digipaddock/common/bin/kd-cap
+ 62. link /etc/digipaddock/agent-bin/boss/kd-worker: -> /opt/digipaddock/common/bin/kd-cap
+ 63. unit digipaddock-cap.target: enable
+ 64. unit digipaddock-cap-boss-base.socket: enable and restart; each call runs common/bin/kd-cap-serve as digi
+ 65. unit digipaddock-cap-boss-data.socket: enable and restart; each call runs common/bin/kd-cap-serve as digi-data
+ 66. unit digipaddock-cap-boss-host.socket: enable and restart; each call runs common/bin/kd-cap-serve as digi-observe
+ 67. unit digipaddock-cap-boss-self.socket: enable and restart; each call runs common/bin/kd-cap-serve as digi-boss
+ 68. file /etc/digipaddock/cap/boss/base.json: root:root 0644, rendered with the uid of digi-boss after its creation
+ 69. file /etc/digipaddock/cap/boss/data.json: root:root 0644, rendered with the uid of digi-boss after its creation
+ 70. file /etc/digipaddock/cap/boss/host.json: root:root 0644, rendered with the uid of digi-boss after its creation
+ 71. file /etc/digipaddock/cap/boss/self.json: root:root 0644, rendered with the uid of digi-boss after its creation
+ 72. verify boss: installed files and grants match this plan; channels: grants files match the policy, sockets active; sudo -n -l -U digi-boss grants nothing, nor digi as digi-boss; sandbox preflight as digi-boss
+files in full:
+--- /srv/digipaddock-agents/boss/.claude/policy.json (root:root 0644)
+{
+  "acl": [
+    {
+      "access": "read",
+      "path": "/srv/digipaddock-agents/board",
+      "resource": "board-tasks",
+      "user": "digi-boss"
+    }
+  ],
+  "agent": "boss",
+  "bash_approval": "rules",
+  "capabilities": [
+    "agent.nudge",
+    "board.coordinate",
+    "board.read",
+    "data.read",
+    "host.read",
+    "monitor.read",
+    "net.egress",
+    "usage.read",
+    "worker.request"
+  ],
+  "channels": [
+    {
+      "commands": {},
+      "key": "base",
+      "programs": [
+        "/opt/digipaddock/common/bin/kd-boss-board",
+        "/opt/digipaddock/common/bin/kd-monitor-read",
+        "/opt/digipaddock/common/bin/kd-nudge",
+        "/opt/digipaddock/common/bin/kd-permlog",
+        "/opt/digipaddock/common/bin/kd-task",
+        "/opt/digipaddock/common/bin/kd-worker"
+      ],
+      "run_as": "digi"
+    },
+    {
+      "commands": {},
+      "key": "data",
+      "programs": [
+        "/opt/digipaddock/common/bin/kd-data"
+      ],
+      "run_as": "digi-data"
+    },
+    {
+      "commands": {},
+      "key": "host",
+      "programs": [
+        "/opt/digipaddock/common/bin/kd-host-read"
+      ],
+      "run_as": "digi-observe"
+    },
+    {
+      "commands": {
+        "kd-boss-board": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-boss-board",
+          "subcommands": [
+            "assign",
+            "assist-assign",
+            "assist-list",
+            "attention-ack",
+            "attention-list",
+            "close-cancelled",
+            "close-duplicate",
+            "comment",
+            "council",
+            "create-child",
+            "create-inbox",
+            "defer",
+            "finish",
+            "prepare-create",
+            "propose-delegate",
+            "propose-promote",
+            "request-brief",
+            "review",
+            "revision",
+            "set-dependency",
+            "set-labels",
+            "set-priority",
+            "set-project",
+            "specs",
+            "stage-hold",
+            "stage-pass",
+            "stage-return",
+            "unblock"
+          ]
+        },
+        "kd-data": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-data",
+          "subcommands": []
+        },
+        "kd-host-read": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-host-read",
+          "subcommands": [
+            "cat",
+            "grep",
+            "head",
+            "journalctl",
+            "ls",
+            "paths",
+            "stat",
+            "sys",
+            "systemctl",
+            "tail"
+          ]
+        },
+        "kd-monitor-read": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-monitor-read",
+          "subcommands": [
+            "incident",
+            "incidents",
+            "server",
+            "servers"
+          ]
+        },
+        "kd-notes": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-notes",
+          "subcommands": [
+            "add"
+          ]
+        },
+        "kd-nudge": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-nudge",
+          "subcommands": []
+        },
+        "kd-task": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-task",
+          "subcommands": [
+            "brief-review",
+            "chat",
+            "claim",
+            "create",
+            "edit",
+            "file",
+            "handoff",
+            "list",
+            "message",
+            "projects",
+            "result",
+            "scope",
+            "search",
+            "thread",
+            "view",
+            "waits"
+          ]
+        },
+        "kd-worker": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-worker",
+          "subcommands": [
+            "cancel",
+            "request",
+            "result",
+            "status"
+          ]
+        }
+      },
+      "key": "self",
+      "programs": [],
+      "run_as": "digi-boss"
+    }
+  ],
+  "install_steps": {
+    "check": [
+      "data.read:executor-user",
+      "host.read:executor-user",
+      "data.read:setup",
+      "host.read:setup",
+      "agent.nudge:wrappers",
+      "board.coordinate:wrappers",
+      "board.read:wrappers",
+      "data.read:wrappers",
+      "host.read:wrappers",
+      "monitor.read:wrappers",
+      "usage.read:wrappers",
+      "worker.request:wrappers",
+      "board.read:read-grants",
+      "agent.nudge:channels",
+      "board.coordinate:channels",
+      "board.read:channels",
+      "data.read:channels",
+      "host.read:channels",
+      "monitor.read:channels",
+      "worker.request:channels"
+    ],
+    "disable": [
+      "agent.nudge:channels",
+      "board.coordinate:channels",
+      "board.read:channels",
+      "data.read:channels",
+      "host.read:channels",
+      "monitor.read:channels",
+      "worker.request:channels",
+      "board.read:read-grants",
+      "data.read:setup",
+      "host.read:setup"
+    ],
+    "install": [
+      "data.read:executor-user",
+      "host.read:executor-user",
+      "data.read:setup",
+      "host.read:setup",
+      "agent.nudge:wrappers",
+      "board.coordinate:wrappers",
+      "board.read:wrappers",
+      "data.read:wrappers",
+      "host.read:wrappers",
+      "monitor.read:wrappers",
+      "usage.read:wrappers",
+      "worker.request:wrappers",
+      "board.read:read-grants",
+      "agent.nudge:channels",
+      "board.coordinate:channels",
+      "board.read:channels",
+      "data.read:channels",
+      "host.read:channels",
+      "monitor.read:channels",
+      "worker.request:channels"
+    ]
+  },
+  "launch_settings": {
+    "sandbox": {
+      "allowUnsandboxedCommands": false,
+      "autoAllowBashIfSandboxed": false,
+      "credentials": {
+        "envVars": [
+          {
+            "mode": "deny",
+            "name": "CLAUDE_CODE_OAUTH_TOKEN"
+          },
+          {
+            "mode": "deny",
+            "name": "ANTHROPIC_AUTH_TOKEN"
+          },
+          {
+            "mode": "deny",
+            "name": "ANTHROPIC_API_KEY"
+          }
+        ]
+      },
+      "enableWeakerNestedSandbox": false,
+      "enableWeakerNetworkIsolation": false,
+      "enabled": true,
+      "excludedCommands": [],
+      "failIfUnavailable": true,
+      "filesystem": {
+        "allowRead": [
+          "/home/digi-boss/.claude/projects",
+          "/run/digipaddock/cap/boss",
+          "/var/lib/digipaddock/usage.jsonl"
+        ],
+        "denyRead": [
+          "/etc/digi-exec",
+          "/etc/digipaddock/cabinet.env",
+          "/etc/digipaddock/claude.env",
+          "/etc/digipaddock/forge",
+          "/etc/digipaddock/llm",
+          "/etc/digipaddock/pult.env",
+          "/etc/digipaddock/push.env",
+          "/etc/digipaddock/review",
+          "/etc/hindsight",
+          "/home/agent-ro",
+          "/home/digi",
+          "/home/digi-analyst",
+          "/home/digi-boss/.claude",
+          "/home/digi-boss/.hindsight",
+          "/home/digi-boss/.ssh",
+          "/home/digi-cabinet",
+          "/home/digi-ci",
+          "/home/digi-data",
+          "/home/digi-dev",
+          "/home/digi-exec",
+          "/home/digi-forge",
+          "/home/digi-observe",
+          "/home/digi-push",
+          "/home/digi-repo",
+          "/home/digi-review",
+          "/home/digi-sysadmin",
+          "/home/digi-transcribe",
+          "/run",
+          "/srv/digipaddock-agents/analyst",
+          "/srv/digipaddock-agents/dev",
+          "/srv/digipaddock-agents/sysadmin",
+          "/var/lib/digipaddock",
+          "/var/run"
+        ],
+        "denyWrite": [
+          "/home/digi-boss/.bash_profile",
+          "/home/digi-boss/.bashrc",
+          "/home/digi-boss/.bun",
+          "/home/digi-boss/.claude",
+          "/home/digi-boss/.claude.json",
+          "/home/digi-boss/.config",
+          "/home/digi-boss/.local",
+          "/home/digi-boss/.profile",
+          "/home/digi-boss/.ssh",
+          "/opt/digipaddock",
+          "/opt/digipaddock/host/egress.json",
+          "/run",
+          "/srv/digipaddock-agents/board",
+          "/srv/digipaddock-agents/boss/memory/legacy",
+          "/srv/digipaddock-agents/boss/memory/notes.md",
+          "/srv/digipaddock-agents/boss/work/CLAUDE.local.md",
+          "/srv/digipaddock-agents/boss/work/CLAUDE.md",
+          "/srv/example-docs",
+          "/var/lib/digipaddock",
+          "/var/run"
+        ]
+      },
+      "network": {
+        "allowAllUnixSockets": true,
+        "allowLocalBinding": false,
+        "allowUnixSockets": [],
+        "allowedDomains": [],
+        "strictAllowlist": true
+      }
+    }
+  },
+  "model": "sonnet",
+  "profile": "coordinator",
+  "sandbox_profile": "coordinator-v1",
+  "schema_version": 7,
+  "settings": {
+    "hooks": {
+      "PreToolUse": [
+        {
+          "hooks": [
+            {
+              "command": "/opt/digipaddock/common/bin/kd-cap-expect || exit 2",
+              "timeout": 30,
+              "type": "command"
+            }
+          ],
+          "matcher": "Bash"
+        }
+      ]
+    },
+    "permissions": {
+      "additionalDirectories": [
+        "/srv/digipaddock-agents/board"
+      ],
+      "allow": [
+        "Bash(kd-boss-board assign *)",
+        "Bash(kd-boss-board assist-assign *)",
+        "Bash(kd-boss-board assist-list *)",
+        "Bash(kd-boss-board attention-ack *)",
+        "Bash(kd-boss-board attention-list *)",
+        "Bash(kd-boss-board close-cancelled *)",
+        "Bash(kd-boss-board close-duplicate *)",
+        "Bash(kd-boss-board comment *)",
+        "Bash(kd-boss-board council *)",
+        "Bash(kd-boss-board create-child *)",
+        "Bash(kd-boss-board create-inbox *)",
+        "Bash(kd-boss-board defer *)",
+        "Bash(kd-boss-board finish *)",
+        "Bash(kd-boss-board prepare-create *)",
+        "Bash(kd-boss-board propose-delegate *)",
+        "Bash(kd-boss-board propose-promote *)",
+        "Bash(kd-boss-board request-brief *)",
+        "Bash(kd-boss-board review *)",
+        "Bash(kd-boss-board revision *)",
+        "Bash(kd-boss-board set-dependency *)",
+        "Bash(kd-boss-board set-labels *)",
+        "Bash(kd-boss-board set-priority *)",
+        "Bash(kd-boss-board set-project *)",
+        "Bash(kd-boss-board specs *)",
+        "Bash(kd-boss-board stage-hold *)",
+        "Bash(kd-boss-board stage-pass *)",
+        "Bash(kd-boss-board stage-return *)",
+        "Bash(kd-boss-board unblock *)",
+        "Bash(kd-data *)",
+        "Bash(kd-host-read cat *)",
+        "Bash(kd-host-read grep *)",
+        "Bash(kd-host-read head *)",
+        "Bash(kd-host-read journalctl *)",
+        "Bash(kd-host-read ls *)",
+        "Bash(kd-host-read paths *)",
+        "Bash(kd-host-read stat *)",
+        "Bash(kd-host-read sys *)",
+        "Bash(kd-host-read systemctl *)",
+        "Bash(kd-host-read tail *)",
+        "Bash(kd-monitor-read incident *)",
+        "Bash(kd-monitor-read incidents *)",
+        "Bash(kd-monitor-read server *)",
+        "Bash(kd-monitor-read servers *)",
+        "Bash(kd-notes add *)",
+        "Bash(kd-nudge *)",
+        "Bash(kd-task brief-review *)",
+        "Bash(kd-task chat *)",
+        "Bash(kd-task claim *)",
+        "Bash(kd-task create *)",
+        "Bash(kd-task edit *)",
+        "Bash(kd-task file *)",
+        "Bash(kd-task handoff *)",
+        "Bash(kd-task list *)",
+        "Bash(kd-task message *)",
+        "Bash(kd-task projects *)",
+        "Bash(kd-task result *)",
+        "Bash(kd-task scope *)",
+        "Bash(kd-task search *)",
+        "Bash(kd-task thread *)",
+        "Bash(kd-task view *)",
+        "Bash(kd-task waits *)",
+        "Bash(kd-usage show *)",
+        "Bash(kd-worker cancel *)",
+        "Bash(kd-worker request *)",
+        "Bash(kd-worker result *)",
+        "Bash(kd-worker status *)",
+        "Edit(//srv/digipaddock-agents/boss/memory/chats/**)",
+        "Edit(//srv/digipaddock-agents/boss/memory/tasks/**)",
+        "Read(//opt/digipaddock/host/egress.json)",
+        "Read(//srv/digipaddock-agents/board/**)",
+        "Read(//srv/digipaddock-agents/boss/**)",
+        "mcp__hindsight__hindsight_capture_initiative",
+        "mcp__hindsight__hindsight_diagnose",
+        "mcp__hindsight__hindsight_ingest_document",
+        "mcp__hindsight__hindsight_list_knowledge_pages",
+        "mcp__hindsight__hindsight_read_knowledge_page",
+        "mcp__hindsight__hindsight_reflect",
+        "mcp__hindsight__hindsight_search_knowledge_pages",
+        "mcp__hindsight__hindsight_sync_status"
+      ],
+      "ask": [],
+      "defaultMode": "dontAsk",
+      "deny": [
+        "Bash(kd-admin-critical *)",
+        "Bash(kd-admin-propose *)",
+        "Bash(kd-admin-propose-action *)",
+        "Bash(kd-admin-run *)",
+        "Bash(kd-deps *)",
+        "Bash(kd-diag *)",
+        "Bash(kd-e2e *)",
+        "Bash(kd-factory *)",
+        "Bash(kd-forge *)",
+        "Bash(kd-merge *)",
+        "Bash(kd-mirror-fetch *)",
+        "Bash(kd-monitor *)",
+        "Bash(kd-pr *)",
+        "Bash(kd-repo *)",
+        "Bash(kd-work *)",
+        "Bash(rsync *)",
+        "Bash(scp *)",
+        "Bash(sftp *)",
+        "Bash(ssh *)",
+        "Bash(ssh-exec *)",
+        "Bash(ssh-ro *)",
+        "Bash(su *)",
+        "Bash(sudo *)",
+        "Edit(//home/agent-ro/**)",
+        "Edit(//home/digi-analyst/**)",
+        "Edit(//home/digi-boss/.bash_profile)",
+        "Edit(//home/digi-boss/.bashrc)",
+        "Edit(//home/digi-boss/.bun/**)",
+        "Edit(//home/digi-boss/.claude.json)",
+        "Edit(//home/digi-boss/.claude/**)",
+        "Edit(//home/digi-boss/.config/**)",
+        "Edit(//home/digi-boss/.hindsight/**)",
+        "Edit(//home/digi-boss/.local/**)",
+        "Edit(//home/digi-boss/.profile)",
+        "Edit(//home/digi-boss/.ssh/**)",
+        "Edit(//home/digi-cabinet/**)",
+        "Edit(//home/digi-ci/**)",
+        "Edit(//home/digi-data/**)",
+        "Edit(//home/digi-dev/**)",
+        "Edit(//home/digi-exec/**)",
+        "Edit(//home/digi-forge/**)",
+        "Edit(//home/digi-observe/**)",
+        "Edit(//home/digi-push/**)",
+        "Edit(//home/digi-repo/**)",
+        "Edit(//home/digi-review/**)",
+        "Edit(//home/digi-sysadmin/**)",
+        "Edit(//home/digi-transcribe/**)",
+        "Edit(//home/digi/**)",
+        "Edit(//opt/digipaddock/**)",
+        "Edit(//opt/digipaddock/host/egress.json)",
+        "Edit(//srv/digipaddock-agents/analyst/**)",
+        "Edit(//srv/digipaddock-agents/board/**)",
+        "Edit(//srv/digipaddock-agents/boss/.claude/**)",
+        "Edit(//srv/digipaddock-agents/boss/CLAUDE.md)",
+        "Edit(//srv/digipaddock-agents/boss/memory/legacy/**)",
+        "Edit(//srv/digipaddock-agents/boss/memory/notes.md)",
+        "Edit(//srv/digipaddock-agents/boss/playbooks/**)",
+        "Edit(//srv/digipaddock-agents/boss/work/**/.claude/**)",
+        "Edit(//srv/digipaddock-agents/boss/work/**/.mcp.json)",
+        "Edit(//srv/digipaddock-agents/boss/work/.claude/**)",
+        "Edit(//srv/digipaddock-agents/boss/work/.mcp.json)",
+        "Edit(//srv/digipaddock-agents/boss/work/CLAUDE.local.md)",
+        "Edit(//srv/digipaddock-agents/boss/work/CLAUDE.md)",
+        "Edit(//srv/digipaddock-agents/dev/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/**)",
+        "Edit(//srv/example-docs/**)",
+        "Edit(//var/lib/digipaddock/**)",
+        "Monitor",
+        "Read(//**/.git-credentials)",
+        "Read(//etc/digi-exec/**)",
+        "Read(//etc/digipaddock/cabinet.env)",
+        "Read(//etc/digipaddock/claude.env)",
+        "Read(//etc/digipaddock/forge/**)",
+        "Read(//etc/digipaddock/llm/**)",
+        "Read(//etc/digipaddock/pult.env)",
+        "Read(//etc/digipaddock/push.env)",
+        "Read(//etc/digipaddock/review/**)",
+        "Read(//etc/hindsight/**)",
+        "Read(//home/agent-ro/**)",
+        "Read(//home/digi-analyst/**)",
+        "Read(//home/digi-boss/.claude/.credentials.json)",
+        "Read(//home/digi-boss/.hindsight/**)",
+        "Read(//home/digi-boss/.ssh/**)",
+        "Read(//home/digi-cabinet/**)",
+        "Read(//home/digi-ci/**)",
+        "Read(//home/digi-data/**)",
+        "Read(//home/digi-dev/**)",
+        "Read(//home/digi-exec/**)",
+        "Read(//home/digi-forge/**)",
+        "Read(//home/digi-observe/**)",
+        "Read(//home/digi-push/**)",
+        "Read(//home/digi-repo/**)",
+        "Read(//home/digi-review/**)",
+        "Read(//home/digi-sysadmin/**)",
+        "Read(//home/digi-transcribe/**)",
+        "Read(//home/digi/**)",
+        "Read(//opt/**/.git/config)",
+        "Read(//opt/**/vpn/*.conf)",
+        "Read(//srv/digipaddock-agents/analyst/**)",
+        "Read(//srv/digipaddock-agents/dev/**)",
+        "Read(//srv/digipaddock-agents/sysadmin/**)",
+        "Read(//var/lib/digipaddock/**)",
+        "Read(//var/www/**/.env)",
+        "Read(//var/www/**/.env.*)",
+        "Read(//var/www/**/.git/config)",
+        "Read(//var/www/**/app_keys.json)",
+        "Read(//var/www/**/app_tokens.json)",
+        "Read(//var/www/**/config.ini)",
+        "Read(//var/www/**/config.ini*)",
+        "Read(//var/www/**/data/keys/**)",
+        "Skill(hindsight-coding-agent)",
+        "WebFetch",
+        "WebSearch"
+      ],
+      "disableAutoMode": "disable",
+      "disableBypassPermissionsMode": "disable"
+    }
+  },
+  "user": "digi-boss"
+}
+--- end
+--- /srv/digipaddock-agents/boss/.claude/settings.json (root:root 0644)
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "/opt/digipaddock/common/bin/kd-cap-expect || exit 2",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ]
+  },
+  "permissions": {
+    "additionalDirectories": [
+      "/srv/digipaddock-agents/board"
+    ],
+    "allow": [
+      "Bash(kd-boss-board assign *)",
+      "Bash(kd-boss-board assist-assign *)",
+      "Bash(kd-boss-board assist-list *)",
+      "Bash(kd-boss-board attention-ack *)",
+      "Bash(kd-boss-board attention-list *)",
+      "Bash(kd-boss-board close-cancelled *)",
+      "Bash(kd-boss-board close-duplicate *)",
+      "Bash(kd-boss-board comment *)",
+      "Bash(kd-boss-board council *)",
+      "Bash(kd-boss-board create-child *)",
+      "Bash(kd-boss-board create-inbox *)",
+      "Bash(kd-boss-board defer *)",
+      "Bash(kd-boss-board finish *)",
+      "Bash(kd-boss-board prepare-create *)",
+      "Bash(kd-boss-board propose-delegate *)",
+      "Bash(kd-boss-board propose-promote *)",
+      "Bash(kd-boss-board request-brief *)",
+      "Bash(kd-boss-board review *)",
+      "Bash(kd-boss-board revision *)",
+      "Bash(kd-boss-board set-dependency *)",
+      "Bash(kd-boss-board set-labels *)",
+      "Bash(kd-boss-board set-priority *)",
+      "Bash(kd-boss-board set-project *)",
+      "Bash(kd-boss-board specs *)",
+      "Bash(kd-boss-board stage-hold *)",
+      "Bash(kd-boss-board stage-pass *)",
+      "Bash(kd-boss-board stage-return *)",
+      "Bash(kd-boss-board unblock *)",
+      "Bash(kd-data *)",
+      "Bash(kd-host-read cat *)",
+      "Bash(kd-host-read grep *)",
+      "Bash(kd-host-read head *)",
+      "Bash(kd-host-read journalctl *)",
+      "Bash(kd-host-read ls *)",
+      "Bash(kd-host-read paths *)",
+      "Bash(kd-host-read stat *)",
+      "Bash(kd-host-read sys *)",
+      "Bash(kd-host-read systemctl *)",
+      "Bash(kd-host-read tail *)",
+      "Bash(kd-monitor-read incident *)",
+      "Bash(kd-monitor-read incidents *)",
+      "Bash(kd-monitor-read server *)",
+      "Bash(kd-monitor-read servers *)",
+      "Bash(kd-notes add *)",
+      "Bash(kd-nudge *)",
+      "Bash(kd-task brief-review *)",
+      "Bash(kd-task chat *)",
+      "Bash(kd-task claim *)",
+      "Bash(kd-task create *)",
+      "Bash(kd-task edit *)",
+      "Bash(kd-task file *)",
+      "Bash(kd-task handoff *)",
+      "Bash(kd-task list *)",
+      "Bash(kd-task message *)",
+      "Bash(kd-task projects *)",
+      "Bash(kd-task result *)",
+      "Bash(kd-task scope *)",
+      "Bash(kd-task search *)",
+      "Bash(kd-task thread *)",
+      "Bash(kd-task view *)",
+      "Bash(kd-task waits *)",
+      "Bash(kd-usage show *)",
+      "Bash(kd-worker cancel *)",
+      "Bash(kd-worker request *)",
+      "Bash(kd-worker result *)",
+      "Bash(kd-worker status *)",
+      "Edit(//srv/digipaddock-agents/boss/memory/chats/**)",
+      "Edit(//srv/digipaddock-agents/boss/memory/tasks/**)",
+      "Read(//opt/digipaddock/host/egress.json)",
+      "Read(//srv/digipaddock-agents/board/**)",
+      "Read(//srv/digipaddock-agents/boss/**)",
+      "mcp__hindsight__hindsight_capture_initiative",
+      "mcp__hindsight__hindsight_diagnose",
+      "mcp__hindsight__hindsight_ingest_document",
+      "mcp__hindsight__hindsight_list_knowledge_pages",
+      "mcp__hindsight__hindsight_read_knowledge_page",
+      "mcp__hindsight__hindsight_reflect",
+      "mcp__hindsight__hindsight_search_knowledge_pages",
+      "mcp__hindsight__hindsight_sync_status"
+    ],
+    "ask": [],
+    "defaultMode": "dontAsk",
+    "deny": [
+      "Bash(kd-admin-critical *)",
+      "Bash(kd-admin-propose *)",
+      "Bash(kd-admin-propose-action *)",
+      "Bash(kd-admin-run *)",
+      "Bash(kd-deps *)",
+      "Bash(kd-diag *)",
+      "Bash(kd-e2e *)",
+      "Bash(kd-factory *)",
+      "Bash(kd-forge *)",
+      "Bash(kd-merge *)",
+      "Bash(kd-mirror-fetch *)",
+      "Bash(kd-monitor *)",
+      "Bash(kd-pr *)",
+      "Bash(kd-repo *)",
+      "Bash(kd-work *)",
+      "Bash(rsync *)",
+      "Bash(scp *)",
+      "Bash(sftp *)",
+      "Bash(ssh *)",
+      "Bash(ssh-exec *)",
+      "Bash(ssh-ro *)",
+      "Bash(su *)",
+      "Bash(sudo *)",
+      "Edit(//home/agent-ro/**)",
+      "Edit(//home/digi-analyst/**)",
+      "Edit(//home/digi-boss/.bash_profile)",
+      "Edit(//home/digi-boss/.bashrc)",
+      "Edit(//home/digi-boss/.bun/**)",
+      "Edit(//home/digi-boss/.claude.json)",
+      "Edit(//home/digi-boss/.claude/**)",
+      "Edit(//home/digi-boss/.config/**)",
+      "Edit(//home/digi-boss/.hindsight/**)",
+      "Edit(//home/digi-boss/.local/**)",
+      "Edit(//home/digi-boss/.profile)",
+      "Edit(//home/digi-boss/.ssh/**)",
+      "Edit(//home/digi-cabinet/**)",
+      "Edit(//home/digi-ci/**)",
+      "Edit(//home/digi-data/**)",
+      "Edit(//home/digi-dev/**)",
+      "Edit(//home/digi-exec/**)",
+      "Edit(//home/digi-forge/**)",
+      "Edit(//home/digi-observe/**)",
+      "Edit(//home/digi-push/**)",
+      "Edit(//home/digi-repo/**)",
+      "Edit(//home/digi-review/**)",
+      "Edit(//home/digi-sysadmin/**)",
+      "Edit(//home/digi-transcribe/**)",
+      "Edit(//home/digi/**)",
+      "Edit(//opt/digipaddock/**)",
+      "Edit(//opt/digipaddock/host/egress.json)",
+      "Edit(//srv/digipaddock-agents/analyst/**)",
+      "Edit(//srv/digipaddock-agents/board/**)",
+      "Edit(//srv/digipaddock-agents/boss/.claude/**)",
+      "Edit(//srv/digipaddock-agents/boss/CLAUDE.md)",
+      "Edit(//srv/digipaddock-agents/boss/memory/legacy/**)",
+      "Edit(//srv/digipaddock-agents/boss/memory/notes.md)",
+      "Edit(//srv/digipaddock-agents/boss/playbooks/**)",
+      "Edit(//srv/digipaddock-agents/boss/work/**/.claude/**)",
+      "Edit(//srv/digipaddock-agents/boss/work/**/.mcp.json)",
+      "Edit(//srv/digipaddock-agents/boss/work/.claude/**)",
+      "Edit(//srv/digipaddock-agents/boss/work/.mcp.json)",
+      "Edit(//srv/digipaddock-agents/boss/work/CLAUDE.local.md)",
+      "Edit(//srv/digipaddock-agents/boss/work/CLAUDE.md)",
+      "Edit(//srv/digipaddock-agents/dev/**)",
+      "Edit(//srv/digipaddock-agents/sysadmin/**)",
+      "Edit(//srv/example-docs/**)",
+      "Edit(//var/lib/digipaddock/**)",
+      "Monitor",
+      "Read(//**/.git-credentials)",
+      "Read(//etc/digi-exec/**)",
+      "Read(//etc/digipaddock/cabinet.env)",
+      "Read(//etc/digipaddock/claude.env)",
+      "Read(//etc/digipaddock/forge/**)",
+      "Read(//etc/digipaddock/llm/**)",
+      "Read(//etc/digipaddock/pult.env)",
+      "Read(//etc/digipaddock/push.env)",
+      "Read(//etc/digipaddock/review/**)",
+      "Read(//etc/hindsight/**)",
+      "Read(//home/agent-ro/**)",
+      "Read(//home/digi-analyst/**)",
+      "Read(//home/digi-boss/.claude/.credentials.json)",
+      "Read(//home/digi-boss/.hindsight/**)",
+      "Read(//home/digi-boss/.ssh/**)",
+      "Read(//home/digi-cabinet/**)",
+      "Read(//home/digi-ci/**)",
+      "Read(//home/digi-data/**)",
+      "Read(//home/digi-dev/**)",
+      "Read(//home/digi-exec/**)",
+      "Read(//home/digi-forge/**)",
+      "Read(//home/digi-observe/**)",
+      "Read(//home/digi-push/**)",
+      "Read(//home/digi-repo/**)",
+      "Read(//home/digi-review/**)",
+      "Read(//home/digi-sysadmin/**)",
+      "Read(//home/digi-transcribe/**)",
+      "Read(//home/digi/**)",
+      "Read(//opt/**/.git/config)",
+      "Read(//opt/**/vpn/*.conf)",
+      "Read(//srv/digipaddock-agents/analyst/**)",
+      "Read(//srv/digipaddock-agents/dev/**)",
+      "Read(//srv/digipaddock-agents/sysadmin/**)",
+      "Read(//var/lib/digipaddock/**)",
+      "Read(//var/www/**/.env)",
+      "Read(//var/www/**/.env.*)",
+      "Read(//var/www/**/.git/config)",
+      "Read(//var/www/**/app_keys.json)",
+      "Read(//var/www/**/app_tokens.json)",
+      "Read(//var/www/**/config.ini)",
+      "Read(//var/www/**/config.ini*)",
+      "Read(//var/www/**/data/keys/**)",
+      "Skill(hindsight-coding-agent)",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "disableAutoMode": "disable",
+    "disableBypassPermissionsMode": "disable"
+  }
+}
+--- end
+--- /srv/digipaddock-agents/boss/.claude/launch-settings.json (root:root 0644)
+{
+  "sandbox": {
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": false,
+    "credentials": {
+      "envVars": [
+        {
+          "mode": "deny",
+          "name": "CLAUDE_CODE_OAUTH_TOKEN"
+        },
+        {
+          "mode": "deny",
+          "name": "ANTHROPIC_AUTH_TOKEN"
+        },
+        {
+          "mode": "deny",
+          "name": "ANTHROPIC_API_KEY"
+        }
+      ]
+    },
+    "enableWeakerNestedSandbox": false,
+    "enableWeakerNetworkIsolation": false,
+    "enabled": true,
+    "excludedCommands": [],
+    "failIfUnavailable": true,
+    "filesystem": {
+      "allowRead": [
+        "/home/digi-boss/.claude/projects",
+        "/run/digipaddock/cap/boss",
+        "/var/lib/digipaddock/usage.jsonl"
+      ],
+      "denyRead": [
+        "/etc/digi-exec",
+        "/etc/digipaddock/cabinet.env",
+        "/etc/digipaddock/claude.env",
+        "/etc/digipaddock/forge",
+        "/etc/digipaddock/llm",
+        "/etc/digipaddock/pult.env",
+        "/etc/digipaddock/push.env",
+        "/etc/digipaddock/review",
+        "/etc/hindsight",
+        "/home/agent-ro",
+        "/home/digi",
+        "/home/digi-analyst",
+        "/home/digi-boss/.claude",
+        "/home/digi-boss/.hindsight",
+        "/home/digi-boss/.ssh",
+        "/home/digi-cabinet",
+        "/home/digi-ci",
+        "/home/digi-data",
+        "/home/digi-dev",
+        "/home/digi-exec",
+        "/home/digi-forge",
+        "/home/digi-observe",
+        "/home/digi-push",
+        "/home/digi-repo",
+        "/home/digi-review",
+        "/home/digi-sysadmin",
+        "/home/digi-transcribe",
+        "/run",
+        "/srv/digipaddock-agents/analyst",
+        "/srv/digipaddock-agents/dev",
+        "/srv/digipaddock-agents/sysadmin",
+        "/var/lib/digipaddock",
+        "/var/run"
+      ],
+      "denyWrite": [
+        "/home/digi-boss/.bash_profile",
+        "/home/digi-boss/.bashrc",
+        "/home/digi-boss/.bun",
+        "/home/digi-boss/.claude",
+        "/home/digi-boss/.claude.json",
+        "/home/digi-boss/.config",
+        "/home/digi-boss/.local",
+        "/home/digi-boss/.profile",
+        "/home/digi-boss/.ssh",
+        "/opt/digipaddock",
+        "/opt/digipaddock/host/egress.json",
+        "/run",
+        "/srv/digipaddock-agents/board",
+        "/srv/digipaddock-agents/boss/memory/legacy",
+        "/srv/digipaddock-agents/boss/memory/notes.md",
+        "/srv/digipaddock-agents/boss/work/CLAUDE.local.md",
+        "/srv/digipaddock-agents/boss/work/CLAUDE.md",
+        "/srv/example-docs",
+        "/var/lib/digipaddock",
+        "/var/run"
+      ]
+    },
+    "network": {
+      "allowAllUnixSockets": true,
+      "allowLocalBinding": false,
+      "allowUnixSockets": [],
+      "allowedDomains": [],
+      "strictAllowlist": true
+    }
+  }
+}
+--- end
+--- /etc/apparmor.d/bwrap (root:root 0644)
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+--- end
+owner steps after the install:
+  - if the host has no Claude token yet: claude setup-token, then kd-secret put claude-token (once for all agents; a login of digi-boss also works); the session host starts boss after session_host_setup.sh enable boss

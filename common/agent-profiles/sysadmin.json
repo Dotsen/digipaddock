@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "name": "sysadmin",
+  "defaults": {
+    "role": "System administrator: watches the servers through read-only commands and runs only owner-approved commands."
+  },
+  "capability_ceiling": ["board.read", "board.write", "diag.request", "docs.read", "host.read", "monitor.manage", "net.egress", "repo.read", "servers.execute", "servers.read"],
+  "sandbox_profiles": ["sysadmin-v1"]
+}

@@ -1,0 +1,9 @@
+/var/log/digipaddock-permission/permission.jsonl {
+	weekly
+	rotate 12
+	compress
+	missingok
+	notifempty
+	create 0600 @base@ @base@
+	su @base@ @base@
+}

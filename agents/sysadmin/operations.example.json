@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "critical_units": [
+    "*.example.com*",
+    "app-*"
+  ],
+  "verbs": [
+    "package.refresh",
+    "service.restart",
+    "service.start",
+    "service.reload",
+    "package.install",
+    "package.upgrade",
+    "cron.line",
+    "file.drop",
+    "gate.script",
+    "script",
+    "app.tool",
+    "app.flag"
+  ],
+  "servers": {
+    "example-stage": {
+      "packages": "apt",
+      "install": true,
+      "units": [
+        "nginx.service",
+        "app.example.test.service"
+      ]
+    },
+    "node-a": {
+      "packages": "apt",
+      "install": true,
+      "units": []
+    },
+    "node-b": {
+      "packages": "dnf",
+      "install": true,
+      "units": []
+    }
+  },
+  "apps": {
+    "app-staging": {
+      "server": "example-stage",
+      "user": "www-data",
+      "dir": "/var/www/app.example.test",
+      "python": "./venv/bin/python",
+      "tools": [
+        "tools/admin.py"
+      ],
+      "flags": {
+        "file": "config.ini",
+        "sections": [
+          "partner"
+        ]
+      },
+      "test": true,
+      "reload": [
+        "app.example.test.service"
+      ]
+    },
+    "shop-staging": {
+      "server": "example-stage",
+      "user": "www-data",
+      "dir": "/var/www/shop.example.test",
+      "php": "php",
+      "spark": [
+        "key:generate",
+        "migrate",
+        "migrate:status"
+      ],
+      "flags": {
+        "file": ".env",
+        "format": "env",
+        "keys": {
+          "CI_ENVIRONMENT": [
+            "development",
+            "production"
+          ]
+        }
+      }
+    }
+  }
+}

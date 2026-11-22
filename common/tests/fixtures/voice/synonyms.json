@@ -1,0 +1,23 @@
+{
+  "note": "Misheard forms of the cabinet's words for the speech recognition probe (KD-9075, owner's decision 21.10.2026): a transcript is corrected by them before scoring. Built from the probe of 21.10 (KD-9087) — scores on that same recording are optimistic; a new recording is the honest check. Some one-word forms (def, bk, воз, merge, по тест) are common words and may also rewrite ordinary speech.",
+  "synonyms": {
+    "example-prod": ["keychain pro", "example pro", "keychain prod", "kitchen prod"],
+    "example-backup": ["keychain bk", "example бк", "keychain бэкап", "keychain backup"],
+    "example": ["keychain", "kitchen"],
+    "kd-cabinet": ["keyh кабинет", "keychain com кабинет", "кх кабинет"],
+    "Сисадмин": ["тис админ", "тисадмин", "сис админ"],
+    "hindsight": ["insight", "hinsight", "хайндсайт"],
+    "digipaddock": ["herter", "хердер", "хердр"],
+    "testapi": ["тестапе", "тест api", "тест апи"],
+    "Мержи": ["merge", "мерджи"],
+    "Review": ["revue", "ревью"],
+    "git diff": ["gitdiv", "гид див", "гид def", "git div"],
+    "pytest": ["по тест", "пайтест"],
+    "dev": ["def", "дев"],
+    "Босс": ["воз"],
+    "nginx": ["энгингс", "энджинкс"],
+    "бэкап": ["bk", "бк"],
+    "миграцией": ["микрацией"],
+    "systemctl": ["систем ctl", "system ctl"]
+  }
+}

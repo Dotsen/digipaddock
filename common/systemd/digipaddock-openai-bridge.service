@@ -1,0 +1,31 @@
+[Unit]
+Description=DigiPaddock: OpenAI Responses transport for agent sessions
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+ExecStart=/var/lib/digipaddock/venv/cabinet/bin/python -I /opt/digipaddock/common/bin/kd-openai-bridge
+Restart=on-failure
+RestartSec=2
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+TemporaryFileSystem=/etc/digipaddock:ro
+BindReadOnlyPaths=/etc/digipaddock/llm
+InaccessiblePaths=-/run/digipaddock-cabinet -/run/digipaddock-cabinet-http -/run/digipaddock-session-host -/run/digipaddock-model-keys -/run/digipaddock-review -/run/digipaddock -/var/lib/digipaddock/cabinet -/srv/digipaddock-agents
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryMax=512M
+Environment=LANG=C.UTF-8 PATH=/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

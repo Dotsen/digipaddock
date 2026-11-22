@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "name": "docs.read",
+  "module": "docs",
+  "description": "Read the project documentation directly with the Read tool; world-readable files, no grant, never edited.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [
+    {"name": "project-docs", "access": "read-direct"}
+  ],
+  "wrappers": [],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": []
+  },
+  "lifecycle": {
+    "install": [],
+    "check": [],
+    "disable": []
+  }
+}

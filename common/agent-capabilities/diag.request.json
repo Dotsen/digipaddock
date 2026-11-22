@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "name": "diag.request",
+  "module": "diag",
+  "description": "Probe the platform services of the diagnostics catalog for the agent's own approved card through the base-user executor kd-diag: a typed health check per target, the result in the card's thread; no URL, command or header travels with the request (R31).",
+  "shell": "none",
+  "dependencies": ["board.read"],
+  "conflicts": [],
+  "resources": [
+    {"name": "diagnostics-catalog", "access": "via-wrapper"},
+    {"name": "board-tasks", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-diag",
+      "source": "common/bin/kd-diag",
+      "subcommands": ["check", "list"],
+      "approval": "allow",
+      "run_as": "@base@",
+      "executor": "common/bin/kd-diag"
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-diag"]
+  },
+  "lifecycle": {
+    "install": ["wrappers", "channels"],
+    "check": ["wrappers", "channels"],
+    "disable": ["channels"]
+  }
+}

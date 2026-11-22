@@ -1,0 +1,28 @@
+[Unit]
+Description=DigiPaddock: root provider-key writer with independent passkey verification
+Requires=digipaddock-model-keys.socket
+After=digipaddock-model-keys.socket
+
+[Service]
+User=root
+ExecStart=/var/lib/digipaddock/venv/cabinet/bin/python -I /opt/digipaddock/common/bin/kd-model-keys serve
+Restart=on-failure
+RestartSec=2
+UMask=0077
+LimitCORE=0
+Environment=LANG=C.UTF-8 PATH=/usr/bin:/bin
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/digipaddock
+ReadOnlyPaths=/etc/digipaddock/model-key-signers
+ReadWritePaths=-/run/digipaddock-cabinet
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+LockPersonality=yes
+MemoryMax=128M

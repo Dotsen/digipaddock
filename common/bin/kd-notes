@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""kd-notes add <text> — one entry into the agent's shared notes (``memory/notes.md``), appended under an exclusive
+lock: two sessions of the agent never lose each other's entry, and nothing rewrites the file. A session's
+own plan, progress, branch and next steps go to its own notes (``memory/tasks/<card>.md`` or
+``memory/chats/<thread>.md``, the session note names it), not here.
+
+It runs on the agent's own self channel, as the agent's user and outside its sandbox: the sandbox does not write the
+shared notes. The entry is one line, dated unless it starts with a date, at most 2000 characters.
+"""
+
+import os
+import pwd
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from pathlib import Path  # noqa: E402
+
+from kd import agents, launch, specializations, workspace  # noqa: E402
+
+USAGE = "usage: kd-notes add <text>"
+EXIT_REFUSED, EXIT_ERROR = 2, 1
+
+
+def folder_of_caller(
+    repo_root=specializations.REPO_ROOT, registry=agents.REGISTRY
+) -> str:
+    """The calling agent's folder, from its own user."""
+    user = pwd.getpwuid(os.geteuid()).pw_name
+    agent = agents.agent_of_user(user, registry)
+    if agent is None:
+        raise workspace.WorkspaceError(
+            f"user {user} is not the user of an agent on this host"
+        )
+    return os.path.join(launch.configured_agents_root(Path(repo_root)), agent)
+
+
+def main(argv, *, folder=None, out=sys.stdout, err=sys.stderr) -> int:
+    if len(argv) < 2 or argv[0] != "add":
+        err.write(USAGE + "\n")
+        return EXIT_REFUSED
+    try:
+        line = workspace.add_shared(folder or folder_of_caller(), " ".join(argv[1:]))
+    except workspace.WorkspaceError as exc:
+        err.write(f"kd-notes: {exc}\n")
+        return EXIT_REFUSED
+    except (OSError, launch.LaunchError) as exc:
+        err.write(f"kd-notes: {exc}\n")
+        return EXIT_ERROR
+    out.write(f"ok kd-notes {line}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

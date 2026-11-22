@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "code_trees": ["/opt/app"],
+  "socks_only_hosts": ["shop-a", "shop-b", "marketx"],
+  "dry_run_only": [{"program": "sync_manager", "subcommand": "sync"}]
+}

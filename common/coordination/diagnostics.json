@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "limits": {"timeout_s": 3, "per_card_hour": 10, "reuse_s": 600},
+  "targets": {
+    "hindsight-api": {"op": "http-health", "url": "http://127.0.0.1:9077/health", "area": "sysadmin"},
+    "hindsight-worker": {"op": "http-health", "url": "http://127.0.0.1:8889/health/live", "area": "sysadmin"},
+    "cabinet-push": {"op": "cabinet-query", "query": "push", "area": "dev"}
+  }
+}

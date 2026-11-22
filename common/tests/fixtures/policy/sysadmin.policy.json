@@ -1,0 +1,531 @@
+{
+  "acl": [
+    {
+      "access": "read",
+      "path": "/srv/digipaddock-agents/board",
+      "resource": "board-tasks",
+      "user": "digi-sysadmin"
+    },
+    {
+      "access": "read",
+      "path": "/var/log/digipaddock",
+      "resource": "exec-journal",
+      "user": "digi-sysadmin"
+    },
+    {
+      "access": "read",
+      "path": "/srv/digipaddock-repos",
+      "resource": "repo-checkouts",
+      "user": "digi-sysadmin"
+    }
+  ],
+  "agent": "sysadmin",
+  "bash_approval": "validator",
+  "capabilities": [
+    "board.read",
+    "board.write",
+    "diag.request",
+    "docs.read",
+    "host.read",
+    "monitor.manage",
+    "net.egress",
+    "repo.read",
+    "servers.execute",
+    "servers.read"
+  ],
+  "channels": [
+    {
+      "commands": {},
+      "key": "base",
+      "programs": [
+        "/opt/digipaddock/common/bin/kd-diag",
+        "/opt/digipaddock/common/bin/kd-permlog",
+        "/opt/digipaddock/common/bin/kd-task",
+        "/opt/digipaddock/common/bin/kd-work"
+      ],
+      "run_as": "digi"
+    },
+    {
+      "commands": {},
+      "key": "exec",
+      "programs": [
+        "/opt/digipaddock/agents/sysadmin/bin/admin_critical.py",
+        "/opt/digipaddock/agents/sysadmin/bin/admin_run.py",
+        "/opt/digipaddock/agents/sysadmin/bin/ssh_exec.py"
+      ],
+      "run_as": "digi-exec"
+    },
+    {
+      "commands": {},
+      "key": "host",
+      "programs": [
+        "/opt/digipaddock/common/bin/kd-host-read"
+      ],
+      "run_as": "digi-observe"
+    },
+    {
+      "commands": {
+        "kd-admin-critical": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/sysadmin/bin/kd-admin-critical",
+          "subcommands": []
+        },
+        "kd-admin-propose": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/sysadmin/bin/kd-admin-propose",
+          "subcommands": []
+        },
+        "kd-admin-propose-action": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/sysadmin/bin/kd-admin-propose-action",
+          "subcommands": []
+        },
+        "kd-admin-run": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/sysadmin/bin/kd-admin-run",
+          "subcommands": []
+        },
+        "kd-diag": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-diag",
+          "subcommands": [
+            "check",
+            "list"
+          ]
+        },
+        "kd-host-read": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-host-read",
+          "subcommands": [
+            "cat",
+            "grep",
+            "head",
+            "journalctl",
+            "ls",
+            "paths",
+            "stat",
+            "sys",
+            "systemctl",
+            "tail"
+          ]
+        },
+        "kd-monitor": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/sysadmin/bin/kd-monitor",
+          "subcommands": [
+            "--help",
+            "accept",
+            "ack",
+            "baseline",
+            "fixed",
+            "keys",
+            "list",
+            "revoke",
+            "tick --help",
+            "trust"
+          ]
+        },
+        "kd-notes": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-notes",
+          "subcommands": [
+            "add"
+          ]
+        },
+        "kd-task": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-task",
+          "subcommands": [
+            "brief-review",
+            "chat",
+            "claim",
+            "create",
+            "edit",
+            "file",
+            "handoff",
+            "list",
+            "message",
+            "projects",
+            "result",
+            "scope",
+            "search",
+            "thread",
+            "view",
+            "waits"
+          ]
+        },
+        "kd-work": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/common/bin/kd-work",
+          "subcommands": [
+            "answer",
+            "ask",
+            "assist",
+            "council",
+            "council-reply",
+            "directive",
+            "finish",
+            "progress",
+            "reply"
+          ]
+        },
+        "ssh-exec": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/sysadmin/bin/ssh-exec",
+          "subcommands": []
+        },
+        "ssh-ro": {
+          "args": [],
+          "env": {},
+          "program": "/opt/digipaddock/agents/sysadmin/bin/ssh_ro.py",
+          "subcommands": []
+        }
+      },
+      "key": "self",
+      "programs": [],
+      "run_as": "digi-sysadmin"
+    }
+  ],
+  "install_steps": {
+    "check": [
+      "host.read:executor-user",
+      "servers.execute:executor-user",
+      "host.read:setup",
+      "monitor.manage:setup",
+      "repo.read:setup",
+      "servers.execute:setup",
+      "servers.read:setup",
+      "board.read:wrappers",
+      "board.write:wrappers",
+      "diag.request:wrappers",
+      "host.read:wrappers",
+      "monitor.manage:wrappers",
+      "repo.read:wrappers",
+      "servers.execute:wrappers",
+      "servers.read:wrappers",
+      "board.read:read-grants",
+      "repo.read:read-grants",
+      "servers.execute:read-grants",
+      "board.read:channels",
+      "board.write:channels",
+      "diag.request:channels",
+      "host.read:channels",
+      "monitor.manage:channels",
+      "servers.execute:channels",
+      "servers.read:channels"
+    ],
+    "disable": [
+      "board.read:channels",
+      "board.write:channels",
+      "diag.request:channels",
+      "host.read:channels",
+      "monitor.manage:channels",
+      "servers.execute:channels",
+      "servers.read:channels",
+      "board.read:read-grants",
+      "repo.read:read-grants",
+      "servers.execute:read-grants",
+      "host.read:setup",
+      "monitor.manage:setup",
+      "repo.read:setup",
+      "servers.execute:setup",
+      "servers.read:setup"
+    ],
+    "install": [
+      "host.read:executor-user",
+      "servers.execute:executor-user",
+      "host.read:setup",
+      "monitor.manage:setup",
+      "repo.read:setup",
+      "servers.execute:setup",
+      "servers.read:setup",
+      "board.read:wrappers",
+      "board.write:wrappers",
+      "diag.request:wrappers",
+      "host.read:wrappers",
+      "monitor.manage:wrappers",
+      "repo.read:wrappers",
+      "servers.execute:wrappers",
+      "servers.read:wrappers",
+      "board.read:read-grants",
+      "repo.read:read-grants",
+      "servers.execute:read-grants",
+      "board.read:channels",
+      "board.write:channels",
+      "diag.request:channels",
+      "host.read:channels",
+      "monitor.manage:channels",
+      "servers.execute:channels",
+      "servers.read:channels"
+    ]
+  },
+  "launch_settings": {
+    "sandbox": {
+      "allowUnsandboxedCommands": false,
+      "autoAllowBashIfSandboxed": false,
+      "credentials": {
+        "envVars": [
+          {
+            "mode": "deny",
+            "name": "CLAUDE_CODE_OAUTH_TOKEN"
+          },
+          {
+            "mode": "deny",
+            "name": "ANTHROPIC_AUTH_TOKEN"
+          },
+          {
+            "mode": "deny",
+            "name": "ANTHROPIC_API_KEY"
+          }
+        ]
+      },
+      "enableWeakerNestedSandbox": false,
+      "enableWeakerNetworkIsolation": false,
+      "enabled": true,
+      "excludedCommands": [],
+      "failIfUnavailable": true,
+      "filesystem": {
+        "allowRead": [
+          "/home/digi-sysadmin/.claude/projects",
+          "/run/digipaddock/cap/sysadmin"
+        ],
+        "denyRead": [
+          "/etc/digi-exec",
+          "/etc/digipaddock/cabinet.env",
+          "/etc/digipaddock/claude.env",
+          "/etc/digipaddock/forge",
+          "/etc/digipaddock/llm",
+          "/etc/digipaddock/pult.env",
+          "/etc/digipaddock/push.env",
+          "/etc/digipaddock/review",
+          "/etc/hindsight",
+          "/home/agent-ro",
+          "/home/digi",
+          "/home/digi-cabinet",
+          "/home/digi-ci",
+          "/home/digi-data",
+          "/home/digi-dev",
+          "/home/digi-exec",
+          "/home/digi-forge",
+          "/home/digi-observe",
+          "/home/digi-push",
+          "/home/digi-repo",
+          "/home/digi-review",
+          "/home/digi-sysadmin/.claude",
+          "/home/digi-sysadmin/.hindsight",
+          "/home/digi-sysadmin/.ssh",
+          "/home/digi-transcribe",
+          "/run",
+          "/srv/digipaddock-agents/dev",
+          "/var/lib/digipaddock",
+          "/var/run"
+        ],
+        "denyWrite": [
+          "/home/digi-sysadmin/.bash_profile",
+          "/home/digi-sysadmin/.bashrc",
+          "/home/digi-sysadmin/.bun",
+          "/home/digi-sysadmin/.claude",
+          "/home/digi-sysadmin/.claude.json",
+          "/home/digi-sysadmin/.config",
+          "/home/digi-sysadmin/.local",
+          "/home/digi-sysadmin/.profile",
+          "/home/digi-sysadmin/.ssh",
+          "/opt/digipaddock",
+          "/opt/digipaddock/host/egress.json",
+          "/run",
+          "/srv/digipaddock-agents/board",
+          "/srv/digipaddock-agents/sysadmin/memory/legacy",
+          "/srv/digipaddock-agents/sysadmin/memory/notes.md",
+          "/srv/digipaddock-agents/sysadmin/work/CLAUDE.local.md",
+          "/srv/digipaddock-agents/sysadmin/work/CLAUDE.md",
+          "/srv/digipaddock-repos",
+          "/srv/example-docs",
+          "/var/lib/digipaddock",
+          "/var/log/digipaddock",
+          "/var/run"
+        ]
+      },
+      "network": {
+        "allowAllUnixSockets": true,
+        "allowLocalBinding": false,
+        "allowUnixSockets": [],
+        "allowedDomains": [],
+        "strictAllowlist": true
+      }
+    }
+  },
+  "model": null,
+  "profile": "sysadmin",
+  "sandbox_profile": "sysadmin-v1",
+  "schema_version": 7,
+  "settings": {
+    "hooks": {
+      "PreToolUse": [
+        {
+          "hooks": [
+            {
+              "command": "/opt/digipaddock/agents/sysadmin/bin/deny_guard.py || exit 2",
+              "timeout": 30,
+              "type": "command"
+            }
+          ],
+          "matcher": "Bash"
+        }
+      ]
+    },
+    "permissions": {
+      "additionalDirectories": [
+        "/srv/digipaddock-agents/board",
+        "/srv/digipaddock-repos",
+        "/srv/example-docs",
+        "/var/log/digipaddock"
+      ],
+      "allow": [
+        "Edit(//srv/digipaddock-agents/sysadmin/memory/chats/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/memory/tasks/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/work/**)",
+        "Glob",
+        "Grep",
+        "Read",
+        "Read(//opt/digipaddock/host/egress.json)",
+        "Read(//srv/digipaddock-agents/board/**)",
+        "Read(//srv/digipaddock-agents/sysadmin/**)",
+        "Read(//srv/digipaddock-repos/**)",
+        "Read(//srv/example-docs/**)",
+        "Read(//var/log/digipaddock/**)",
+        "mcp__hindsight__hindsight_capture_initiative",
+        "mcp__hindsight__hindsight_diagnose",
+        "mcp__hindsight__hindsight_ingest_document",
+        "mcp__hindsight__hindsight_list_knowledge_pages",
+        "mcp__hindsight__hindsight_read_knowledge_page",
+        "mcp__hindsight__hindsight_reflect",
+        "mcp__hindsight__hindsight_search_knowledge_pages",
+        "mcp__hindsight__hindsight_sync_status"
+      ],
+      "ask": [],
+      "defaultMode": "dontAsk",
+      "deny": [
+        "Bash(kd-boss-board *)",
+        "Bash(kd-data *)",
+        "Bash(kd-deps *)",
+        "Bash(kd-e2e *)",
+        "Bash(kd-factory *)",
+        "Bash(kd-forge *)",
+        "Bash(kd-merge *)",
+        "Bash(kd-mirror-fetch *)",
+        "Bash(kd-monitor-read *)",
+        "Bash(kd-nudge *)",
+        "Bash(kd-pr *)",
+        "Bash(kd-usage *)",
+        "Bash(kd-worker *)",
+        "Bash(rsync *)",
+        "Bash(scp *)",
+        "Bash(sftp *)",
+        "Bash(ssh *)",
+        "Bash(su *)",
+        "Bash(sudo *)",
+        "Edit(//home/agent-ro/**)",
+        "Edit(//home/digi-cabinet/**)",
+        "Edit(//home/digi-ci/**)",
+        "Edit(//home/digi-data/**)",
+        "Edit(//home/digi-dev/**)",
+        "Edit(//home/digi-exec/**)",
+        "Edit(//home/digi-forge/**)",
+        "Edit(//home/digi-observe/**)",
+        "Edit(//home/digi-push/**)",
+        "Edit(//home/digi-repo/**)",
+        "Edit(//home/digi-review/**)",
+        "Edit(//home/digi-sysadmin/.bash_profile)",
+        "Edit(//home/digi-sysadmin/.bashrc)",
+        "Edit(//home/digi-sysadmin/.bun/**)",
+        "Edit(//home/digi-sysadmin/.claude.json)",
+        "Edit(//home/digi-sysadmin/.claude/**)",
+        "Edit(//home/digi-sysadmin/.config/**)",
+        "Edit(//home/digi-sysadmin/.hindsight/**)",
+        "Edit(//home/digi-sysadmin/.local/**)",
+        "Edit(//home/digi-sysadmin/.profile)",
+        "Edit(//home/digi-sysadmin/.ssh/**)",
+        "Edit(//home/digi-transcribe/**)",
+        "Edit(//home/digi/**)",
+        "Edit(//opt/digipaddock/**)",
+        "Edit(//opt/digipaddock/host/egress.json)",
+        "Edit(//srv/digipaddock-agents/board/**)",
+        "Edit(//srv/digipaddock-agents/dev/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/.claude/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/CLAUDE.md)",
+        "Edit(//srv/digipaddock-agents/sysadmin/memory/legacy/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/memory/notes.md)",
+        "Edit(//srv/digipaddock-agents/sysadmin/playbooks/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/work/**/.claude/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/work/**/.mcp.json)",
+        "Edit(//srv/digipaddock-agents/sysadmin/work/.claude/**)",
+        "Edit(//srv/digipaddock-agents/sysadmin/work/.mcp.json)",
+        "Edit(//srv/digipaddock-agents/sysadmin/work/CLAUDE.local.md)",
+        "Edit(//srv/digipaddock-agents/sysadmin/work/CLAUDE.md)",
+        "Edit(//srv/digipaddock-repos/**)",
+        "Edit(//srv/example-docs/**)",
+        "Edit(//var/lib/digipaddock/**)",
+        "Edit(//var/log/digipaddock/**)",
+        "Monitor",
+        "Read(//**/.git-credentials)",
+        "Read(//etc/digi-exec/**)",
+        "Read(//etc/digipaddock/cabinet.env)",
+        "Read(//etc/digipaddock/claude.env)",
+        "Read(//etc/digipaddock/forge/**)",
+        "Read(//etc/digipaddock/llm/**)",
+        "Read(//etc/digipaddock/pult.env)",
+        "Read(//etc/digipaddock/push.env)",
+        "Read(//etc/digipaddock/review/**)",
+        "Read(//etc/hindsight/**)",
+        "Read(//home/agent-ro/**)",
+        "Read(//home/digi-cabinet/**)",
+        "Read(//home/digi-ci/**)",
+        "Read(//home/digi-data/**)",
+        "Read(//home/digi-dev/**)",
+        "Read(//home/digi-exec/**)",
+        "Read(//home/digi-forge/**)",
+        "Read(//home/digi-observe/**)",
+        "Read(//home/digi-push/**)",
+        "Read(//home/digi-repo/**)",
+        "Read(//home/digi-review/**)",
+        "Read(//home/digi-sysadmin/.claude/.credentials.json)",
+        "Read(//home/digi-sysadmin/.hindsight/**)",
+        "Read(//home/digi-sysadmin/.ssh/**)",
+        "Read(//home/digi-transcribe/**)",
+        "Read(//home/digi/**)",
+        "Read(//opt/**/.git/config)",
+        "Read(//opt/**/vpn/*.conf)",
+        "Read(//srv/digipaddock-agents/dev/**)",
+        "Read(//var/lib/digipaddock/**)",
+        "Read(//var/www/**/.env)",
+        "Read(//var/www/**/.env.*)",
+        "Read(//var/www/**/.git/config)",
+        "Read(//var/www/**/app_keys.json)",
+        "Read(//var/www/**/app_tokens.json)",
+        "Read(//var/www/**/config.ini)",
+        "Read(//var/www/**/config.ini*)",
+        "Read(//var/www/**/data/keys/**)",
+        "Skill(hindsight-coding-agent)",
+        "WebFetch",
+        "WebSearch"
+      ],
+      "disableAutoMode": "disable",
+      "disableBypassPermissionsMode": "disable"
+    }
+  },
+  "thread_models": {
+    "monitor": "claude-sonnet-5-5"
+  },
+  "user": "digi-sysadmin"
+}

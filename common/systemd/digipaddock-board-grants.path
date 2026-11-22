@@ -1,0 +1,9 @@
+[Unit]
+Description=DigiPaddock: the owner's «Allow» or «Revoke» on the BOSS page → kd-board deliver
+
+[Path]
+PathChanged=/var/lib/digipaddock/boss-promotions/grants
+Unit=digipaddock-board-deliver.service
+
+[Install]
+WantedBy=multi-user.target

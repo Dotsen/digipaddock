@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "name": "sysadmin-v1",
+  "description": "Fail-closed target sandbox for the sysadmin: no network, Unix sockets only to its own channels, no local binding, writes only in its working directory; its server, monitor and board tools reach their channels, nothing is excluded from the sandbox.",
+  "settings": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": false,
+    "allowUnsandboxedCommands": false,
+    "enableWeakerNestedSandbox": false,
+    "enableWeakerNetworkIsolation": false,
+    "credentials": {"envVars": [{"name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny"}, {"name": "ANTHROPIC_AUTH_TOKEN", "mode": "deny"}, {"name": "ANTHROPIC_API_KEY", "mode": "deny"}]},
+    "network": {
+      "strictAllowlist": true,
+      "allowUnixSockets": [],
+      "allowAllUnixSockets": false,
+      "allowLocalBinding": false
+    }
+  },
+  "ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-admin-critical", "kd-admin-propose", "kd-admin-propose-action", "kd-admin-run", "kd-diag", "kd-host-read", "kd-monitor", "kd-notes", "kd-task", "kd-work", "ssh-exec", "ssh-ro"],
+    "writable": ["work"]
+  }
+}

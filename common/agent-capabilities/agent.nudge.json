@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "name": "agent.nudge",
+  "module": "coordinator",
+  "description": "Wake a registered agent with the fixed text for one card, read the agents' session status, recent lines and verified activity, send verified directives, through the root-owned kd-nudge that runs as the base user; no free text reaches another agent.",
+  "shell": "none",
+  "dependencies": [],
+  "conflicts": [],
+  "resources": [
+    {"name": "board-tasks", "access": "via-wrapper"},
+    {"name": "agent-registry", "access": "via-wrapper"},
+    {"name": "board-activity", "access": "via-wrapper"},
+    {"name": "board-directives", "access": "via-wrapper"}
+  ],
+  "wrappers": [
+    {
+      "command": "kd-nudge",
+      "source": "common/bin/kd-nudge",
+      "subcommands": [],
+      "approval": "allow",
+      "run_as": "@base@",
+      "executor": "common/bin/kd-nudge"
+    }
+  ],
+  "validator": null,
+  "setup": null,
+  "sandbox_ceiling": {
+    "network_domains": [],
+    "channel_commands": ["kd-nudge"]
+  },
+  "lifecycle": {
+    "install": ["wrappers", "channels"],
+    "check": ["wrappers", "channels"],
+    "disable": ["channels"]
+  }
+}
