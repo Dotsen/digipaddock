@@ -110,7 +110,7 @@ def test_the_first_publish_is_one_commit_with_the_forge_tree_and_none_of_its_his
     assert snap["author"] == AUTHOR and snap["committer"] == AUTHOR
     assert snap["message"] == f"Update to upstream {head[:12]}"
     assert not has(github, head) and not has(github, git("rev-parse", "HEAD~1", cwd=forge.work))
-    assert saved(tmp_path) == {"pushed": head, "blocked": "", "blocked_at": ""}
+    assert saved(tmp_path) == {"pushed": head, "blocked": "", "blocked_at": "", "tags": []}
 
 
 def test_the_next_publish_is_a_child_of_githubs_main(tmp_path, forge, github):
@@ -185,7 +185,7 @@ def test_a_block_is_alerted_again_after_a_day_and_a_new_main_is_scanned_again(tm
     assert "since 2026-10-25T09:00:00Z" in capsys.readouterr().err
     head = forge.commit({"README": "fixed\n"}, "KD-6: исправлено")
     assert go(tmp_path, forge, github) == 0
-    assert saved(tmp_path) == {"pushed": head, "blocked": "", "blocked_at": ""}
+    assert saved(tmp_path) == {"pushed": head, "blocked": "", "blocked_at": "", "tags": []}
 
 
 def test_github_moved_between_read_and_push_is_left_alone(tmp_path, forge, github, capsys):
@@ -228,6 +228,79 @@ def test_with_allowed_signers_only_signed_tags_go_out(tmp_path, forge, github, m
     monkeypatch.setattr(mirror, "_signed", lambda git_run, bare, ref, path: ref == "refs/tags/v1" and path == signers)
     assert go(tmp_path, forge, github, signers=signers) == 0
     assert git("--git-dir", str(github), "tag", "--list") == "v1"
+
+
+def test_a_tag_put_on_a_main_published_earlier_goes_out_on_the_next_run(tmp_path, forge, github, capsys):
+    assert go(tmp_path, forge, github) == 0
+    snap = published(github)[0]["sha"]
+    forge.tag("v1")
+    assert go(tmp_path, forge, github) == 0
+    assert len(published(github)) == 1  # no new snapshot: the tag goes on the one that is out
+    assert git("--git-dir", str(github), "rev-parse", "refs/tags/v1") == snap
+    assert saved(tmp_path)["tags"] == ["refs/tags/v1"]
+    assert "1 tags" in capsys.readouterr().out
+
+
+def test_a_late_tag_follows_the_signature_rule_and_is_decided_once(tmp_path, forge, github, monkeypatch, capsys):
+    signers = tmp_path / "allowed_signers"
+    signers.write_text("owner@example.test ssh-ed25519 AAAA\n")
+    assert go(tmp_path, forge, github, signers=signers) == 0
+    forge.tag("v1")
+    forge.tag("v2")
+    checked = []
+    monkeypatch.setattr(mirror, "_signed", lambda git_run, bare, ref, path: checked.append(ref) or ref.endswith("v1"))
+    assert go(tmp_path, forge, github, signers=signers) == 0
+    assert git("--git-dir", str(github), "tag", "--list") == "v1"
+    assert saved(tmp_path)["tags"] == ["refs/tags/v1", "refs/tags/v2"]
+    checked.clear()
+    assert go(tmp_path, forge, github, signers=signers) == 0
+    assert checked == []  # an unsigned tag is not checked again every five minutes
+
+
+def test_an_unchanged_main_without_a_new_tag_does_not_reach_github(tmp_path, forge, github):
+    forge.tag("v1")
+    assert go(tmp_path, forge, github) == 0
+    calls = []
+
+    def record(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.run(cmd, **kw)
+
+    scanned = []
+    assert go(tmp_path, forge, github, run_git=record, scanners=lambda tree, records: scanned.append(1) or []) == 0
+    assert scanned == [] and not any(step in cmd for cmd in calls for step in ("ls-remote", "push"))
+
+
+def test_a_late_tag_is_scanned_and_a_red_one_stays_on_the_forge_once(tmp_path, forge, github, capsys):
+    assert go(tmp_path, forge, github) == 0
+    forge.tag("v1")
+    seen = []
+
+    def red(tree, records):
+        seen.extend(line for _, _, line in records)
+        return ["<message>:4: private literal"]
+
+    assert go(tmp_path, forge, github, scanners=red) == 1
+    assert "refs/tags/v1" in seen  # the tag name is what this run would publish
+    assert git("--git-dir", str(github), "tag", "--list") == ""
+    assert "kd-mirror: privacy: <message>:4: private literal; теги не отправлены на GitHub" in capsys.readouterr().err
+    assert go(tmp_path, forge, github, scanners=red) == 0
+    assert saved(tmp_path)["tags"] == ["refs/tags/v1"]
+
+
+def test_a_late_tag_is_not_put_on_a_github_main_with_another_tree(tmp_path, forge, github, capsys):
+    assert go(tmp_path, forge, github) == 0
+    other = tmp_path / "other"
+    git("clone", "-q", str(github), str(other))
+    (other / "OTHER").write_text("x\n")
+    git("add", "-A", cwd=other)
+    git("commit", "-q", "-m", "someone else", cwd=other)
+    git("push", "-q", "origin", "main", cwd=other)
+    forge.tag("v1")
+    assert go(tmp_path, forge, github) == 1
+    assert git("--git-dir", str(github), "tag", "--list") == ""
+    assert "tag v1 not pushed — GitHub's main is not the tree of the published main" in capsys.readouterr().err
+    assert go(tmp_path, forge, github) == 0  # decided once: no alert every five minutes
 
 
 def test_the_disabled_flag_exits_zero_without_a_fetch(tmp_path, forge, github, capsys):

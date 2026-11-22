@@ -191,3 +191,6 @@ Claude Code (`common/install/versions.json`) is tried on the base user first, th
 A release tag `v…` is signed with the owner's SSH key; `kd-release` verifies it against `host/allowed_signers` of
 the overlay. On GitHub the same tag builds a draft release: the tree with the built cabinet web, `SHA256SUMS` and a
 keyless Sigstore signature (`.sig`, `.pem`) for whoever downloads the archive.
+
+The mirror takes a tag to GitHub with its next run when the tag is on the forge's current `main` — pushed together
+with that `main` or put on it after it went out. A tag on an older commit stays on the forge.

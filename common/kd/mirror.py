@@ -9,8 +9,10 @@ and the running release's closed scanner. A finding blocks that SHA — one red 
 once a day (kd-alert's hourly cooldown may have swallowed the first) until main moves; clean — the snapshot goes out
 as a fast-forward of GitHub's main (no force: a push to GitHub in between rejects it, and the next run builds on that).
 A tag on the published main goes out as a plain tag of its snapshot (no forge tag message); with the running tree's
-host/allowed_signers only a tag signed by one of them under its own name (kd-release's rule for a tag). A tag on an
-older commit stays on the forge. The mirror follows the forge's main, not the released revision: what reaches main
+host/allowed_signers only a tag signed by one of them under its own name (kd-release's rule for a tag). A tag put on
+that main later goes out on a later run, through both scanners, onto GitHub's main when that still has the tree of
+this main; state.json keeps the tags of the published main already decided, so each is decided once and a run with no
+new tag does not reach GitHub. A tag on an older commit stays on the forge. The mirror follows the forge's main, not the released revision: what reaches main
 has the owner's Approve, released or not yet.
 """
 
@@ -61,7 +63,10 @@ def _load(state_dir):
         raise MirrorError(f"state.json unreadable ({exc.__class__.__name__})") from None
     if not isinstance(data, dict):
         raise MirrorError("state.json is not an object")
-    return {key: str(data.get(key) or "") for key in ("pushed", "blocked", "blocked_at")}
+    state = {key: str(data.get(key) or "") for key in ("pushed", "blocked", "blocked_at")}
+    tags = data.get("tags")  # the tags of the published main already decided (out, unsigned or blocked)
+    state["tags"] = [str(tag) for tag in tags] if isinstance(tags, list) else []
+    return state
 
 
 def _save(state_dir, state):
@@ -133,8 +138,14 @@ def run(*, state_dir, mirror_dir, remote, forge_url, scanners, author, git=subpr
         else:
             _git(git, ["clone", "--mirror", "--quiet", forge_url, str(mirror_dir)], forge_env)
         head = _rev(git, bare, MAIN)
+        on_head = _on_head(git, bare, head)
         if head == state["pushed"]:
-            return 0
+            new = [ref for ref in on_head if ref not in state["tags"]]
+            if not new:
+                return 0
+            return _late_tags(git=git, bare=bare, head=head, new=new, state=state, state_dir=state_dir,
+                              scanners=scanners, author=author, remote=remote, github_env=github_env,
+                              signers=signers)
         if head == state["blocked"]:
             since, stamp = state["blocked_at"], now()
             if not _due(since, stamp):
@@ -145,17 +156,9 @@ def run(*, state_dir, mirror_dir, remote, forge_url, scanners, author, git=subpr
             print(f"kd-mirror: privacy: still blocked at {head[:12]} since {since or '?'}; main не отправлен на GitHub",
                   file=sys.stderr)
             return 1
-        refs = _tags(git, bare, head, signers)
-        message = f"Update to upstream {head[:12]}"
-        published = (f"commit snapshot\nauthor {author}\ncommitter {author}\n{message}\n"
-                     + "".join(f"\0tag {ref}\n" for ref in refs))
-        paths = _git(git, [*bare, "ls-tree", "-r", "--name-only", "-z", head], None) or ""
-        records = history(published, "", paths)
-        with tempfile.TemporaryDirectory(prefix="kd-mirror.") as tmp:
-            tree = Path(tmp) / "tree"
-            tree.mkdir()
-            _unpack(_git(git, [*bare, "archive", "--format=tar", head], None, binary=True), tree)
-            findings = scanners(tree, records)
+        refs = _tags(git, bare, head, signers, on_head)
+        message = _message(head)
+        findings = _scan(git, bare, head, author, refs, scanners)
         if findings:
             state.update(blocked=head, blocked_at=now())
             _save(state_dir, state)
@@ -176,7 +179,7 @@ def run(*, state_dir, mirror_dir, remote, forge_url, scanners, author, git=subpr
             # atomic: a rejected tag rejects main too; no force — GitHub's main moved meanwhile rejects the push
             _git(git, [*bare, "push", "--atomic", "--quiet", remote, f"{snapshot}:{MAIN}",
                        *(f"{snapshot}:{ref}" for ref in refs)], github_env, timeout=T_PUSH)
-        state.update(pushed=head, blocked="", blocked_at="")
+        state.update(pushed=head, blocked="", blocked_at="", tags=on_head)
         _save(state_dir, state)
     except MirrorError as exc:
         print(f"kd-mirror: {exc}", file=sys.stderr)
@@ -186,6 +189,52 @@ def run(*, state_dir, mirror_dir, remote, forge_url, scanners, author, git=subpr
     else:
         print(f"kd-mirror: main {head[:12]} → GitHub {snapshot[:12]}" + (f", {len(refs)} tags" if refs else ""))
     return 0
+
+
+def _message(head):
+    return f"Update to upstream {head[:12]}"
+
+
+def _scan(git, bare, head, author, refs, scanners):
+    """Both scanners over what a publish of ``head`` with ``refs`` shows: the tree, its paths, the snapshot's
+    message and identity and the tag names."""
+    published = (f"commit snapshot\nauthor {author}\ncommitter {author}\n{_message(head)}\n"
+                 + "".join(f"\0tag {ref}\n" for ref in refs))
+    paths = _git(git, [*bare, "ls-tree", "-r", "--name-only", "-z", head], None) or ""
+    records = history(published, "", paths)
+    with tempfile.TemporaryDirectory(prefix="kd-mirror.") as tmp:
+        tree = Path(tmp) / "tree"
+        tree.mkdir()
+        _unpack(_git(git, [*bare, "archive", "--format=tar", head], None, binary=True), tree)
+        return scanners(tree, records)
+
+
+def _late_tags(*, git, bare, head, new, state, state_dir, scanners, author, remote, github_env, signers):
+    """Tags put on a main already published. Each new one is decided once — out on GitHub's main while that has the
+    tree of this main, else left on the forge with the reason (exit 1, one alert); a step that cannot run (exit 2)
+    decides nothing, and the next run tries again."""
+    refs = _outgoing(git, bare, new, signers)
+    code, base = 0, ""
+    if refs:
+        findings = _scan(git, bare, head, author, refs, scanners)
+        if findings:
+            print(f"kd-mirror: privacy: {findings[0]}; теги не отправлены на GitHub", file=sys.stderr)
+            code, refs = 1, []
+        else:
+            base = _github_main(git, bare, remote, github_env)
+            if base and _rev(git, bare, base + "^{tree}") == _rev(git, bare, head + "^{tree}"):
+                _git(git, [*bare, "push", "--atomic", "--quiet", remote, *(f"{base}:{ref}" for ref in refs)],
+                     github_env, timeout=T_PUSH)
+            else:
+                for ref in refs:
+                    print(f"kd-mirror: tag {ref[len('refs/tags/'):][:80]} not pushed — GitHub's main is not the tree "
+                          "of the published main", file=sys.stderr)
+                code, refs = 1, []
+    state.update(tags=sorted(set(state["tags"]) | set(new)))
+    _save(state_dir, state)
+    if refs:
+        print(f"kd-mirror: main {head[:12]} → GitHub {base[:12]}, {len(refs)} tags")
+    return code
 
 
 def _identity(author):
@@ -210,21 +259,29 @@ def _github_main(git, bare, remote, env):
     return _rev(git, bare, GITHUB_MAIN)
 
 
-def _tags(git, bare, head, signers):
+def _on_head(git, bare, head):
+    """The tags pointing at ``head``, sorted."""
+    return sorted(set((_git(git, [*bare, "for-each-ref", f"--points-at={head}", "--format=%(refname)", "refs/tags"],
+                            None) or "").split()))
+
+
+def _tags(git, bare, head, signers, on_head):
     """The tags on ``head`` that go out (signed ones only when ``signers`` is a file); a tag on an older commit of
     main stays on the forge and is said so."""
-    on_head = set((_git(git, [*bare, "for-each-ref", f"--points-at={head}", "--format=%(refname)", "refs/tags"],
-                        None) or "").split())
     merged = (_git(git, [*bare, "for-each-ref", f"--merged={head}", "--format=%(refname)", "refs/tags"], None)
               or "").split()
-    refs = []
     for ref in merged:
         if ref not in on_head:
             print(f"kd-mirror: tag {ref[len('refs/tags/'):][:80]} not pushed — not on the main being published",
                   file=sys.stderr)
-        elif not (signers and Path(signers).is_file()) or _signed(git, bare, ref, signers):
-            refs.append(ref)
-    return refs
+    return _outgoing(git, bare, [ref for ref in merged if ref in on_head], signers)
+
+
+def _outgoing(git, bare, refs, signers):
+    """``refs`` that may go out: all of them, or with ``signers`` a file only the signed ones."""
+    if not (signers and Path(signers).is_file()):
+        return list(refs)
+    return [ref for ref in refs if _signed(git, bare, ref, signers)]
 
 
 def _signed(git, bare, ref, signers):
