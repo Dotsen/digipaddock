@@ -9,6 +9,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+node_modules/
 
 # Environment secrets; keep configuration examples available to Git.
 .env
