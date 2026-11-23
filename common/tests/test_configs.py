@@ -287,6 +287,8 @@ ROOT_UNITS = {  # units that run as root on purpose
     "digipaddock-repo-attach.service",  # add_repo.sh — runuser of dev, root's repos.json and projects.md
     "digipaddock-hindsight-status.service",  # reads separate users' installed clients and the Hindsight API key
     "digipaddock-mirror.service",  # root's forge read key and the GitHub push key
+    # the repo user's forge read key and the cabinet's card.create; its download and scans are child units of ci
+    "digipaddock-vulnscan.service",
 }
 
 

@@ -88,6 +88,31 @@ def test_install_ends_with_check_and_disable_takes_the_contours_out():
     assert _mode("disable").split() == ["disable_all"]
 
 
+def test_install_takes_the_pinned_osv_scanner_and_turns_the_daily_scan_on():
+    install = _function("install_all")
+    assert install.index("install_osv") < install.index("systemctl enable --now digipaddock-vulnscan.timer")
+    for line in ('install -d -o "$ci" -g "$ci" -m 0755 "$OSV_DIR"', 'install -d -o root -g root -m 0755 "$SCAN_WORK"',
+                 'install -d -o root -g root -m 0700 "$STATE_DIR"',
+                 'kd_install_rendered "$REPO/common/systemd/$unit" "$SYSTEMD/$unit" 0644',
+                 "systemctl start --no-block digipaddock-vulnscan.service"):
+        assert line in install, line
+    assert '\nVULNSCAN_UNITS="digipaddock-vulnscan.service digipaddock-vulnscan.timer"\n' in TEXT
+    for unit in ("digipaddock-vulnscan.service", "digipaddock-vulnscan.timer"):
+        assert (ROOT / "common" / "systemd" / unit).exists()
+    osv = _function("install_osv")
+    # the version and the sha256 of versions.json; a download that differs is never installed
+    assert 'version=$(catalog osv_scanner)' in osv and 'want=$(catalog "osv_scanner_sha256_$arch")' in osv
+    assert ('"https://github.com/google/osv-scanner/releases/download/v$version/osv-scanner_linux_$arch"' in osv
+            and "--proto '=https'" in osv)
+    assert osv.index('!= "$want" ]') < osv.index('install -o root -g root -m 0755 "$tmp" "$OSV_BIN"')
+    check = _function("check")
+    for needle in ('"$OSV_BIN: not osv-scanner $(catalog osv_scanner) of versions.json (sha256)"',
+                   '"$OSV_DIR: must be $ci:$ci 755"', '"$STATE_DIR: must be root:root 700"',
+                   '"digipaddock-vulnscan.timer is not enabled"'):
+        assert needle in check, needle
+    assert "no OSV database yet" in check and "warning" in check  # the first download may still run
+
+
 def test_the_factory_installs_and_checks_it():
     cat = factory_ops.load_catalog()
     assert set(cat.components["devcheck"]) == {"install", "check"}

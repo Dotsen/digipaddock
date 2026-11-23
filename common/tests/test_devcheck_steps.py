@@ -37,12 +37,15 @@ def test_unknown_project_or_profile_is_refused(argv, capsys):
     assert steps.main(argv, runner=Runner()) == 2
 
 
-def test_the_unit_runs_the_five_steps_in_order_and_stops_at_the_first_failure(capsys):
+def test_the_unit_runs_the_six_steps_in_order_and_stops_at_the_first_failure(capsys):
     runner = Runner()
     assert steps.main(["digipaddock", "unit", "/w/src", "digipaddock-deploy=/w/sets/digipaddock-deploy"], runner=runner) == 0
     names = [line[3:] for line in capsys.readouterr().out.splitlines() if line.startswith("== ")]
-    assert names[:5] == ["privacy", "history", "pytest", "web check", "web test"]
-    privacy, history, pytest_, check, test = runner.calls
+    assert names[:6] == ["privacy", "history", "pytest", "web check", "web test", "vulns"]
+    privacy, history, pytest_, check, test, vulns = runner.calls
+    # last: a red one leaves the tests' result in the output; the deployed scanner, against the runner's base
+    assert vulns["argv"][1:] == ["-I", str(PATH.parent / "vuln_scan.py"), "check", ".", "refs/kd/base", "--venv"]
+    assert vulns["argv"][0] == sys.executable and vulns["cwd"] == "/w/src"
     assert privacy["argv"][1:] == ["-I", str(PATH.parent / "privacy_scan.py"), "--config", "privacy-scan.json",
                                    "--tracked", "."]
     # what the PR adds to the target the runner put at refs/kd/base, the running release's closed list
@@ -73,7 +76,7 @@ def test_counts_are_summed_and_printed_last(capsys):
     last = capsys.readouterr().out.splitlines()[-1]
     assert last.startswith(steps.COUNTS)
     counts = json.loads(last[len(steps.COUNTS):])
-    assert counts["passed"] == 5 * 7 and counts["skipped"] == 5
+    assert counts["passed"] == 6 * 7 and counts["skipped"] == 6
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the unit's limit is a SIGTERM")

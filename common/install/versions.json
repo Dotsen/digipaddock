@@ -6,5 +6,8 @@
   "torch": "2.14.1",
   "postgresql": "18",
   "pgvector_min": "0.8.6",
-  "hindsight_plugin": "0.8.0"
+  "hindsight_plugin": "0.8.0",
+  "osv_scanner": "2.7.1",
+  "osv_scanner_sha256_amd64": "fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8",
+  "osv_scanner_sha256_arm64": "983d22fbad9724514e3fcc6acc83b5fa64c5ffa6b0d9f510028f22c1b223ff81"
 }

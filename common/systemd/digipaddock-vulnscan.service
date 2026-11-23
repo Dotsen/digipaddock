@@ -1,0 +1,14 @@
+[Unit]
+Description=DigiPaddock: the daily scan of the projects' locked dependencies for known vulnerabilities (OSV)
+OnFailure=digipaddock-alert@digipaddock-vulnscan.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# root: the orchestrator only — the download and the scans run in child units as the ci user (kd/vulnscan_daily.py);
+# root fetches the base branches with the repo user's read key and makes the cards through the cabinet's card.create
+UMask=0022
+Environment=LANG=C.UTF-8 PATH=/usr/bin:/bin
+ExecStart=/usr/bin/python3 -I /opt/digipaddock/common/bin/kd-vulnscan run
+TimeoutStartSec=3600

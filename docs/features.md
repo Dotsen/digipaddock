@@ -143,7 +143,11 @@ install scripts). After a merge the server steps of the rollout go to the sysadm
 (100 changed lines of code by default), they read the published head first: the developer answers what they find —
 or the rounds run out — and only then is the owner asked
 ([the council of models](cabinet.md#a-pull-request-under-its-council)). The required checks run on the factory, not in the
-developer's sandbox: a fresh checkout per head, no network, no secrets, statuses written on the head. The owner signs
+developer's sandbox: a fresh checkout per head, no network, no secrets, statuses written on the head. Among them, the
+locked dependencies are checked for known vulnerabilities against an offline copy of the OSV database: a pull
+request that brings a vulnerable version in is red, one already on the target branch is only a line of the output,
+and a daily scan of every project's base branch turns each new finding into one Inbox card
+([testing: known vulnerabilities](testing.md#known-vulnerabilities)). The owner signs
 the pull request in the cabinet (or approves in Forgejo); the code host merges only an approved head. A release
 switches to a new tree atomically, checks the platform's health and reports it in the card; a rollback is one
 command.

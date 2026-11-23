@@ -48,6 +48,13 @@ def pytest_unit(checkout, sets):
                            "faulthandler_timeout=300"], checkout, {"KD_HOST_JSON": "host/host.example.json"})
 
 
+def vulns(checkout, sets):
+    """the known vulnerabilities the PR brings into its lock files and the check's venv, against the target's commit
+    (vuln_scan.py: the offline OSV database, the repository's osv-scanner.toml exceptions)."""
+    return Step("vulns", [sys.executable, "-I", os.path.join(HERE, "vuln_scan.py"), "check", ".", BASE_REF, "--venv"],
+                checkout, {})
+
+
 def _web(checkout):
     return os.path.join(checkout, "common", "cabinet", "web")
 
@@ -67,7 +74,8 @@ def overlay_pytest(checkout, sets):
 
 
 # project -> profile -> steps; a step needs the set's components it names
-STEPS = {"digipaddock": {"unit": (privacy, history, pytest_unit, web_check, web_test)},
+# vulns last: a red one still leaves the tests' result in the output
+STEPS = {"digipaddock": {"unit": (privacy, history, pytest_unit, web_check, web_test, vulns)},
          "digipaddock-deploy": {"unit": (overlay_pytest,)}}
 NEEDS = {"digipaddock-deploy": ("digipaddock",)}
 # the prepared dependencies a project's steps run with, built from the locks of its code checkout (NEEDS[0] or its own)

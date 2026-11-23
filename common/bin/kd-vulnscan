@@ -1,0 +1,13 @@
+#!/usr/bin/python3 -I
+"""kd-vulnscan run — the daily scan of the projects' locked dependencies (root, digipaddock-vulnscan.timer);
+see kd/vulnscan_daily.py."""
+
+import os
+import sys
+
+COMMON = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, COMMON)
+
+from kd import vulnscan_daily  # noqa: E402
+
+sys.exit(vulnscan_daily.main())

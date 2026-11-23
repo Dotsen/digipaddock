@@ -1,0 +1,10 @@
+[Unit]
+Description=DigiPaddock: the daily scan of the projects' locked dependencies for known vulnerabilities (OSV)
+
+[Timer]
+OnCalendar=*-*-* 04:20:00 @host:timezone@
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

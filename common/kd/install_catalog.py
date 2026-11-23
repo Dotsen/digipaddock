@@ -1,7 +1,8 @@
 """The install catalogs: pinned versions and the secrets the owner puts on a host.
 
 common/install/versions.json pins what an install takes from outside the distribution (Claude Code, Node's major,
-Hindsight and its torch, PostgreSQL and pgvector, the Hindsight client plugin); a host is checked against it.
+Hindsight and its torch, PostgreSQL and pgvector, the Hindsight client plugin, osv-scanner and the sha256 of its
+release binary per architecture); a host is checked against it.
 common/install/secrets.json lists the files only the owner can fill (forge tokens, the optional Telegram copy of
 critical alerts): path, owner, mode, the installer that checks it, the roles or components that want it, the file's
 format and where its value comes from. Paths and owners carry naming tokens (@forge@, @host:<key>@) — secrets()
@@ -25,7 +26,7 @@ INSTALL = Path(__file__).resolve().parents[1] / "install"
 VERSIONS = INSTALL / "versions.json"
 SECRETS = INSTALL / "secrets.json"
 VERSION_KEYS = ("claude_code", "node_major", "hindsight_api", "torch", "postgresql", "pgvector_min",
-                "hindsight_plugin")
+                "hindsight_plugin", "osv_scanner", "osv_scanner_sha256_amd64", "osv_scanner_sha256_arm64")
 UNIT_RE = re.compile(r"[a-z0-9][a-z0-9@._-]*\.service")
 _SECRET_KEYS = {"name", "path", "owner", "group", "mode", "needed_by", "check", "wanted_by", "format", "how"}
 _OPTIONAL_KEYS = {"restart"}

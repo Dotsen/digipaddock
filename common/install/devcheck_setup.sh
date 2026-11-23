@@ -9,8 +9,13 @@
 #   token's directory /etc/digipaddock/devcheck (root 0700). The token itself (FORGE_TOKEN= of the ci account in
 #   Forgejo: commit statuses) is root's to put there, with put_secret.sh. Idempotent; needs the observe user
 #   (host.read of an agent, new_agent.sh). The runner (kd-operation-run dev.check) comes with the release tree.
+#   The known-vulnerability check (the step vulns, kd-vulnscan): osv-scanner of versions.json, its release binary
+#   checked against the pinned sha256, in $OSV_BIN; the OSV database's directory $OSV_DIR (the ci user's: its
+#   daily download), the scan's $SCAN_WORK and the seen findings' $STATE_DIR (root's); the units
+#   digipaddock-vulnscan.service/.timer, the timer on, and a first run started now — until its database is there,
+#   the vulns step of every PR is red.
 # check: the same state, changing nothing; the token missing is a warning (checks end environment_not_ready until
-#   it is there). Exit 1 with the reasons.
+#   it is there), and so is a database not downloaded yet. Exit 1 with the reasons.
 # disable: every check contour goes into maintenance (kd-cabinet contour maintenance): no new check starts, a running
 #   one ends. The user, the directories, the logs and the token stay; back — kd-cabinet contour release <name>.
 set -euo pipefail
@@ -20,6 +25,12 @@ LOGS=/var/log/digipaddock-devcheck
 TOKEN=/etc/digipaddock/devcheck/digipaddock-ci.env
 ETC=$(dirname "$TOKEN")
 HOME_DIR=$WORK/home
+OSV_BIN=/usr/local/lib/digipaddock/osv-scanner
+OSV_DIR=$WORK/osv
+SCAN_WORK=$WORK/vulnscan
+STATE_DIR=/var/lib/digipaddock/vulnscan
+SYSTEMD=/etc/systemd/system
+VULNSCAN_UNITS="digipaddock-vulnscan.service digipaddock-vulnscan.timer"
 USAGE="usage: devcheck_setup.sh install|check|disable"
 
 mode=${1:-}
@@ -36,6 +47,15 @@ ci=$(kd_user ci)
 observe=$(kd_user observe)
 
 owner_mode() { stat -c '%U:%G %a' "$1" 2>/dev/null || true; }
+catalog() { python3 -I "$REPO/common/kd/install_catalog.py" version "$1"; }
+osv_arch() {
+  case $(uname -m) in
+    x86_64) echo amd64 ;;
+    aarch64) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
+osv_sha() { sha256sum "$OSV_BIN" 2>/dev/null | cut -d' ' -f1 || true; }
 
 problems=()
 check() {
@@ -53,6 +73,22 @@ check() {
   # the dependency builds (npm ci, a venv per lock hash) run with these
   command -v npm >/dev/null 2>&1 || problems+=("no npm")
   /usr/bin/python3 -I -c 'import ensurepip, venv' 2>/dev/null || problems+=("no python3 -m venv")
+  arch=$(osv_arch) || arch=none
+  if [ "$arch" = none ]; then
+    problems+=("osv-scanner: no release binary for $(uname -m)")
+  else
+    [ "$(osv_sha)" = "$(catalog "osv_scanner_sha256_$arch")" ] ||
+      problems+=("$OSV_BIN: not osv-scanner $(catalog osv_scanner) of versions.json (sha256)")
+  fi
+  [ "$(owner_mode "$OSV_DIR")" = "$ci:$ci 755" ] || problems+=("$OSV_DIR: must be $ci:$ci 755")
+  [ "$(owner_mode "$SCAN_WORK")" = "root:root 755" ] || problems+=("$SCAN_WORK: must be root:root 755")
+  [ "$(owner_mode "$STATE_DIR")" = "root:root 700" ] || problems+=("$STATE_DIR: must be root:root 700")
+  for unit in $VULNSCAN_UNITS; do
+    [ -e "$SYSTEMD/$unit" ] || problems+=("no $SYSTEMD/$unit")
+  done
+  systemctl is-enabled --quiet digipaddock-vulnscan.timer 2>/dev/null || problems+=("digipaddock-vulnscan.timer is not enabled")
+  [ -e "$OSV_DIR/current" ] ||
+    echo "devcheck: warning: no OSV database yet — the vulns step is red until digipaddock-vulnscan.service downloads it" >&2
   if [ ! -e "$TOKEN" ]; then
     echo "devcheck: warning: no $TOKEN — checks end in environment_not_ready (put_secret.sh)" >&2
   else
@@ -75,6 +111,41 @@ install_all() {
   install -d -o root -g root -m 0755 "$WORK/cache"
   install -d -o root -g "$observe" -m 0750 "$LOGS"
   install -d -o root -g root -m 0700 "$ETC"
+  install_osv
+  install -d -o "$ci" -g "$ci" -m 0755 "$OSV_DIR"
+  install -d -o root -g root -m 0755 "$SCAN_WORK"
+  install -d -o root -g root -m 0700 "$STATE_DIR"
+  for unit in $VULNSCAN_UNITS; do
+    kd_install_rendered "$REPO/common/systemd/$unit" "$SYSTEMD/$unit" 0644
+  done
+  systemctl daemon-reload
+  systemctl enable --now digipaddock-vulnscan.timer
+  # the first database now, not at the timer's hour
+  systemctl start --no-block digipaddock-vulnscan.service
+}
+
+install_osv() {
+  # the pinned release binary, never one whose sha256 differs from versions.json
+  local arch version want tmp
+  arch=$(osv_arch) || { echo "osv-scanner: no release binary for $(uname -m)" >&2; exit 1; }
+  version=$(catalog osv_scanner)
+  want=$(catalog "osv_scanner_sha256_$arch")
+  [ "$(osv_sha)" != "$want" ] || return 0
+  tmp=$(mktemp)
+  if ! curl -fsSL --proto '=https' --retry 3 -o "$tmp" \
+      "https://github.com/google/osv-scanner/releases/download/v$version/osv-scanner_linux_$arch"; then
+    rm -f "$tmp"
+    echo "osv-scanner $version: download failed" >&2
+    exit 1
+  fi
+  if [ "$(sha256sum "$tmp" | cut -d' ' -f1)" != "$want" ]; then
+    rm -f "$tmp"
+    echo "osv-scanner $version: the download's sha256 is not the one of versions.json" >&2
+    exit 1
+  fi
+  install -d -o root -g root -m 0755 "$(dirname "$OSV_BIN")"
+  install -o root -g root -m 0755 "$tmp" "$OSV_BIN"
+  rm -f "$tmp"
 }
 
 disable_all() {

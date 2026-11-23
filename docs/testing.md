@@ -122,6 +122,49 @@ environments, source/environment-bound result reuse,
 scheduled full regression and timing-led fixture improvements. Integrate those with the planned `dev.check` rather than
 adding a second CI system. Keep full logs outside agent context and deliver a short completion result.
 
+## Known vulnerabilities
+
+The required `devcheck/unit` of this repository ends with the step `vulns` (`common/kd/vuln_scan.py check`, run by
+the deployed tree in the check's child unit, with no network). It reads the lock files of the pull request's head
+and of the target's commit the check is about (`refs/kd/base`) from git — every `package-lock.json`,
+`composer.lock`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Pipfile.lock`, `uv.lock`, and every
+`requirements*.txt` pinned with `--hash=` (a file of version ranges such as `requirements-dev.txt` is no lock) —
+plus the packages installed in the check's own venv, so the unpinned tools of `requirements-dev.txt` count by the
+versions the check runs with. `osv-scanner` (version and `sha256` in `common/install/versions.json`) scans both
+sides in one run against the offline OSV database (PyPI, npm, Packagist).
+
+- **Red** — a pair «vulnerability + package» the base did not have; an id shared with any alias counts as the same
+  vulnerability. A venv finding counts only for a package whose line the change touched in `requirements-dev.txt`,
+  `common/cabinet/requirements-build.txt` or `common/cabinet/requirements.txt`. The step prints each new finding last
+  (`NEW <id> <package> <version> (<ecosystem>) · fix <versions> · <file>`), so the check's notice in the card
+  carries the id, the package, the version and the fixed one.
+- **A line, not red** — a finding the base had already (`known …`): the daily scan below reports it.
+- **No database, or one older than 72 h** — red, with the database's date and age.
+
+Exceptions live in `osv-scanner.toml` at the repository's root, applied by the step itself (the scanner is given an
+empty configuration):
+
+```toml
+[[IgnoredVulns]]
+id = "GHSA-xxxx-xxxx-xxxx"
+ignoreUntil = 2027-01-31   # at most 90 days ahead; effectiveUntil is accepted too
+reason = "the parser is never given user input"
+```
+
+An entry without `reason` or a date, or with a date further than 90 days, makes the step red. Past its date the
+finding blocks again, whether the base had it or not. Only `[[IgnoredVulns]]` is applied.
+
+The daily service `digipaddock-vulnscan.timer` (04:20 in the host's time zone) runs `kd-vulnscan` as root, which
+only orchestrates: the database is downloaded in a child unit as the `ci` user with network into
+`/var/lib/digipaddock/devcheck/osv` (a failure is in the service's journal and fails the unit); root fetches the base
+branch of every project of `/etc/digipaddock/repos.json` with the repo user's read key and hands its lock files to a
+scan as the `ci` user with no network. A finding not seen before and not under a valid exception of that project's
+`osv-scanner.toml` becomes one Inbox card of the project (its route) through the cabinet's `card.create`; the seen
+findings are kept in `/var/lib/digipaddock/vulnscan/state.json`, so a run again makes no second card, and at most 20
+cards are made a run. While the database is older than 72 h, one card says it is not updated. `devcheck_setup.sh
+install` (the factory component `devcheck`) puts the pinned binary in place, the directories and the units, turns the
+timer on and starts the first download.
+
 ## GitHub CI
 
 The public mirror runs `.github/workflows/ci.yml` on every push and pull request. It is advisory: the required check

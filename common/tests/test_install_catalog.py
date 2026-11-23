@@ -22,6 +22,8 @@ def test_versions_has_exactly_the_pinned_keys(tmp_path):
     assert v["postgresql"] == "18"
     assert v["pgvector_min"] == "0.8.6"
     assert v["hindsight_plugin"] == "0.8.0"
+    assert v["osv_scanner"] == "2.7.1"
+    assert all(len(v[f"osv_scanner_sha256_{arch}"]) == 64 for arch in ("amd64", "arm64"))
     extra = dict(json.loads((REPO / "common" / "install" / "versions.json").read_text(encoding="utf-8")), docker="27")
     (tmp_path / "v.json").write_text(json.dumps(extra), encoding="utf-8")
     with pytest.raises(install_catalog.CatalogError):
