@@ -159,7 +159,7 @@ only orchestrates: the database is downloaded in a child unit as the `ci` user w
 `/var/lib/digipaddock/devcheck/osv` (a failure is in the service's journal and fails the unit); root fetches the base
 branch of every project of `/etc/digipaddock/repos.json` with the repo user's read key and hands its lock files to a
 scan as the `ci` user with no network. A finding not seen before and not under a valid exception of that project's
-`osv-scanner.toml` becomes one Inbox card of the project (its route) through the cabinet's `card.create`; the seen
+`osv-scanner.toml` becomes one Inbox card of the project for `@dev`, whatever the project's route, through the cabinet's `card.create`; the seen
 findings are kept in `/var/lib/digipaddock/vulnscan/state.json`, so a run again makes no second card, and at most 20
 cards are made a run. While the database is older than 72 h, one card says it is not updated. `devcheck_setup.sh
 install` (the factory component `devcheck`) puts the pinned binary in place, the directories and the units, turns the

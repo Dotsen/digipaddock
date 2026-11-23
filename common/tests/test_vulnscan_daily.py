@@ -210,11 +210,9 @@ def test_a_new_finding_is_one_card_in_the_projects_inbox_and_a_run_again_makes_n
     client = Client()
     assert env(client=client).run() == 0
     first, second = client.calls
-    assert (
-        first["op"] == "card.create"
-        and first["project"] == "digipaddock"
-        and "assignee" not in first
-    )  # its route
+    # the developer's in every project, not the project's route (a project of the owner's routes to him)
+    assert first["op"] == "card.create" and first["project"] == "digipaddock"
+    assert {c["assignee"] for c in client.calls} == {"@dev"}
     assert first["title"] == "Уязвимость CVE-2018-18074 в requests 2.19.0 (digipaddock)"
     for needle in (
         "`CVE-2018-18074` (также `GHSA-x84v-xcm2-53pg`)",

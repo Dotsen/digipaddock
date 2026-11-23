@@ -8,7 +8,7 @@ Root runs it (``digipaddock-vulnscan.service``) as the orchestrator of three ste
    user (as dev.check fetches), and its lock files (vuln_scan.is_lock) are scanned in a child unit as the ci user with
    no network (``vuln_scan.py scan``);
 3. every new finding — a project, a vulnerability and a package not seen before and not under a valid exception of the
-   project's osv-scanner.toml — becomes one Inbox card of the project (its route), through the cabinet's root
+   project's osv-scanner.toml — becomes one Inbox card of the project for ASSIGNEE, through the cabinet's root
    ``card.create``: the ci user never talks to the board. The seen findings are kept in STATE, so a run again makes no
    second card; a finding whose card could not be made is tried again the next day.
 
@@ -35,6 +35,7 @@ UPDATE_MAX_S = 1800
 SCAN_MAX_S = 900
 GIT_TIMEOUT = 600
 MAX_CARDS = 20
+ASSIGNEE = "@dev"  # the developer agent type: the findings are code work in any project
 TITLE_MAX = 100
 UNIT = "digipaddock-vulnscan-"  # + db | scan-<project>
 TEXTS = {
@@ -304,6 +305,8 @@ class Daily:
                 {
                     "op": "card.create",
                     "project": project,
+                    # the developer's, whoever the project's route names (a project of the owner's routes to him)
+                    "assignee": ASSIGNEE,
                     "title": title,
                     "description": body,
                 }
