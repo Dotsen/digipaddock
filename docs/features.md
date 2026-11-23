@@ -111,7 +111,7 @@ them — never taken from a chat message a model read as «yes».
 | A sysadmin plan: servers and typed operations | signed once per task, for a term |
 | A rollout after a merge: the project's own tools, switches, a reload | the sysadmin's plan, asked for by the developer — signed like any plan |
 | A plan made only of a test environment's own steps | approved by the cabinet's rule, no signature; the server checks each step against its own list |
-| A critical server command | signed once per exact command, valid 30 minutes |
+| A critical server command | signed once per exact command: the request waits 30 minutes for a signature, the signed command is valid 15 |
 | A pull request | signed on its exact head with a mode: approve, merge, merge and release |
 | A factory step: an agent's reinstall, a component install | signed |
 | Letting the coordinator split a goal | one click, revocable |
