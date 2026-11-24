@@ -76,8 +76,9 @@
       : (`decision.state.${d.state}` as Key),
   );
   const pr = $derived(d.type === "pr_approve");
-  // the mode a PR was signed with is in the signature's binding (what kd-review checked)
-  const signedMode = $derived<PrMode | undefined>(d.signature?.binding?.mode);
+  // the mode a PR was signed with is in the signature's binding (what kd-review checked); a signature carried to a
+  // new head keeps the mode of the head it was given on
+  const signedMode = $derived<PrMode | undefined>(d.signature?.binding?.mode ?? v.carried?.mode);
   const outcomeText = $derived(
     pr && d.state === "rejected"
       ? t("decision.pr.remarks_sent")
@@ -218,6 +219,9 @@
   {/if}
 
   {#if pr}
+    {#if v.carried}
+      <p class="hint">{t("decision.pr.carried", { from: v.carried.head.slice(0, 7), target: v.target ?? "" })}</p>
+    {/if}
     <PrBody id={d.id} card={d.card} view={v} commenting={open && mayDecide && mode === "reject"} bind:comments {onchanged} />
   {:else if d.type === "admin_plan"}
     {#if v.basis}<p class="body"><b>{t("decision.basis")}:</b> {v.basis}</p>{/if}

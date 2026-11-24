@@ -58,17 +58,18 @@ def signed(auth, *, mode="merge", payload=PAYLOAD, revision=4, user="owner", exp
 
 def forgejo(pr=None, reviews=(), posted=None, extra=None):
     routes = {("GET", f"/repos/{REPO}/pulls/12/reviews"): list(reviews), ("GET", f"/repos/{REPO}/pulls/12"): pr or PR,
-              ("POST", f"/repos/{REPO}/pulls/12/reviews"): posted or {"id": 91}}
+              ("POST", f"/repos/{REPO}/pulls/12/reviews"): posted or {"id": 91},
+              ("GET", f"/repos/{REPO}/pulls/12.diff"): "diff"}  # what kd-review records of the approved head
     routes.update(extra or {})
     return make_opener(routes)
 
 
-def reviewer(tmp_path, opener, repos=None, nonces=None, clock=NOW):
+def reviewer(tmp_path, opener, repos=None, nonces=None, clock=NOW, approvals=None):
     (tmp_path / "repos.json").write_text(json.dumps(repos or {
         "digipaddock": {"repo": REPO, "dir": "work/DigiPaddock", "release": "digipaddock"}}), encoding="utf-8")
     return review.Reviewer(api=forge.Api(TOKEN, opener=opener), repos_path=str(tmp_path / "repos.json"),
                            signers_dir=str(tmp_path / "signers"), origin=ORIGIN, clock=lambda: clock,
-                           nonces_path=nonces)
+                           nonces_path=nonces, approvals_path=approvals)
 
 
 def posts(opener):
@@ -400,3 +401,137 @@ def test_kd_signers_sync_registry_approves_with_the_new_key_and_refuses_the_remo
     assert reviewer(tmp_path, opener).handle(signed(new))["state"] == "approved"
     error = refused(reviewer(tmp_path, forgejo()), signed(auth, nonce="cd" * 16))
     assert "not one of owner's signers" in str(error)
+
+
+# --- carry: the signature of a head on that head brought up to date with the target (KD-9442) ------------------
+
+MAIN = "a" * 40
+H3, OWN, M1, M2, STRAY = "f" * 40, "9" * 40, "1" * 40, "2" * 40, "3" * 40
+DIFF = ("diff --git a/x.py b/x.py\nindex 1111111..2222222 100644\n--- a/x.py\n+++ b/x.py\n"
+        "@@ -10,3 +10,4 @@ def f():\n a\n b\n+c\n d\n")
+MOVED = DIFF.replace("1111111..2222222", "3333333..4444444").replace("@@ -10,3 +10,4 @@ def f():", "@@ -14,3 +14,4 @@")
+EVIL = MOVED.replace("+c\n", "+c\n+evil()\n")  # a line changed inside the merge
+
+
+class Live:
+    """Forgejo whose PR moves: ``head``, the PR's diff per head, the commits' parents, what the target holds."""
+
+    def __init__(self, head=HEAD, base="main"):
+        self.head, self.base, self.reviews, self.seen = head, base, [], []
+        self.diffs = {HEAD: DIFF}
+        self.parents = {}
+        self.in_target = {MAIN, M1, M2}
+        self.statuses = {}
+
+    def __call__(self, req, timeout=None):
+        method, url = req.get_method(), req.full_url
+        self.seen.append((method, url, req.data))
+        path = url[len(forge.api_url()):].split("?")[0]
+        pulls = f"/repos/{REPO}/pulls/12"
+        if method == "POST" and path == pulls + "/reviews":
+            body = json.loads(req.data)
+            self.reviews.append({"id": 90 + len(self.reviews), "user": {"login": "digipaddock-review"},
+                                 "state": "APPROVED", "commit_id": body["commit_id"], "body": body["body"]})
+            return Resp(json.dumps({"id": self.reviews[-1]["id"]}).encode())
+        if path == pulls + ".diff":
+            diff = self.diffs.get(self.head)
+            if diff is None:
+                raise urllib.error.HTTPError(url, 500, "x", {}, Resp(b"{}"))
+            return Resp(diff.encode())
+        if path == pulls + "/reviews":
+            return Resp(json.dumps(self.reviews if "page=1" in url else []).encode())
+        if path == pulls:
+            return Resp(json.dumps({**PR, "head": {"sha": self.head}, "base": {"ref": self.base}}).encode())
+        if path == f"/repos/{REPO}/branches/{self.base}":
+            return Resp(json.dumps({"commit": {"id": MAIN}}).encode())
+        if path.startswith(f"/repos/{REPO}/git/commits/"):
+            sha = path.rsplit("/", 1)[1]
+            return Resp(json.dumps({"sha": sha, "parents": [{"sha": p} for p in self.parents.get(sha, [])]}).encode())
+        if path.startswith(f"/repos/{REPO}/compare/{MAIN}..."):
+            return Resp(json.dumps({"total_commits": 0 if path.rsplit("...", 1)[1] in self.in_target else 3}).encode())
+        if path.startswith(f"/repos/{REPO}/commits/") and path.endswith("/status"):
+            found = [{"context": c, "status": s} for c, s in self.statuses.items()]
+            return Resp(json.dumps({"statuses": found}).encode())
+        raise AssertionError(f"no route {method} {url}")
+
+
+def carry(head=HEAD2, old=HEAD):
+    return {"op": "carry", "project": "digipaddock", "repo": REPO, "number": 12, "from": old, "head": head}
+
+
+def approved_then_updated(tmp_path, auth, live, mode="merge", **kw):
+    """The owner signed HEAD; then the branch got main merged in: HEAD2 = merge(HEAD, M1)."""
+    r = reviewer(tmp_path, live, **kw)
+    assert r.handle(signed(auth, mode=mode))["state"] == "approved"
+    live.head, live.diffs[HEAD2], live.parents[HEAD2] = HEAD2, MOVED, [HEAD, M1]
+    return r
+
+
+def test_a_clean_update_carries_the_signature_and_its_mode(tmp_path, auth):
+    live = Live()
+    r = approved_then_updated(tmp_path, auth, live, mode="release")
+    out = r.handle(carry())
+    assert out == {"review": 91, "head": HEAD2, "state": "carried", "from": HEAD, "mode": "release", "target": "main",
+                   "decision": DECISION}
+    body = live.reviews[-1]["body"]
+    assert live.reviews[-1]["commit_id"] == HEAD2
+    assert body == ("Одобрено владельцем в кабинете (одобрение, merge и выкатка), решение 11111111 (подпись "
+                    f"перенесена с {HEAD[:7]} после обновления от main), в ветку main")
+    # kd-merge reads it as the owner's release signature on exactly this head
+    assert forge.signed_mode(body) == "release" and forge._owner_approval(live.reviews[-1], HEAD2, "main", ("release",))
+    assert r.handle(carry())["state"] == "already" and len(live.reviews) == 2
+
+
+def test_a_carry_chains_and_survives_a_restart(tmp_path, auth):
+    """HEAD → HEAD2 → H3, each a merge of main; the record lives in approvals.json."""
+    store = tmp_path / "state" / "approvals.json"
+    live = Live()
+    approved_then_updated(tmp_path, auth, live, approvals=store)
+    assert reviewer(tmp_path, live, approvals=store).handle(carry())["state"] == "carried"
+    live.head, live.diffs[H3], live.parents[H3] = H3, MOVED, [HEAD2, M2]
+    assert reviewer(tmp_path, live, approvals=store).handle(carry(H3, HEAD2))["state"] == "carried"
+    assert "решение 11111111" in live.reviews[-1]["body"]
+
+
+@pytest.mark.parametrize("change, why", [
+    (lambda live: live.parents.update({HEAD2: [HEAD]}), "не merge"),                     # its own commit after HEAD
+    (lambda live: live.parents.update({HEAD2: [OWN, M1], OWN: [HEAD]}), "не merge"),     # own commit, then main
+    (lambda live: live.diffs.update({HEAD2: EVIL}), "own diff changed"),                 # a resolved conflict
+    (lambda live: live.parents.update({HEAD2: [HEAD, STRAY]}), "нет в main"),            # not from the target
+    (lambda live: live.diffs.update({HEAD2: MOVED + "+x\n" * (forge.LIMIT // 3)}), "cut"),  # a cut diff
+    (lambda live: live.diffs.pop(HEAD2), "cut or unreadable"),                            # an unreadable diff
+    (lambda live: setattr(live, "base", "dev"), "targets dev"),                           # retargeted
+    (lambda live: live.parents.update({HEAD2: [HEAD, M1, M2]}), "не merge"),             # an octopus
+])
+def test_anything_but_a_clean_update_needs_a_new_signature(tmp_path, auth, change, why):
+    live = Live()
+    r = approved_then_updated(tmp_path, auth, live, repos=TWO)
+    change(live)
+    error = refused(r, carry(), "stale" if live.base == "dev" else "refused")
+    assert why in str(error)
+    assert len(live.reviews) == 1  # only the owner's own Approve on HEAD
+
+
+def test_no_record_nothing_to_carry(tmp_path, auth):
+    live = Live(head=HEAD2)
+    live.parents[HEAD2] = [HEAD, M1]
+    assert "no Approve of #12" in str(refused(reviewer(tmp_path, live), carry()))
+    # a record older than its term, or one whose diff was not read at the approval
+    r = approved_then_updated(tmp_path, auth, Live())
+    r.clock = lambda: NOW + review.RECORD_SECONDS + 1
+    assert "no Approve of #12" in str(refused(r, carry()))
+    live = Live()
+    live.diffs.pop(HEAD)
+    r = approved_then_updated(tmp_path, auth, live)
+    assert "no diff to compare" in str(refused(r, carry()))
+
+
+def test_a_carry_needs_the_required_checks_green(tmp_path, auth):
+    repos_ = {"digipaddock": {"repo": REPO, "dir": "work/DigiPaddock", "checks": {"profiles": {"unit": {"required": True}}}}}
+    live = Live()
+    live.statuses = {"devcheck/unit": "success"}
+    r = approved_then_updated(tmp_path, auth, live, repos=repos_)
+    live.statuses = {"devcheck/unit": "pending"}
+    assert "devcheck/unit (pending)" in str(refused(r, carry()))
+    live.statuses = {"devcheck/unit": "success"}
+    assert r.handle(carry())["state"] == "carried"

@@ -548,6 +548,8 @@ export interface DecisionView {
   release?: boolean;
   /** Open pull requests of the chain plan this one belongs to (0 — no chain plan): several are released once. */
   plan_pulls?: number;
+  /** The owner's signature of another head carried here: that head was only brought up to date with `target`. */
+  carried?: { decision: string; head: string; mode: PrMode };
   state?: string;
   files?: PrFile[];
   cage?: string[];

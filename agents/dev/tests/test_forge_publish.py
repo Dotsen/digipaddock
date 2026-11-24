@@ -291,3 +291,24 @@ def test_the_limits_are_the_cabinets():
     from kd.cabinet import prs_api
     assert (forge.DIFF_MAX, forge.FILES_MAX, forge.TITLE_MAX, forge.URL_MAX, forge.PATH_MAX) == (
         prs_api.DIFF_MAX, prs_api.FILES_MAX, prs_api.TITLE_MAX, prs_api.URL_MAX, prs_api.PATH_MAX)
+
+
+def test_publish_says_whether_the_signature_carried():
+    """KD-9442: a carried merge signature lets the merge go on; approve-only and a refusal do not."""
+    row = {"number": 12, "head": HEAD}
+    lines = forge.carry_lines("digipaddock", row, {"carried": {"from": "e" * 40, "mode": "release", "target": "main"}})
+    assert "перенесена с eeeeeee на ccccccc" in lines[0] and "от main" in lines[0]
+    assert lines[1].endswith(f"digipaddock 12 {HEAD} --release")
+    lines = forge.carry_lines("digipaddock", row, {"carried": {"from": "e" * 40, "mode": "approve", "target": "main"}})
+    assert lines[1] == "merge — только по слову владельца"
+    lines = forge.carry_lines("digipaddock", row, {"uncarried": "the PR's own diff changed"})
+    assert lines == ["подпись не перенесена (the PR's own diff changed) — на ccccccc нужна новая подпись владельца"]
+    assert forge.carry_lines("digipaddock", row, {"decision": {}}) == []
+
+
+def test_patch_id_ignores_where_the_change_sits_but_not_what_it_is():
+    diff = "diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@ f\n a\n+b\n c\n"
+    moved = diff.replace("index 1..2", "index 7..8").replace("@@ -1,2 +1,3 @@ f", "@@ -40,2 +41,3 @@ g")
+    assert forge.patch_id(diff) == forge.patch_id(moved)
+    assert forge.patch_id(diff) != forge.patch_id(moved.replace("+b", "+B"))
+    assert forge.patch_id(diff) != forge.patch_id(moved.replace(" c\n", " C\n"))  # context counts too

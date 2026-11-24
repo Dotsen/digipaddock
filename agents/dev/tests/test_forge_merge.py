@@ -1020,6 +1020,20 @@ def test_merge_up_to_date_by_path_incl_rename():
     assert not _posted(op)
 
 
+MIGRATIONS = R._replace(require_up_to_date=False, up_to_date_paths=("data/db/migrations/*",))
+
+
+def test_a_behind_pr_merges_unless_it_touches_a_migration():
+    """KD-9442: the passport of api wants a current base only for its migrations."""
+    op = merge_opener([APPROVED], behind=2, files=[{"filename": "lib/api.py", "status": "modified"}])
+    assert _merge(MIGRATIONS, op)[2] == "merged"
+    op = merge_opener([APPROVED], behind=2, files=[{"filename": "lib/api.py", "status": "modified"},
+                                                   {"filename": "data/db/migrations/041_x.sql", "status": "added"}])
+    with pytest.raises(forge.ForgeError, match="base_moved"):
+        _merge(MIGRATIONS, op)
+    assert not _posted(op)
+
+
 def test_merge_without_up_to_date_asks_no_compare():
     op = merge_opener([APPROVED], behind=3, files=[{"filename": "a.py", "status": "modified"}])
     assert _merge(LAX, op)[2] == "merged"

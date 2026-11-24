@@ -42,7 +42,12 @@ class FakeReview:
             if self.during:
                 self.during()
             return {"review": 501, "head": request["payload"]["head"], "state": self.state}
+        if request["op"] == "carry":  # it found the new head a clean update of the signed one
+            return {"review": 503, "head": request["head"], "state": "carried", "from": request["from"],
+                    "mode": self.carried_mode, "target": "main", "decision": "1" * 32}
         return {"review": 502}
+
+    carried_mode = "merge"
 
 
 @pytest.fixture
@@ -336,3 +341,105 @@ def test_review_client_carries_the_end_of_a_pr_and_a_timeout(tmp_path):
     with pytest.raises(review_client.ReviewTimeout):
         _served(tmp_path, silent, {"op": "approve"}, timeout=0.2)
     assert issubclass(review_client.ReviewTimeout, review_client.ReviewUnavailable)
+
+
+# --- the owner's signature carried to a head brought up to date with the target (KD-9442) ----------------------
+
+def _local(w, pr):
+    """A publish over the cabinet's local socket, as the forge executor sends it."""
+    import asyncio
+
+    return asyncio.run(w.svc.call_local(w.env.principal("digi-forge"), {"op": "pr.publish", "pr": pr}))
+
+
+def _signed(w, mode="merge", **over):
+    w.login()
+    auth = _signer(w)
+    card, d = _decision(w, **over)
+    assert _sign(w, auth, d, mode).status_code == 200
+    return card, d
+
+
+def _pr_decisions(w, card, state=None):
+    return [d for d in w.env.call("root", {"op": "decision.list", "card": card.id})["decisions"]
+            if d["type"] == "pr_approve" and (state is None or d["state"] == state)]
+
+
+def test_a_clean_update_keeps_the_signature_without_a_council_or_a_new_decision(w, monkeypatch):
+    from kd.cabinet import council_rounds
+
+    card, d = _signed(w, mode="release")
+    w.review.carried_mode = "release"
+    monkeypatch.setattr(council_rounds, "on_pull_head", lambda *a, **k: pytest.fail("no council for a carry"))
+    out = _local(w, _pr(card.id, head=HEAD2))
+    sent = [c for c in w.review.calls if c["op"] == "carry"]
+    assert sent == [{"op": "carry", "project": "digipaddock", "repo": "owner/repo", "number": 12, "from": HEAD,
+                     "head": HEAD2}]
+    assert out["carried"] == {"from": HEAD, "mode": "release", "target": "main"} and "carry" not in out
+    new = out["decision"]
+    assert new["state"] == "approved" and new["payload"]["head"] == HEAD2 and new["decided_by"] == "user:owner"
+    assert new["answer"] == {"mode": "release", "review": 503, "carried_from": {"decision": d["id"], "head": HEAD}}
+    assert _pr_decisions(w, card, "open") == []
+    line =w.env.store._conn.execute(
+        "SELECT payload FROM messages WHERE json_extract(payload, '$.decision') = ?", (new["id"],)).fetchone()
+    assert json.loads(line["payload"])["key"] == "sys.decision.carried"
+    assert json.loads(line["payload"])["params"] == {"from": HEAD[:7], "target": "main", "mode": "release"}
+    # the card's PR block names the head the signature was given on, in the signed mode
+    view = w.client.get(f"/api/decisions/{new['id']}").json()["view"]
+    assert view["carried"] == {"decision": d["id"], "head": HEAD, "mode": "release"} and view["stale"] is False
+    # the same head again is the same approval: kd-review is not asked twice
+    again = _local(w, _pr(card.id, head=HEAD2))
+    assert again["decision"]["id"] == new["id"] and len([c for c in w.review.calls if c["op"] == "carry"]) == 1
+
+
+def test_the_carried_approval_wakes_nobody(w):
+    from kd import board
+
+    card, d = _signed(w)
+    before = w.env.store.last_seq()
+    _local(w, _pr(card.id, head=HEAD2))
+    events = [e for e in w.env.store.events_since(before, 1000) if e["kind"] == "decision.approved"]
+    assert len(events) == 1 and events[0]["payload"]["carried_from"] == HEAD and "mode" not in events[0]["payload"]
+    assert board._pr_change(events[0], events[0]["payload"], "user:owner") is None
+
+
+def test_a_refused_carry_asks_the_owner_to_sign_again(w):
+    card, d = _signed(w)
+    w.review.fail["carry"] = review_client.ReviewRefused("refused", f"the PR's own diff changed from {HEAD[:7]}")
+    out = _local(w, _pr(card.id, head=HEAD2))
+    assert "own diff changed" in out["uncarried"] and "carried" not in out
+    assert out["decision"]["state"] == "open" and out["decision"]["payload"]["head"] == HEAD2
+    assert [x["payload"]["head"] for x in _pr_decisions(w, card, "open")] == [HEAD2]
+    w.review.fail["carry"] = review_client.ReviewUnavailable("kd-review unavailable (OSError)")
+    out = _local(w, _pr(card.id, head="c" * 40))
+    assert "unavailable" in out["uncarried"] and out["decision"]["state"] == "open"
+
+
+@pytest.mark.parametrize("over", [{"release": False}, {"target": "dev"}, {"checks": ["unit"]}])
+def test_another_target_release_or_passport_is_not_carried(w, over):
+    card, d = _signed(w)
+    out = _local(w, _pr(card.id, head=HEAD2, **over))
+    assert not [c for c in w.review.calls if c["op"] == "carry"]
+    assert out["decision"]["state"] == "open" and "carried" not in out and "uncarried" not in out
+
+
+def test_only_an_approved_signature_carries(w):
+    w.login()
+    card, d = _decision(w)  # open, never signed
+    out = _local(w, _pr(card.id, head=HEAD2))
+    assert out["decision"]["state"] == "open" and not [c for c in w.review.calls if c["op"] == "carry"]
+    card, d = _signed(w, number=13)  # revoked by the owner since
+    w.env.store._conn.execute("UPDATE decisions SET state='revoked' WHERE id=?", (d["id"],))
+    out = _local(w, _pr(card.id, number=13, head=HEAD2))
+    assert out["decision"]["state"] == "open" and not [c for c in w.review.calls if c["op"] == "carry"]
+
+
+def test_only_the_cabinet_records_a_carry(w):
+    card, d = _signed(w)
+    held = {"payload": {**d["payload"], "head": HEAD2}, "requested_by": "agent:dev"}
+    for op in ("pr.carried", "pr.uncarried"):
+        with pytest.raises(Exception) as exc:
+            w.env.call("digi-forge", {"op": op, "repo": "owner/repo", "number": 12, "held": held,
+                                      "decision": d["id"], "review": {"id": 1, "head": HEAD2, "from": HEAD,
+                                                                      "mode": "merge"}})
+        assert getattr(exc.value, "kind", "") in ("refused", "forbidden"), exc.value

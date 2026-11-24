@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from kd.cabinet import api, model_keys_client, review_client
 
 CHALLENGE_TTL = 300
+CABINET = api.Principal("cabinet", -1, "cabinet")
+CARRY_TIMEOUT = 20.0  # kd-review's carry inside a publish: the forge executor waits for the answer at most 30 s
 USAGE = "/var/lib/digipaddock/usage.jsonl"
 CHALLENGES_MAX = 10000
 PAGE = 500  # journal events read at once after a write
@@ -78,6 +80,40 @@ class Service:
     async def call(self, principal, request) -> dict:
         """One operation of the board API (``api.dispatch``) under the lock; ``ApiError`` as it is."""
         return await self.locked(lambda: api.dispatch(self.ctx, principal, request))
+
+    async def call_local(self, principal, request) -> dict:
+        """An operation of the local socket. A PR's publish whose new head may take the owner's signature of another
+        head (``prs_api.carry_from``) asks kd-review before it answers — outside the lock, as the web does."""
+        answer = await self.call(principal, request)
+        carry = answer.get("carry") if isinstance(answer, dict) and request.get("op") == "pr.publish" else None
+        if not carry:
+            return answer
+        rest = {k: v for k, v in answer.items() if k != "carry"}
+        return {**rest, **await self._carry(answer["pr"], carry)}
+
+    async def _carry(self, row: dict, carry: dict) -> dict:
+        """kd-review carries the signature (``carried``: from which head, in which mode) and the head's decision is
+        recorded approved; else the head goes the usual way and ``uncarried`` says why."""
+        held = carry["held"]
+        named = {"repo": row["repo"], "number": row["number"], "held": held}
+        try:
+            review = await self.review.call(
+                {"op": "carry", "project": held["payload"]["project"], "repo": row["repo"],
+                 "number": row["number"], "from": carry["from"], "head": row["head"]}, timeout=CARRY_TIMEOUT)
+            done = await self.call(CABINET, {
+                "op": "pr.carried", **named, "decision": carry["decision"],
+                "review": {"id": review.get("review"), "head": review.get("head"), "from": review.get("from"),
+                           "mode": review.get("mode")}})
+            return {"decision": done["decision"], "council": None,
+                    "carried": {"from": carry["from"], "mode": review.get("mode"),
+                                "target": held["payload"].get("target", "")}}
+        except (review_client.ReviewRefused, review_client.ReviewUnavailable, api.ApiError) as exc:
+            why = str(exc)
+        try:
+            decided = await self.call(CABINET, {"op": "pr.uncarried", **named})
+        except api.ApiError as exc:
+            return {"decision": None, "council": None, "uncarried": f"{why}; {exc}"}
+        return {**decided, "uncarried": why}
 
     async def locked(self, fn: Callable[[], Any]):
         """Run ``fn`` (any write: sessions, codes, keys) under the lock, then queue pushes and tell the pages."""

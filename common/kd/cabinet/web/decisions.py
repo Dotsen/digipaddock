@@ -235,8 +235,11 @@ def _pr(service, decision) -> dict:
     absent on a card without critics of the code."""
     payload = decision["payload"]
     review = councils.pull_review(service.ctx.store, decision["card"], payload)
+    carried = (decision.get("answer") or {}).get("carried_from") if decision["state"] == "approved" else None
     return {
         **({"council": review} if review else {}),
+        # the owner's signature of another head carried here (KD-9442): the head it was given on, and its mode
+        **({"carried": {**carried, "mode": decision["answer"].get("mode", "")}} if carried else {}),
         "card": _card(service, decision),
         **prs_api.pull_view(service.ctx.store, payload),
         # a chain plan's open pull requests: with several, the release tick is one rollout after the last merge

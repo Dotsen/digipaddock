@@ -149,7 +149,7 @@ async def serve_all(
     if local_sock is not None or local_path:
 
         def cb(reader, writer):
-            return handle(reader, writer, call=svc.call, principal_of=principal_of)
+            return handle(reader, writer, call=svc.call_local, principal_of=principal_of)
 
         local = await _local(cb, local_sock, local_path)
         jobs.append(local.serve_forever())

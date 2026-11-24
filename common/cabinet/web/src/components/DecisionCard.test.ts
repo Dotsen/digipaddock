@@ -467,6 +467,20 @@ describe("DecisionCard: a pull request", () => {
     expect(document.body.textContent).not.toContain("выкатка одна");
   });
 
+  it("a signature carried to an updated head names the head it was given on and keeps its mode", () => {
+    session.signedIn(me({ "*": ["*"] }));
+    const carried = { decision: "d".repeat(32), head: "f".repeat(40), mode: "merge" as const };
+    render(DecisionCard, {
+      item: prItem({ state: "approved", signature: null, decided_by: "user:owner" }, { carried, target: "main" }),
+      highlight: true,
+    });
+    expect(document.body.textContent).toContain("Подпись перенесена с fffffff после обновления от main");
+    expect(document.body.textContent).toContain("Одобрено · merge");
+    cleanup();
+    render(DecisionCard, { item: prItem({}, {}) });
+    expect(document.body.textContent).not.toContain("Подпись перенесена");
+  });
+
   it("the button signs merge, or merge and release with the tick, with a passkey only", async () => {
     session.signedIn(me({ "*": ["*"] }));
     render(DecisionCard, { item: prItem() });

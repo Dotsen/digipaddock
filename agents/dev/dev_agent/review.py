@@ -13,8 +13,14 @@ key the cabinet's database gets no Approve out of it. What it cannot tell is whi
 in: the cabinet's service runs every passkey ceremony of the site, so a compromised service could present a PR's
 value as the challenge of a sign-in. A key registered here only for signing (not used to sign in) narrows that.
 
+A signature carries to a new head only by kd-review's own record (KD-9442): after each Approve it keeps what it
+approved — the decision, the mode, the target and the id of the PR's own diff at that head (``approvals.json``) — and
+``carry`` posts the same Approve on a head that is that head brought up to date with the target and nothing else
+(``forge.clean_update``) with the same own diff (``forge.patch_id``), the required checks green on it. It reads all of
+that from Forgejo itself: the cabinet only names the PR and the two heads.
+
 One JSON line in, one out, on ``/run/digipaddock-review/review.sock`` (only the cabinet's user may connect): ``keys``,
-``live``, ``approve`` and ``comment``; the answer is ``{"ok": true, ...}`` or ``{"ok": false, "error": kind,
+``live``, ``approve``, ``carry`` and ``comment``; the answer is ``{"ok": true, ...}`` or ``{"ok": false, "error": kind,
 "message": text}`` (a PR that ended adds ``"live": "merged" | "closed"``). A spent nonce is kept on disk for its term
 (``used-nonces.json``), so a restart approves nothing twice. Each outcome is one JSON line on stderr (the journal) with
 no token, assertion or text.
@@ -39,6 +45,11 @@ from dev_agent import forge, repos  # noqa: E402
 SOCKET = "/run/digipaddock-review/review.sock"
 SIGNERS = "/var/lib/digipaddock/signers"
 NONCES = "/var/lib/digipaddock/review/used-nonces.json"  # the unit's StateDirectory
+APPROVALS = "/var/lib/digipaddock/review/approvals.json"  # what kd-review approved: the base of a carry
+RECORD_SECONDS = 30 * 86400  # a record older than this carries nothing: the owner signs again
+RECORDS_MAX = 2000
+# the Approve body of a carried signature: SIGNED(mode) + decision[:8] + CARRIED + INTO(target)
+CARRIED = " (подпись перенесена с {} после обновления от {})"
 TOKEN_DIR = "/etc/digipaddock/review"
 CREDENTIAL_PREFIX_MIN = 8
 TERM_MAX = 600  # seconds ahead a signature's term may end: the cabinet gives five minutes
@@ -105,22 +116,69 @@ def _ours(review: dict, head: str, target: str, mode: str) -> bool:
             and review.get("dismissed") is not True and review.get("stale") is not True)
 
 
+def _key(repo: str, number: int, head: str) -> str:
+    return f"{repo}#{number}@{head}"
+
+
 class Reviewer:
     def __init__(self, *, api, repos_path=repos.REPOS, signers_dir=SIGNERS, origin: str, clock=time.time,
-                 nonces_path=None):
+                 nonces_path=None, approvals_path=None):
         self.api, self.repos_path, self.signers_dir, self.clock = api, repos_path, Path(signers_dir), clock
         self.rp = Rp(origin, config.check_origin(origin))
         self.nonces_path = Path(nonces_path) if nonces_path else None
         self.used = {}  # nonce → the end of its term: a signature approves once (on disk too, with nonces_path)
+        self.approvals_path = Path(approvals_path) if approvals_path else None
+        self.approved = {}  # "repo#n@head" → what was approved there (on disk too, with approvals_path)
 
     def handle(self, request) -> dict:
         if not isinstance(request, dict):
             raise Refused("invalid", "a request is a JSON object")
-        handler = {"keys": self.keys, "live": self.live, "approve": self.approve,
+        handler = {"keys": self.keys, "live": self.live, "approve": self.approve, "carry": self.carry,
                    "comment": self.comment}.get(request.get("op"))
         if handler is None:
-            raise Refused("invalid", "op must be keys, live, approve or comment")
+            raise Refused("invalid", "op must be keys, live, approve, carry or comment")
         return handler(request)
+
+    # --- what was approved --------------------------------------------------------------------------------------
+    def _records(self, now: float) -> dict:
+        """The approvals of the last RECORD_SECONDS; from the file when there is one — an unreadable one carries
+        nothing."""
+        if self.approvals_path is not None:
+            try:
+                data = json.loads(self.approvals_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                data = {}
+            except (OSError, ValueError) as exc:
+                raise Refused("unavailable", f"approvals: unreadable ({exc.__class__.__name__})") from None
+            if not isinstance(data, dict):
+                raise Refused("unavailable", "approvals: not a table")
+            self.approved = {k: v for k, v in data.items() if isinstance(v, dict)}
+        self.approved = {k: v for k, v in self.approved.items()
+                         if isinstance(v.get("at"), (int, float)) and v["at"] > now - RECORD_SECONDS}
+        return self.approved
+
+    def _remember(self, key: str, record: dict) -> None:
+        """Best effort: an approval stands without its record — only its carry is lost."""
+        try:
+            records = self._records(record["at"])
+            records[key] = record
+            self.approved = dict(sorted(records.items(), key=lambda kv: kv[1]["at"])[-RECORDS_MAX:])
+            if self.approvals_path is not None:
+                _write(self.approvals_path, self.approved, None)
+        except (Refused, OSError):
+            pass
+
+    def _patch(self, repo: repos.Repo, number: int, head: str) -> Optional[str]:
+        """The id of the PR's own diff at ``head`` (``forge.patch_id``); None when it was cut, unreadable or the PR
+        moved on while it was read."""
+        try:
+            text = self.api.get_text(f"/repos/{repo.repo}/pulls/{number}.diff", forge.LIMIT)
+            if len(text.encode("utf-8", "surrogatepass")) > forge.LIMIT or "�" in text:
+                return None
+            self._live(repo, number, head)
+        except (forge.ForgeError, Refused):
+            return None
+        return forge.patch_id(text)
 
     # --- spent nonces -------------------------------------------------------------------------------------------
     def _spent(self, now: float) -> dict:
@@ -218,15 +276,72 @@ class Reviewer:
         # a retry in its term; one request at a time (``serve``), so nothing spends it between the check and here
         self._spend(nonce, term)
         if found is not None and isinstance(found.get("id"), int):
-            return {"review": found["id"], "head": head, "state": "already"}
-        # the body names the signed branch: kd-merge counts this Approve only for a PR into it (a retarget keeps it)
-        posted = self.api.post(f"/repos/{repo}/pulls/{number}/reviews", {
-            "event": "APPROVED", "commit_id": head,
-            "body": forge.SIGNED.format(forge.MODE_TEXT[mode]) + decision[:8] + forge.INTO.format(target)})
+            answer = {"review": found["id"], "head": head, "state": "already"}
+        else:
+            # the body names the signed branch: kd-merge counts this Approve only for a PR into it (a retarget keeps
+            # it)
+            answer = {"review": self._post(repo, number, head, forge.SIGNED.format(forge.MODE_TEXT[mode])
+                                           + decision[:8] + forge.INTO.format(target)),
+                      "head": head, "state": "approved"}
+        self._remember(_key(repo, number, head), {
+            "decision": decision, "mode": mode, "target": target, "user": user, "at": now,
+            "patch": self._patch(passport, number, head)})
+        return answer
+
+    def _post(self, repo: str, number: int, head: str, body: str) -> int:
+        posted = self.api.post(f"/repos/{repo}/pulls/{number}/reviews",
+                               {"event": "APPROVED", "commit_id": head, "body": body})
         review_id = posted.get("id") if isinstance(posted, dict) else None
         if isinstance(review_id, bool) or not isinstance(review_id, int):
             raise Refused("unavailable", "Forgejo answered no review id")
-        return {"review": review_id, "head": head, "state": "approved"}
+        return review_id
+
+    # --- carry --------------------------------------------------------------------------------------------------
+    def carry(self, request) -> dict:
+        """The signature kd-review approved ``from`` with, on ``head`` — that head brought up to date with the
+        target by merges alone, the PR's own diff unchanged, the required checks green on it. Any doubt refuses:
+        the owner signs the new head as before."""
+        number, old, head = _number(request.get("number")), _head(request.get("from")), _head(request.get("head"))
+        if old == head:
+            raise Refused("invalid", "from and head are one commit")
+        passport = self._repo(request.get("project"), request.get("repo"))
+        repo, now = passport.repo, self.clock()
+        record = self._records(now).get(_key(repo, number, old))
+        if record is None:
+            raise Refused("refused", f"no Approve of #{number} on {old[:7]} recorded by kd-review in "
+                                     f"{RECORD_SECONDS // 86400} days")
+        target, mode = record.get("target"), record.get("mode")
+        if not repos.is_branch(target) or mode not in pr_signature.MODES or not isinstance(record.get("patch"), str):
+            raise Refused("refused", f"the record of {old[:7]} has no diff to compare (it was cut or unreadable)")
+        self._live(passport, number, head, target)
+        base = forge._str(forge._dict(forge._dict(self.api.get(f"/repos/{repo}/branches/{target}")).get("commit"))
+                          .get("id")).lower()
+        if not forge.SHA40_RE.fullmatch(base):
+            raise Refused("unavailable", f"branch {target}: Forgejo gave no head")
+        why = forge.clean_update(self.api, repo, old, head, target, base)
+        if why:
+            raise Refused("refused", f"{head[:7]} is not {old[:7]} updated from {target}: {why}")
+        patch = self._patch(passport, number, head)
+        if patch is None:
+            raise Refused("refused", f"the PR's diff on {head[:7]} is cut or unreadable")
+        if patch != record["patch"]:
+            raise Refused("refused", f"the PR's own diff changed from {old[:7]} to {head[:7]}")
+        missing = forge.missing_checks(forge.statuses(self.api, repo, head), repos.required(passport)) \
+            if repos.required(passport) else []
+        if missing:
+            raise Refused("refused", f"required checks are not green on {head[:7]}: {', '.join(missing)}")
+        decision = record["decision"]
+        found = next((r for r in forge._reviews(self.api, repo, number) if _ours(r, head, target, mode)), None)
+        if found is not None and isinstance(found.get("id"), int):
+            review_id, state = found["id"], "already"
+        else:
+            review_id, state = self._post(repo, number, head, forge.SIGNED.format(forge.MODE_TEXT[mode])
+                                          + decision[:8] + CARRIED.format(old[:7], target)
+                                          + forge.INTO.format(target)), "carried"
+        # the record keeps the time of the owner's own signature: a chain of updates never outlives it
+        self._remember(_key(repo, number, head), {**record, "from": old})
+        return {"review": review_id, "head": head, "state": state, "from": old, "mode": mode, "target": target,
+                "decision": decision}
 
     def _repo(self, project, name) -> repos.Repo:
         try:
@@ -479,7 +594,7 @@ def _serve(token_dir, signers_dir, settings) -> int:
     if sock is None:
         raise Refused("unavailable", "serve runs from digipaddock-review.socket")
     reviewer = Reviewer(api=forge.Api(forge.load_token(forge.review_login(), token_dir)), signers_dir=signers_dir,
-                        origin=_origin(settings), nonces_path=NONCES)
+                        origin=_origin(settings), nonces_path=NONCES, approvals_path=APPROVALS)
     serve(sock, reviewer, _service_ids("cabinet")[0])
     return 0
 

@@ -7,6 +7,10 @@ keeps the latest of each PR and one ``pr_approve`` decision per head: the same h
 a new head supersedes the open one (as a new push dismisses an approval in Forgejo), a PR merged or closed ends
 it. A head the card's council of the code reads (``council_rounds.on_pull_head``) has no decision until
 that council is over: holding the decision back is all a council does to a PR — it approves nothing.
+A new head of a PR the owner signed on another head first asks kd-review whether the signature carries
+(``carry_from``, then ``carry_client``): a head that is the signed one brought up to date with the target and nothing
+else gets its decision recorded approved with the same mode (``pr.carried``) — no council, no new signature; any other
+answer sends it the usual way (``pr.uncarried``).
 ``signer.keys`` gives root the signing passkeys a person has, for kd-review's own registry of signers.
 """
 
@@ -14,6 +18,7 @@ import base64
 import re
 from typing import Mapping, Optional
 
+from kd import pr_signature
 from kd.cabinet import api, store
 
 REPO = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")
@@ -247,13 +252,90 @@ def _publish(ctx, principal, request):
         if kept:  # this head is the owner's already: a council gathers from the next head on
             read = councils.for_head(ctx.store, card.id, pr["repo"], pr["number"], pr["head"])
             return {"pr": row, "decision": kept[-1], "council": _council_brief(read)}
-        found = council_rounds.on_pull_head(ctx, ctx.store.card(card.id), pr, held)
-        if found is not None and found["state"] in councils.OPEN:
-            # the critics read this head: its decision opens when they are done (``council_ended``)
+        signed = carry_from(mine, held["payload"])
+        if signed is not None:
+            # the owner signed another head of this PR: kd-review decides whether that signature carries here
+            # (``carry``, outside this write); until it answers the head has no decision
             _expire(ctx, [d for d in mine if d["state"] == "open"])
-            return {"pr": row, "decision": None, "council": _council_brief(found)}
-        opened = _open(ctx, card.id, decisions_of(ctx, card.id, pr["repo"], pr["number"]), held)
-    return {"pr": row, "decision": opened, "council": _council_brief(found)}
+            return {"pr": row, "decision": None, "council": None,
+                    "carry": {"decision": signed["id"], "from": signed["payload"]["head"], "held": held}}
+        decided = _decide(ctx, card.id, pr, held)
+    return {"pr": row, **decided}
+
+
+def _decide(ctx, card_id: str, pr: Mapping, held: Mapping) -> dict:
+    """A head no signature covers: the card's council of the code reads it, or its decision opens."""
+    from kd.cabinet import council_rounds, councils  # at call time: they load the jobs, which load the API
+
+    found = council_rounds.on_pull_head(ctx, ctx.store.card(card_id), pr, held)
+    mine = decisions_of(ctx, card_id, pr["repo"], pr["number"])
+    if found is not None and found["state"] in councils.OPEN:
+        # the critics read this head: its decision opens when they are done (``council_ended``)
+        _expire(ctx, [d for d in mine if d["state"] == "open"])
+        return {"decision": None, "council": _council_brief(found)}
+    return {"decision": _open(ctx, card_id, mine, held), "council": _council_brief(found)}
+
+
+# --- a signature carried to a head brought up to date with the target (KD-9442) -------------------------------
+def carry_from(mine: list, payload: Mapping) -> Optional[dict]:
+    """The newest approved decision of another head of this PR into the same target, with the same effect, checks
+    and release flag — the one signature that may carry to ``payload``'s head; None when there is none."""
+    signed = [d for d in mine if d["state"] == "approved" and d["payload"].get("head") != payload["head"]
+              and all(d["payload"].get(k) == payload[k] for k in ("repo", "number", "release", *PASSPORT))
+              and (d.get("answer") or {}).get("mode") in pr_signature.MODES]
+    return signed[-1] if signed else None
+
+
+def _held(request) -> tuple:
+    """(row, held) of a carry's answer: the PR open on the head the publish held back, on its card."""
+    repo, number, held = request.get("repo"), request.get("number"), request.get("held")
+    if (not isinstance(repo, str) or not REPO.fullmatch(repo) or isinstance(number, bool)
+            or not isinstance(number, int) or not isinstance(held, Mapping)
+            or not isinstance(held.get("payload"), Mapping) or not isinstance(held.get("requested_by"), str)):
+        raise _invalid("repo, number and held name the publish a carry answers")
+    return repo, number, dict(held)
+
+
+def _carried(ctx, principal, request):
+    """kd-review posted the owner's Approve on the new head (``carry``): the head's decision is recorded approved,
+    with the mode, the review and the decision it came from — no council, no new signature."""
+    repo, number, held = _held(request)
+    review, origin = request.get("review"), request.get("decision")
+    payload = held["payload"]
+    if (not isinstance(review, Mapping) or isinstance(review.get("id"), bool) or not isinstance(review.get("id"), int)
+            or review.get("head") != payload.get("head") or not isinstance(origin, str)):
+        raise _invalid("review {id, head, from, mode} and decision name the carry")
+    with ctx.store.transaction():
+        row = ctx.store.pr(repo, number, diff=False)
+        if row is None or row["state"] != "open" or row["head"] != payload["head"]:
+            raise api.ApiError("conflict", f"{repo}#{number} is not open on {str(payload.get('head'))[:7]} now")
+        mine = decisions_of(ctx, row["card"], repo, number)
+        signed = carry_from(mine, payload)
+        if (signed is None or signed["id"] != origin or signed["payload"]["head"] != review.get("from")
+                or signed["answer"]["mode"] != review.get("mode")):
+            raise api.ApiError("conflict", f"the signature of {repo}#{number} changed while kd-review carried it")
+        kept = _kept(mine, payload)
+        if kept:
+            return {"decision": kept[-1]}
+        decision = api._decision_call(lambda: api._ledger(ctx).carry(
+            TYPE, card=row["card"], payload=dict(payload), requested_by=held["requested_by"], now=ctx.now(),
+            origin=signed, review=review["id"]))
+    return {"decision": decision}
+
+
+def _uncarried(ctx, principal, request):
+    """kd-review did not carry the signature: the head goes the usual way — the council, or a decision to sign."""
+    repo, number, held = _held(request)
+    with ctx.store.transaction():
+        row = ctx.store.pr(repo, number, diff=False)
+        if row is None or row["state"] != "open" or row["head"] != held["payload"].get("head"):
+            raise api.ApiError("conflict", f"{repo}#{number} moved on: its next publish decides")
+        mine = decisions_of(ctx, row["card"], repo, number)
+        kept = _kept(mine, held["payload"])
+        if kept:
+            return {"decision": kept[-1], "council": None}
+        pr = {**row, **{k: held["payload"][k] for k in PASSPORT}}
+        return _decide(ctx, row["card"], pr, held)
 
 
 def _state(ctx, principal, request):
@@ -291,6 +373,9 @@ def _signer_keys(ctx, principal, request):
 OPS = {
     "pr.publish": (frozenset({"forge"}), _publish),
     "pr.state": (frozenset({"forge", "cabinet"}), _state),  # cabinet: kd-review saw it end in Forgejo
+    # the cabinet's own answer to a publish's ``carry``, after kd-review (``carry_client``)
+    "pr.carried": (frozenset({"cabinet"}), _carried),
+    "pr.uncarried": (frozenset({"cabinet"}), _uncarried),
     "signer.keys": (frozenset({"root"}), _signer_keys),
 }
 api.OPS.update(OPS)  # the board API serves them (api imports this module at its end)

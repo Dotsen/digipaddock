@@ -6,6 +6,7 @@ Exit codes: 0 success; 1 refused by the API or a check; 2 arguments; 3 merged, t
 not received in time."""
 import argparse
 import contextlib
+import hashlib
 import http.client
 import json
 import os
@@ -380,6 +381,43 @@ def contains(api: Api, repo: str, head: str, base_sha: str) -> bool:
     if isinstance(total, bool) or not isinstance(total, int):
         raise ForgeError(f"compare {head[:7]}...{base_sha[:7]}: Forgejo не дал total_commits")
     return total == 0
+
+
+CARRY_STEPS = 20  # merges from the target a signed head may be brought up to date by before its signature carries
+HUNK_RE = re.compile(r"@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@")
+
+
+def patch_id(diff: str) -> str:
+    """A PR's own change wherever it sits now (as ``git patch-id``): the diff's lines in order without the blob ids of
+    its ``index`` lines and the line numbers and section names of its hunk headers — what a merge from the target
+    changes in a PR's diff when it touches none of the PR's lines."""
+    digest = hashlib.sha256()
+    for line in diff.splitlines():
+        if line.startswith("index "):
+            continue
+        if HUNK_RE.match(line):
+            line = "@@"
+        digest.update(line.encode("utf-8", "surrogatepass") + b"\n")
+    return digest.hexdigest()
+
+
+def clean_update(api: Api, repo: str, old: str, new: str, target: str, target_head: str) -> str:
+    """``""`` when ``new`` is ``old`` brought up to date with the target and nothing else: from ``new`` down its first
+    parents to ``old``, every commit a merge of two parents whose second is in the target's head ``target_head``.
+    Otherwise why not. That a merge changed none of the PR's own lines is the diff's to show (``patch_id``)."""
+    sha = new
+    for _ in range(CARRY_STEPS):
+        if sha == old:
+            return ""
+        data = _dict(api.get(f"/repos/{repo}/git/commits/{sha}", {"stat": "false", "files": "false",
+                                                                   "verification": "false"}))
+        parents = [_str(_dict(p).get("sha")).lower() for p in _list(data.get("parents"))]
+        if len(parents) != 2 or not all(SHA40_RE.fullmatch(p) for p in parents):
+            return f"{sha[:7]} — не merge из {target}"
+        if not contains(api, repo, target_head, parents[1]):
+            return f"{sha[:7]} вносит {parents[1][:7]}, которого нет в {target}"
+        sha = parents[0]
+    return f"{old[:7]} не найден за {CARRY_STEPS} merge-коммитов от {new[:7]}"
 
 
 def _needs_current(api: Api, repo: repos.Repo, n: int) -> bool:
@@ -865,7 +903,8 @@ def _merge_checked(api_read: Api, api_merge: Api, passport: repos.Repo, n: int, 
             raise ForgeError(f"ветка {target}: Forgejo не дал её head")
         if not contains(api_read, repo, sha, base):
             raise ForgeError(f"base_moved: целевая ветка {target} ушла вперёд ({base[:7]} нет в PR) — перебазируй: "
-                             f"git fetch origin && git merge origin/{target}, затем kd-pr и kd-forge publish")
+                             f"git fetch origin && git merge origin/{target}, затем kd-pr и kd-forge publish "
+                             f"(merge без конфликта и своих правок переносит подпись владельца)")
     if not owner_approved(api_read, repo, n, sha, target, release):
         if release and owner_approved(api_read, repo, n, sha, target):
             raise _release_unsigned(sha)
@@ -1183,6 +1222,8 @@ def main(argv=None, *, opener=None, forge_dir=FORGE_DIR, repos_path=REPOS, journ
                           "последнего этапа", file=out)
                 for line in council_lines(row["card"], n, (answer or {}).get("council")):
                     print(line, file=out)
+                for line in carry_lines(a.project, row, answer or {}):
+                    print(line, file=out)
             else:
                 print(f"PR #{n}: {row['state']}", file=out)
         else:
@@ -1209,6 +1250,25 @@ def council_lines(card: str, n: int, council) -> list:
         said + "читают критики",
         f'kd-work finish {card} --outcome wait_dependency --council {council["id"]} --note "PR #{n}: ждёт совета"',
     ]
+
+
+def carry_lines(project: str, row: dict, answer: dict) -> list:
+    """What publish says when the owner's signature of another head was tried on this one (KD-9442): carried —
+    the head is signed in the same mode, and the merge it asked for may go on; not carried — why, and the owner
+    signs this head as usual."""
+    carried, why = answer.get("carried"), answer.get("uncarried")
+    if carried:
+        mode, head = carried.get("mode", ""), row["head"]
+        said = (f"подпись владельца перенесена с {str(carried.get('from', ''))[:7]} на {head[:7]}: ветка только "
+                f"обновлена от {carried.get('target', '')}, изменения PR те же; режим «{MODE_TEXT.get(mode, mode)}»")
+        if mode in MERGE_MODES:
+            return [said, f"merge по прежнему слову владельца: kd-merge {project} {row['number']} {head}"
+                          + (" --release" if mode == "release" else "")]
+        return [said, "merge — только по слову владельца"]
+    if why:
+        return [f"подпись не перенесена ({_safe(str(why))[:WHY_MAX]}) — на {row['head'][:7]} нужна новая подпись "
+                "владельца"]
+    return []
 
 
 def _merge_cmd(a, repo, n, *, opener, forge_dir, journal_path, release_dir, result_dir, notify, clock, sleep, out, err,

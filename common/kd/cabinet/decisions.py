@@ -329,6 +329,42 @@ class Decisions:
             )
         return self.get(decision_id)
 
+    def carry(self, type, *, card, payload, requested_by, now, origin: Mapping, review: int) -> dict:
+        """The owner's approval of ``origin`` carried to a new head (KD-9442): written approved, as the person who
+        signed ``origin`` with the mode he chose, kd-review's ``review`` on the new head its grant. One ``decision``
+        line in the thread (``sys.decision.carried``: from which head, after an update from which branch) and one
+        ``decision.approved`` event naming ``carried_from`` and no mode — nobody is woken: the agent that published
+        the head reads the carry in the publish's answer."""
+        payload = json.loads(canonical(payload))
+        source = origin["payload"]
+        answer = {**origin["answer"], "review": review,
+                  "carried_from": {"decision": origin["id"], "head": source["head"]}}
+        decision_id = secrets.token_hex(16)
+        params = {"from": source["head"][:7], "target": payload.get("target", ""), "mode": answer["mode"]}
+        with self.store._tx():
+            thread = self.store._thread_id(card)
+            seq = self.store._add_message(
+                thread, "system", "decision", "",
+                {"decision": decision_id, "type": type, "state": "approved", "key": "sys.decision.carried",
+                 "params": params},
+                "", via="decision", extra={"decision": decision_id},
+            )
+            self._conn.execute(
+                "INSERT INTO decisions (id, type, card, thread, message, payload, payload_sha, requested_by, "
+                "decide_permission, step_up, state, created, expires, decided_by, decided_at, grant_id, answer) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (decision_id, type, card, thread, seq, canonical(payload).decode("utf-8"), payload_sha(payload),
+                 requested_by, f"decide.{type}", int(STEP_UP[type]), "approved", now, "", origin["decided_by"], now,
+                 str(review), canonical(answer).decode("utf-8")),
+            )
+            self.store._event(
+                origin["decided_by"], "decision.approved", card,
+                {"decision": decision_id, "type": type, "requested_by": requested_by, "pr": payload.get("number"),
+                 "head": payload.get("head"), "carried_from": source["head"]},
+                thread,
+            )
+        return self.get(decision_id)
+
     def _transition(
         self, decision_id, *, to, actor, now, text="", event=None, key=None, expected=None, event_extra=None,
         attachments=(), message_extra=None, **columns
