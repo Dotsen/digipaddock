@@ -1,0 +1,10 @@
+# Known vulnerabilities taken out of the vulns step of dev.check and the daily scan (docs/testing.md,
+# "Known vulnerabilities"): each entry with a reason and a date at most 90 days ahead; past the date it blocks again.
+
+# CVE-2026-118773: glob keeps walking after its AbortSignal fired (fixed only in glob 14.0.2). The cabinet's
+# glob 11.1.0 comes from workbox-build (dev dependency, the service worker build), which calls globSync over the
+# build output with no signal option, so the abort path is never taken; no glob 14 fits workbox-build's range.
+[[IgnoredVulns]]
+id = "GHSA-3g3m-2fjr-6pw4"
+ignoreUntil = 2027-02-21
+reason = "glob 11.1.0 only via workbox-build at build time: globSync without an AbortSignal never reaches the abort path"

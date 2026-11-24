@@ -309,6 +309,12 @@ reason = "too far"
     ] == ["osv-scanner.toml: only [[IgnoredVulns]] is applied, not PackageOverrides"]
 
 
+def test_the_repositorys_own_exceptions_are_valid():
+    text = (PATH.parents[2] / vs.CONFIG).read_text(encoding="utf-8")
+    entries, problems = vs.load_ignores(text, datetime.date.today())
+    assert problems == [] and entries  # a broken entry would make every dev.check red
+
+
 def test_an_exception_takes_a_finding_out_until_its_date_then_it_blocks_base_or_not():
     entries = [{"id": "GHSA-1", "reason": "r", "until": TODAY}]
     head = [_f("CVE-1", ids=["CVE-1", "GHSA-1"])]
