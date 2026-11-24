@@ -24,7 +24,9 @@ from kd import install_spec  # noqa: E402
 from kd.cabinet import client as cabinet_client  # noqa: E402
 
 PROJECTS = TREE / "host" / "projects.json"
-LIMIT = 30  # runs read per project and tick: the table keeps the history, the journal pages through it
+LIMIT = 20  # runs read per environment and tick: the table keeps the history, the journal pages through it
+# a run carries its whole event payload (a push's commits): 20 of them pass forge.LIMIT on a busy repository
+RUNS_MAX = 8 * forge.LIMIT
 STATUSES = (
     "unknown",
     "waiting",
@@ -165,25 +167,28 @@ def run_of(item: dict, envs: Dict[str, Tuple[str, str]]) -> Optional[dict]:
 
 
 def read(api, source: dict) -> dict:
-    """The source with its runs, or with its ``error`` and no runs."""
+    """The source with its runs, or with its ``error`` and no runs. Each environment's workflow is read on its own
+    (``workflow_id``): a busy CI workflow of the repository never pushes a deploy's runs out of the page."""
     envs = {e["workflow"]: (e["env"], e["branch"]) for e in source["envs"]}
-    try:
-        data = api.get(f"/repos/{source['repo']}/actions/runs", {"limit": LIMIT})
-    except forge.ForgeError as exc:
-        return {
-            **source,
-            "runs": [],
-            "error": _clean(str(exc), ERROR_MAX) or "Forgejo: ошибка",
-        }
-    items = data.get("workflow_runs") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        return {**source, "runs": [], "error": "ответ Forgejo без workflow_runs"}
-    runs = [
-        r
-        for r in (run_of(i, envs) for i in items if isinstance(i, dict))
-        if r is not None
-    ]
-    return {**source, "runs": runs, "error": ""}
+    runs: Dict[int, dict] = {}
+    for workflow in envs:
+        try:
+            data = api.get(f"/repos/{source['repo']}/actions/runs",
+                           {"workflow_id": workflow, "limit": LIMIT}, max_bytes=RUNS_MAX)
+        except forge.ForgeError as exc:
+            return {
+                **source,
+                "runs": [],
+                "error": _clean(str(exc), ERROR_MAX) or "Forgejo: ошибка",
+            }
+        items = data.get("workflow_runs") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return {**source, "runs": [], "error": "ответ Forgejo без workflow_runs"}
+        for item in items:
+            run = run_of(item, envs) if isinstance(item, dict) else None
+            if run is not None:
+                runs.setdefault(run["run"], run)
+    return {**source, "runs": list(runs.values()), "error": ""}
 
 
 def includes(api, source: dict, watch: List[dict], budget: List[int]) -> List[dict]:

@@ -204,15 +204,16 @@ class Api:
             raise ForgeError("API Forgejo — только https")
         self._token, self._opener, self.base = token, opener or OPENER.open, base
 
-    def _call(self, method: str, path: str, body: Optional[dict] = None, params: Optional[dict] = None):
+    def _call(self, method: str, path: str, body: Optional[dict] = None, params: Optional[dict] = None,
+              max_bytes: int = LIMIT):
         url = self.base + path + ("?" + urllib.parse.urlencode(params) if params else "")
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(url, data=data, method=method, headers={
             "Authorization": f"token {self._token}", "Accept": "application/json",
             **({"Content-Type": "application/json"} if data else {})})
-        raw = self._read(req, LIMIT)
-        if len(raw) > LIMIT:
-            raise TooLarge("ответ Forgejo больше 1 МБ")
+        raw = self._read(req, max_bytes)
+        if len(raw) > max_bytes:
+            raise TooLarge(f"ответ Forgejo больше {max_bytes // LIMIT} МБ")
         try:
             return json.loads(raw) if raw.strip() else None
         except ValueError:
@@ -240,8 +241,9 @@ class Api:
         except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise ForgeError(f"Forgejo недоступен ({exc.__class__.__name__})") from None
 
-    def get(self, path: str, params: Optional[dict] = None):
-        return self._call("GET", path, params=params)
+    def get(self, path: str, params: Optional[dict] = None, max_bytes: int = LIMIT):
+        """``max_bytes`` — the answer's cap, LIMIT unless the caller knows its answers are bigger."""
+        return self._call("GET", path, params=params, max_bytes=max_bytes)
 
     def post(self, path: str, body: dict):
         return self._call("POST", path, body=body)

@@ -94,8 +94,9 @@ class Api:
     def __init__(self, answers):
         self.answers, self.calls = answers, []
 
-    def get(self, path, params=None):
+    def get(self, path, params=None, max_bytes=forge.LIMIT):
         self.calls.append((path, params))
+        self.max_bytes = max_bytes
         answer = self.answers[path]
         if isinstance(answer, Exception):
             raise answer
@@ -243,8 +244,12 @@ def test_main_reports_every_project_and_one_failure_is_that_projects_error(
         )
         == 0
     )
-    ((path, params), _) = api.calls
-    assert path == "/repos/o/alert/actions/runs" and params == {"limit": deploys.LIMIT}
+    # one read per environment, of its own workflow: a busy workflow never pushes another env's runs out
+    assert api.calls[:2] == [
+        ("/repos/o/alert/actions/runs", {"workflow_id": "deploy-test.yml", "limit": deploys.LIMIT}),
+        ("/repos/o/alert/actions/runs", {"workflow_id": "deploy-prod.yml", "limit": deploys.LIMIT}),
+    ]
+    assert api.max_bytes == deploys.RUNS_MAX
     (request,) = client.requests
     alert, keeta = request["sources"]
     assert request["op"] == "deploy.report"

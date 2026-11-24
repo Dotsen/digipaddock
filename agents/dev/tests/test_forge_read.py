@@ -218,6 +218,11 @@ def test_api_response_limit_and_transport_errors():
         return Resp(b"[" + b" " * forge.LIMIT + b"]")
     with pytest.raises(forge.ForgeError, match="1 МБ"):
         forge.Api(TOKEN, opener=big).get("/x")
+    # a caller that expects big answers (the Actions runs carry their event payloads) raises the cap for its call
+    assert forge.Api(TOKEN, opener=big).get("/x", max_bytes=2 * forge.LIMIT) == []
+    with pytest.raises(forge.TooLarge, match="2 МБ"):
+        forge.Api(TOKEN, opener=lambda req, timeout=None: Resp(b" " * (2 * forge.LIMIT + 1))).get(
+            "/x", max_bytes=2 * forge.LIMIT)
 
     def broken(req, timeout=None):
         raise http.client.IncompleteRead(b"")

@@ -49,6 +49,38 @@ export function statusClass(status: DeployRun["status"] | undefined): string {
   }
 }
 
+/** The sign beside a status's colour: the page never tells a status by colour alone. */
+export function statusMark(status: DeployRun["status"] | undefined): string {
+  switch (status) {
+    case "success":
+      return "✓";
+    case "failure":
+      return "✗";
+    case "running":
+    case "waiting":
+      return "…";
+    default:
+      return "–";
+  }
+}
+
+/** One row per project: its environments in the page's order; stale — any of them is. */
+export function projectRows(envs: DeployEnv[]): { id: string; name: string; envs: DeployEnv[]; stale: boolean }[] {
+  return projectsOf(envs).map((p) => {
+    const own = envs.filter((e) => e.project === p.id);
+    return { ...p, envs: own, stale: own.some((e) => e.stale) };
+  });
+}
+
+/** The journal shows its runs twenty at a time. */
+export const JOURNAL_STEP = 20;
+
+/** What the journal shows of `loaded` runs when `wanted` are asked for: how many, whether «more» is offered, and
+ *  whether the server's next page must be read first. */
+export function journalView(loaded: number, wanted: number, hasNext: boolean) {
+  return { shown: Math.min(loaded, wanted), more: wanted < loaded || hasNext, fetch: wanted > loaded && hasNext };
+}
+
 export function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }

@@ -1,6 +1,9 @@
 // the «Deploys» page's journal address, filters and status colours.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { envsOf, inputsText, journalUrl, launchDeploy, projectsOf, shortSha, statusClass } from "./deploys";
+import {
+  envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, projectRows, projectsOf, shortSha,
+  statusClass, statusMark,
+} from "./deploys";
 import type { DeployEnv } from "./types";
 
 function env(project: string, name: string, e: string): DeployEnv {
@@ -68,5 +71,31 @@ describe("the deploys page", () => {
     expect(statusClass(undefined)).toBe("off");
     expect(shortSha("0123456789abcdef")).toBe("0123456");
     expect(inputsText({ skip_tests: "true", confirm: "deploy" })).toBe("skip_tests=true, confirm=deploy");
+  });
+
+  it("marks a status with a sign, not with colour alone", () => {
+    expect(statusMark("success")).toBe("✓");
+    expect(statusMark("failure")).toBe("✗");
+    expect(statusMark("running")).toBe("…");
+    expect(statusMark("waiting")).toBe("…");
+    expect(statusMark("cancelled")).toBe("–");
+    expect(statusMark(undefined)).toBe("–");
+  });
+
+  it("puts each project on one row with its environments in the page's order", () => {
+    const stale = { ...env("api", "Api", "stage"), stale: true };
+    const rows = projectRows([env("alert", "Alert", "test"), env("alert", "Alert", "prod"), stale]);
+    expect(rows.map((r) => [r.id, r.envs.map((e) => e.env), r.stale])).toEqual([
+      ["alert", ["test", "prod"], false],
+      ["api", ["stage"], true],
+    ]);
+  });
+
+  it("shows the journal by pages of twenty and asks the server when the loaded runs end", () => {
+    expect(JOURNAL_STEP).toBe(20);
+    expect(journalView(45, 20, true)).toEqual({ shown: 20, more: true, fetch: false });
+    expect(journalView(45, 60, true)).toEqual({ shown: 45, more: true, fetch: true });
+    expect(journalView(45, 60, false)).toEqual({ shown: 45, more: false, fetch: false });
+    expect(journalView(10, 20, false)).toEqual({ shown: 10, more: false, fetch: false });
   });
 });
