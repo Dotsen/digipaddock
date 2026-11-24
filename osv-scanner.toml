@@ -8,3 +8,12 @@
 id = "GHSA-3g3m-2fjr-6pw4"
 ignoreUntil = 2027-02-21
 reason = "glob 11.1.0 only via workbox-build at build time: globSync without an AbortSignal never reaches the abort path"
+
+# CVE-2026-118764: minimatch amplifies globParts for an attacker-supplied pattern with "**/../" under
+# optimizationLevel >= 2 (fixed only in minimatch 11.0.1, no 10.x backport). The cabinet's minimatch 10.2.6 is
+# nested under that same glob 11.1.0 (range ^10.1.1); its only patterns are the static globPatterns and
+# globIgnores of vite.config.ts at build time, with no "**/../" and nothing from outside.
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2027-02-22
+reason = "minimatch 10.2.6 only via glob 11.1.0 of workbox-build at build time: patterns are the static ones of vite.config.ts, no **/../"
