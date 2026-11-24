@@ -75,6 +75,15 @@
       icon: '<path d="M12 3L2 21h20L12 3z"/><path d="M12 9v5M12 17v1"/>',
     },
     {
+      // the projects' deploys and their journal: the owner and who holds deploys.read
+      path: "/deploys",
+      label: "nav.deploys",
+      routes: ["deploys"],
+      more: true,
+      perm: "deploys.read",
+      icon: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/>',
+    },
+    {
       path: "/feed",
       label: "nav.feed",
       routes: ["feed"],

@@ -126,7 +126,7 @@ def test_forge_deploy_key_preflight_comes_before_the_mirror_clone() -> None:
         and "refs/heads/main" in FORGE
         and "forgejo_deploy.pub" in FORGE
     )
-    assert FORGE.index("git ls-remote") < FORGE.index("own_requests\n  if")
+    assert FORGE.index("git ls-remote") < FORGE.index("own_requests\n  install_deploys\n  if")
 
 
 def test_forge_mirror_is_a_real_mirror_fetched_with_kd_release_ssh_options() -> None:
@@ -159,6 +159,20 @@ def test_forge_tokens_are_hints_and_selfcheck_a_warning() -> None:
     )
     # missing tokens do not fail the check: the owner puts them after the install
     assert ".env" not in _function(FORGE, "check")
+
+
+def test_forge_installs_and_checks_the_deploys_reader_units() -> None:
+    """KD-9443: the «Deploys» page's reader runs under the forge user, by its timer."""
+    install, check = _function(FORGE, "install_deploys"), _function(FORGE, "check")
+    assert 'DEPLOYS_UNITS="digipaddock-deploys.service digipaddock-deploys.timer"' in FORGE
+    assert 'kd_install_rendered "$REPO/common/systemd/$unit" "$UNITS/$unit" 0644' in install
+    assert "systemctl enable --now digipaddock-deploys.timer" in install
+    assert "install_deploys\n" in _function(FORGE, "install_all")
+    assert 'cmp -s - "$UNITS/$unit"' in check and "digipaddock-deploys.timer is not running" in check
+    service = (COMMON / "systemd/digipaddock-deploys.service").read_text(encoding="utf-8")
+    assert "User=@forge@" in service and "agents/dev/bin/kd-deploys" in service
+    render = (COMMON / "install/render_host.sh").read_text(encoding="utf-8")
+    assert "common/systemd/digipaddock-deploys.service common/systemd/digipaddock-deploys.timer" in render
 
 
 def test_forge_disable_hands_the_requests_back_to_root() -> None:

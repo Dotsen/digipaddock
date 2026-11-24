@@ -310,6 +310,8 @@ def test_every_non_root_unit_runs_as_a_rendered_user():
         service = {"digipaddock-repo-sync.service": ["@repo@"], "digipaddock-review.service": ["@review@"],
                    "digipaddock-cabinet.service": ["@cabinet@"], "digipaddock-cabinet-push.service": ["@push@"],
                    "digipaddock-transcribe@.service": ["@transcribe@"],
+                   # the deploys reader holds dev's Forgejo read token, as the forge executor does
+                   "digipaddock-deploys.service": ["@forge@"],
                    # a probe exit runs as the distribution's tinyproxy user from the start, never as root
                    "digipaddock-egress@.service": ["tinyproxy"]}
         expected = service.get(path.name, ["@base@"])

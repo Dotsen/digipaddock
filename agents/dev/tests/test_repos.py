@@ -138,6 +138,52 @@ def test_invalid_passport_rejected(tmp_path, change):
         repos.load(_write(tmp_path, {"alert": {**PASSPORT, **change}}))
 
 
+DEPLOYS = {"test": {"workflow": "deploy-test.yml", "branch": "master"},
+           "stage": {"workflow": "deploy-stage.yml", "branch": "dev"},
+           "prod": {"workflow": "deploy-prod.yml", "branch": "master", "manual": True}}
+
+
+def test_the_passports_deploys_keep_their_order(tmp_path):
+    """KD-9443: the environments of «Deploys» — the workflow of each, its branch, whether it runs by hand."""
+    r = repos.get("alert", _write(tmp_path, {"alert": {**PASSPORT, "deploys": DEPLOYS}}))
+    assert r.deploys == (repos.Deploy("test", "deploy-test.yml", "master", False),
+                         repos.Deploy("stage", "deploy-stage.yml", "dev", False),
+                         repos.Deploy("prod", "deploy-prod.yml", "master", True))
+    assert repos.get("alert", _write(tmp_path, {"alert": PASSPORT})).deploys == ()
+
+
+def test_a_manual_deploy_names_the_buttons_inputs(tmp_path):
+    """KD-9447: alert's prod takes the typed word in its input confirm, api's prod the boolean skip_tests."""
+    deploys = {"prod": {"workflow": "deploy-prod.yml", "branch": "master", "manual": True, "confirm": "confirm",
+                        "skip_tests": True}}
+    r = repos.get("alert", _write(tmp_path, {"alert": {**PASSPORT, "deploys": deploys}}))
+    assert r.deploys == (repos.Deploy("prod", "deploy-prod.yml", "master", True, "confirm", True),)
+
+
+@pytest.mark.parametrize("deploys", [
+    [],
+    {"Test": {"workflow": "a.yml", "branch": "main"}},
+    {"test": {"workflow": "deploy.sh", "branch": "main"}},
+    {"test": {"workflow": "../a.yml", "branch": "main"}},
+    {"test": {"workflow": "a.yml", "branch": "a..b"}},
+    {"test": {"workflow": "a.yml"}},
+    {"test": {"workflow": "a.yml", "branch": "main", "manual": "yes"}},
+    {"test": {"workflow": "a.yml", "branch": "main", "inputs": {}}},
+    {"test": {"workflow": "a.yml", "branch": "main"}, "prod": {"workflow": "a.yml", "branch": "main"}},
+    {f"e{n}": {"workflow": f"d{n}.yml", "branch": "main"} for n in range(9)},
+    # the owner's button (KD-9447): its inputs only on an environment started by hand
+    {"prod": {"workflow": "a.yml", "branch": "main", "confirm": "confirm"}},
+    {"prod": {"workflow": "a.yml", "branch": "main", "skip_tests": True}},
+    {"prod": {"workflow": "a.yml", "branch": "main", "manual": True, "confirm": "a b"}},
+    {"prod": {"workflow": "a.yml", "branch": "main", "manual": True, "confirm": 1}},
+    {"prod": {"workflow": "a.yml", "branch": "main", "manual": True, "skip_tests": "true"}},
+    {"prod": {"workflow": "a.yml", "branch": "main", "manual": True, "confirm": "skip_tests", "skip_tests": True}},
+])
+def test_invalid_deploys_rejected(tmp_path, deploys):
+    with pytest.raises(repos.RepoError, match="alert: deploys"):
+        repos.load(_write(tmp_path, {"alert": {**PASSPORT, "deploys": deploys}}))
+
+
 @pytest.mark.parametrize("change", [{"base": "dev", "targets": ["dev"]}, {"targets": ["main", "dev"]}])
 def test_a_released_project_merges_into_main_only(tmp_path, change):
     """kd-release releases main (spec §6.1): a released project's passport cannot point elsewhere."""

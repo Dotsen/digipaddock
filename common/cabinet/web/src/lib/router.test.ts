@@ -25,6 +25,9 @@ describe("match", () => {
     // the monitor's settings — before the server page, «settings» is no alias
     expect(match("/servers/settings?server=node-c")).toMatchObject({ name: "monitor-settings", params: {} });
     expect(match("/incidents/35").name).toBe("notfound");
+    // the projects' deploys: a menu section of its own
+    expect(match("/deploys")).toMatchObject({ name: "deploys", params: {} });
+    expect(parentOf(match("/deploys"))).toBeNull();
   });
 
   it("opens the overview at the root, the inbox at /inbox, and keeps the query", () => {

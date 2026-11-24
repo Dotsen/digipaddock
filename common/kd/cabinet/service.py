@@ -29,11 +29,12 @@ class Challenges:
         self.ttl, self.clock = ttl, clock
         self._items: Dict[Tuple[str, str], Tuple[float, Any]] = {}
 
-    def put(self, kind: str, key: str, value):
+    def put(self, kind: str, key: str, value, ttl: Optional[float] = None):
+        """``ttl`` — this value's own term, when it is not the store's (a prod deploy's signature: ten minutes)."""
         now = self.clock()
         if len(self._items) >= CHALLENGES_MAX:
             self._items = {k: v for k, v in self._items.items() if v[0] > now}
-        self._items[(kind, key)] = (now + self.ttl, value)
+        self._items[(kind, key)] = (now + (self.ttl if ttl is None else ttl), value)
 
     def pop(self, kind: str, key: str):
         item = self._items.pop((kind, key), None)

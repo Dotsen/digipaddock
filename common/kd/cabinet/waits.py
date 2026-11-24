@@ -1,6 +1,7 @@
 """What a turn waits for: a decision, a dependency card or a factory
 operation, by its id — an operation superseded by a newer one is waited for through it; a check contour in
-maintenance, by its name, until root releases it.
+maintenance, by its name, until root releases it; a deploy — a finished run of a project's environment that holds
+a commit (``deploys``), resolved when the forge reader reports it.
 
 ``kd-work finish`` records the waits of its turn as ``pending`` beside the outcome; a repeated finish in the same
 turn replaces them. They count once the turn ends and the outcome applies (``activate``): each is checked against
@@ -113,6 +114,10 @@ def source_state(ctx, wait: Mapping) -> str:
         return _COUNCIL_STATE.get(row[0], "resolved")
     if wait["kind"] == "time":  # the moment the agent put its card off until (UTC stamps compare as text)
         return "resolved" if ctx.now() >= wait["ref"] else "open"
+    if wait["kind"] == "deploy":  # a run of the environment that holds the commit
+        from kd.cabinet import deploys  # at call time: it loads the API this module registers on
+
+        return deploys.wait_state(ctx.store, wait["ref"])
     try:
         card = ctx.store.card(wait["ref"])
     except store_mod.NotFound:
@@ -126,6 +131,10 @@ def source_state(ctx, wait: Mapping) -> str:
 
 def _move(s, wait: Mapping, state: str) -> None:
     s._conn.execute("UPDATE waits SET state=?, updated=? WHERE id=?", (state, s._clock(), wait["id"]))
+    if wait["kind"] == "deploy" and state == "rejected":  # a failed run: why, in the wake, the thread and the inbox
+        from kd.cabinet import deploys  # at call time: it loads the API this module registers on
+
+        s._conn.execute("UPDATE waits SET reason=? WHERE id=?", (deploys.failed(s, wait), wait["id"]))
     if state in _EVENT:
         thread = s.card(wait["card"]).thread
         s._event("system", _EVENT[state], wait["card"],
@@ -156,8 +165,9 @@ def set_state(store, command: str) -> Optional[str]:
 
 
 def _ended_state(store, command: str) -> str:
-    states = [w["state"] for w in _rows(store, command) if w["blocking"] and w["state"] in ENDED_STATES]
-    return states[0] if states else "ended"
+    """How the set ended, as the wake says it: the first ended wait's reason (a failed deploy's run), or its state."""
+    ended = [w for w in _rows(store, command) if w["blocking"] and w["state"] in ENDED_STATES]
+    return (ended[0]["reason"] or ended[0]["state"]) if ended else "ended"
 
 
 def settle(ctx, command: str, *, merged_into: str = "") -> Optional[str]:

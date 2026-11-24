@@ -8,7 +8,14 @@ today's: base and the only target main, no required checks, a PR merges on a cur
 {"alert": {"repo": "example/alert", "dir": "work/alert", "base": "master", "targets": ["master"],
            "checks": {"contour": "dev-a", "profiles": {"unit": {"required": true}}, "timeout_s": 1800},
            "merge_effects": {"master": "deploy to the acceptance stage"},
-           "merge": {"require_up_to_date": true, "up_to_date_paths": ["migrations/*"]}}}
+           "merge": {"require_up_to_date": true, "up_to_date_paths": ["migrations/*"]},
+           "deploys": {"test": {"workflow": "deploy-test.yml", "branch": "master"},
+                       "prod": {"workflow": "deploy-prod.yml", "branch": "master", "manual": true,
+                                "confirm": "confirm"}}}}
+``deploys`` — the project's environments in the order the cabinet's «Deploys» shows them: the Forgejo Actions
+workflow file that deploys each, the branch it deploys and whether it runs only by hand (workflow_dispatch). A
+manual one is started by the owner's button (kd-review's ``deploy``): ``confirm`` names the workflow's text input
+that gets the typed word ``deploy``, ``skip_tests: true`` says the workflow takes the boolean input ``skip_tests``.
 The schema lives in the entries only (no top-level key): an older release, rolled back to, reads the file as before."""
 import fnmatch
 import json
@@ -28,10 +35,22 @@ ROLES = ("code", "overlay")
 EFFECT_MAX = 300
 TIMEOUT = (60, 7200)
 PATH_MAX = 200
+WORKFLOW_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.ya?ml")
+INPUT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")  # a workflow_dispatch input's name
+DEPLOYS_MAX = 8
 
 
 class RepoError(Exception):
     pass
+
+
+class Deploy(NamedTuple):
+    env: str
+    workflow: str  # the file name under .forgejo/workflows — the run's workflow_id in the Actions API
+    branch: str
+    manual: bool = False
+    confirm: str = ""  # a manual workflow's text input that gets the word "deploy"
+    skip_tests: bool = False  # a manual workflow takes the boolean input skip_tests
 
 
 class Repo(NamedTuple):
@@ -48,6 +67,7 @@ class Repo(NamedTuple):
     effects: Tuple[Tuple[str, str], ...] = ()  # (target, text)
     require_up_to_date: bool = True
     up_to_date_paths: Tuple[str, ...] = ()
+    deploys: Tuple[Deploy, ...] = ()
 
 
 def is_branch(value) -> bool:
@@ -70,6 +90,39 @@ def needs_up_to_date(repo: Repo, paths: Iterable[str]) -> bool:
     if repo.require_up_to_date:
         return True
     return any(fnmatch.fnmatchcase(path, glob) for path in paths for glob in repo.up_to_date_paths)
+
+
+def deploys(project: str, item: dict) -> Tuple[Deploy, ...]:
+    """The passport's ``deploys``: env → {workflow, branch[, manual]}; one workflow file per environment."""
+    value = item.get("deploys", {})
+    if not isinstance(value, dict) or len(value) > DEPLOYS_MAX:
+        raise RepoError(f"repos.json: {project}: deploys — объект окружение → выкат, не больше {DEPLOYS_MAX}")
+    out, files = [], set()
+    for env, spec in value.items():
+        def bad(what: str, env=env):
+            return RepoError(f"repos.json: {project}: deploys.{env}: {what}")
+
+        if not isinstance(env, str) or not PROFILE_RE.fullmatch(env) or not isinstance(spec, dict):
+            raise RepoError(f"repos.json: {project}: deploys — неверное окружение {env!r}")
+        if not set(spec) <= {"workflow", "branch", "manual", "confirm", "skip_tests"}:
+            raise bad("ключи — workflow, branch, manual, confirm, skip_tests")
+        workflow, branch, manual = spec.get("workflow"), spec.get("branch"), spec.get("manual", False)
+        confirm, skip_tests = spec.get("confirm", ""), spec.get("skip_tests", False)
+        if not isinstance(workflow, str) or not WORKFLOW_RE.fullmatch(workflow) or workflow in files:
+            raise bad("workflow — свой файл .yml в .forgejo/workflows")
+        if not is_branch(branch):
+            raise bad("branch — имя ветки")
+        if not isinstance(manual, bool):
+            raise bad("manual — true или false")
+        if not isinstance(confirm, str) or (confirm and not INPUT_RE.fullmatch(confirm)):
+            raise bad("confirm — имя текстового входа workflow")
+        if not isinstance(skip_tests, bool) or (skip_tests and confirm == "skip_tests"):
+            raise bad("skip_tests — true или false")
+        if (confirm or skip_tests) and not manual:
+            raise bad("confirm и skip_tests — только у ручного выката (manual: true)")
+        files.add(workflow)
+        out.append(Deploy(env, workflow, branch, manual, confirm, skip_tests))
+    return tuple(out)
 
 
 def _passport(project: str, item: dict, release: Optional[str]) -> dict:
@@ -122,7 +175,7 @@ def _passport(project: str, item: dict, release: Optional[str]) -> dict:
         raise bad("merge.up_to_date_paths — относительные пути репозитория")
     return {"base": base, "targets": tuple(targets), "profiles": tuple(found), "contour": contour,
             "timeout_s": timeout, "effects": tuple(effects.items()), "require_up_to_date": current,
-            "up_to_date_paths": tuple(paths)}
+            "up_to_date_paths": tuple(paths), "deploys": deploys(project, item)}
 
 
 def load(path=REPOS) -> Dict[str, Repo]:

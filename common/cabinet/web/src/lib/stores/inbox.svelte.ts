@@ -1,7 +1,7 @@
 // What waits for the person: decisions they may take (with each one's view and card), agents' questions,
-// cards in Review. Review cards can be moved in a batch, one PATCH per card with its own revision.
+// cards in Review, failed deploys that woke cards. Review cards can be moved in a batch, one PATCH per card with its own revision.
 import { ApiError, apiGet, apiPost } from "../api";
-import type { CardCompact, Decision, DecisionItem, DecisionView, Incident } from "../types";
+import type { CardCompact, Decision, DecisionItem, DecisionView, DeployAlert, Incident } from "../types";
 
 export interface InboxRow {
   decision: Decision;
@@ -101,6 +101,7 @@ interface InboxAnswer {
   questions: Decision[];
   review: CardCompact[];
   incidents?: Incident[]; // open crit nobody acknowledged or muted (an older cabinet sends none)
+  deploys?: DeployAlert[]; // failed runs that ended cards' deploy waits, nobody saw yet
 }
 
 class Inbox {
@@ -108,7 +109,14 @@ class Inbox {
   questions = $state<InboxRow[]>([]);
   review = $state<CardCompact[]>([]);
   incidents = $state<Incident[]>([]);
+  deploys = $state<DeployAlert[]>([]);
   loaded = $state(false);
+
+  /** Someone saw the failed run: it leaves the inbox. */
+  async seen(alert: DeployAlert) {
+    await apiPost("/api/deploys/alerts/seen", { project: alert.project, run: alert.run });
+    this.deploys = this.deploys.filter((a) => a.project !== alert.project || a.run !== alert.run);
+  }
 
   async load() {
     const [mine, views, cards] = await Promise.all([
@@ -127,6 +135,7 @@ class Inbox {
     this.questions = mine.questions.map(row);
     this.review = mine.review;
     this.incidents = mine.incidents ?? [];
+    this.deploys = mine.deploys ?? [];
     this.loaded = true;
   }
 }

@@ -6,7 +6,7 @@ Only the kd-cabinet service opens the file. Every write is one transaction of ro
 which ``Store.open`` applies in order, in one transaction, on a new base as on an old one.
 """
 
-SCHEMA_VERSION = 46
+SCHEMA_VERSION = 47
 STATUSES = ("Inbox", "To Do", "In Progress", "Review", "Blocked", "Done", "Cancelled")
 # closed without the work — a duplicate of its canonical card, or cancelled. Done stays «the result was
 # accepted»: a Cancelled card satisfies no dependency and counts as no finished work.
@@ -643,6 +643,37 @@ INSERT OR IGNORE INTO stage_review_parts
 DDL_V46 = """
 CREATE INDEX IF NOT EXISTS events_platform_notice ON events(seq) WHERE kind = 'notice' AND card = '';
 """
+# v47: the deploys of the projects (KD-9443). The Forgejo executor's reader reports every project's environments
+# (``deploy_sources``: the passport's map, when it read and what failed) and the Actions runs of their workflows
+# (``deploy_runs``, one row per run, updated while it runs); the «Deploys» page and the cards' ``deploy`` wait read
+# them. The platform's own releases are not here: they are the cards' release notices, read by an index of their
+# own (``deploys.RELEASES`` repeats its condition word for word). ``deploy_includes``: whether a run's commit holds a
+# commit a ``deploy`` wait names, as the reader asked Forgejo; ``deploy_alerts``: a failed run that ended such a
+# wait, in the owner's inbox until someone saw it.
+DDL_V47 = """
+CREATE TABLE IF NOT EXISTS deploy_sources (
+  project TEXT PRIMARY KEY, repo TEXT NOT NULL, envs TEXT NOT NULL DEFAULT '[]', read_at TEXT NOT NULL,
+  ok_at TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS deploy_runs (
+  project TEXT NOT NULL, run INTEGER NOT NULL, env TEXT NOT NULL, number INTEGER NOT NULL DEFAULT 0,
+  workflow TEXT NOT NULL, status TEXT NOT NULL, event TEXT NOT NULL DEFAULT '', sha TEXT NOT NULL DEFAULT '',
+  ref TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL DEFAULT '',
+  inputs TEXT NOT NULL DEFAULT '{}', title TEXT NOT NULL DEFAULT '', created TEXT NOT NULL,
+  started TEXT NOT NULL DEFAULT '', stopped TEXT NOT NULL DEFAULT '', seen TEXT NOT NULL,
+  PRIMARY KEY (project, run));
+CREATE INDEX IF NOT EXISTS deploy_runs_env ON deploy_runs(project, env, created);
+CREATE INDEX IF NOT EXISTS deploy_runs_created ON deploy_runs(created);
+CREATE TABLE IF NOT EXISTS deploy_includes (
+  project TEXT NOT NULL, run INTEGER NOT NULL, sha TEXT NOT NULL, included INTEGER NOT NULL, checked TEXT NOT NULL,
+  PRIMARY KEY (project, run, sha));
+CREATE TABLE IF NOT EXISTS deploy_alerts (
+  project TEXT NOT NULL, run INTEGER NOT NULL, cards TEXT NOT NULL DEFAULT '[]', created TEXT NOT NULL,
+  seen TEXT NOT NULL DEFAULT '', seen_by TEXT NOT NULL DEFAULT '', PRIMARY KEY (project, run));
+CREATE INDEX IF NOT EXISTS events_release_notice ON events(seq) WHERE kind = 'notice'
+  AND json_extract(payload, '$.key') IN ('notice.forge.released', 'notice.release.healthy',
+                                          'notice.release.degraded', 'notice.forge.release_degraded',
+                                          'notice.forge.release_refused');
+"""
 
 MIGRATIONS = {
     2: DDL_V2, 3: DDL_V3, 4: DDL_V4, 5: DDL_V5, 6: DDL_V6, 7: DDL_V7, 8: DDL_V8, 9: DDL_V9, 10: DDL_V10, 11: DDL_V11,
@@ -651,6 +682,7 @@ MIGRATIONS = {
     25: DDL_V25, 26: DDL_V26, 27: DDL_V27, 28: DDL_V28, 29: DDL_V29, 30: DDL_V30, 31: DDL_V31,
     32: DDL_V32, 33: DDL_V33, 34: DDL_V34, 35: DDL_V35, 36: DDL_V36, 37: DDL_V37, 38: DDL_V38, 39: DDL_V39,
     40: DDL_V40, 41: DDL_V41, 42: DDL_V42, 43: DDL_V43, 44: DDL_V44, 45: DDL_V45, 46: DDL_V46,
+    47: DDL_V47,
 }
 # the council of models: what it reads, how a gathering stands, how one critic's read stands
 COUNCIL_KINDS = ("brief", "code")
@@ -673,8 +705,8 @@ JOB_STATES = ("queued", "delivered", "running", "cancelling", "done", "failed", 
 OUTCOMES = ("continue", "wait_user", "wait_dependency", "wait_until", "review", "done")
 OUTCOME_STATES = ("pending", "final", "void", "superseded")
 # contour — out of maintenance; time — a moment the agent put its card off until
-# council — a round of the card's council
-WAIT_KINDS = ("decision", "card", "operation", "assist", "contour", "time", "council")
+# council — a round of the card's council; deploy — a run of a project's environment that holds a commit
+WAIT_KINDS = ("decision", "card", "operation", "assist", "contour", "time", "council", "deploy")
 # a factory operation: superseded — a newer request of the same work took its place before it ran
 OPERATION_STATES = ("pending", "running", "succeeded", "failed", "superseded")
 WAIT_STATES = ("pending", "open", "resolved", "rejected", "expired", "needs_routing", "cancelled")

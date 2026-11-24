@@ -7,7 +7,8 @@ Done) or voids it with the turn. A finish again in the same turn replaces the ou
 
 The outcomes: ``continue`` (the agent has its next step itself; its open questions stay non-blocking waits),
 ``wait_user`` (the decisions it waits for: named, or its open ones on the card), ``wait_dependency`` (cards of the
-card's structured dependencies: named, or all not yet Done; or the operations, help and check contours it names),
+card's structured dependencies: named, or all not yet Done; or the operations, help, check contours and deploys it
+names),
 ``wait_until`` (the card put off until ``until``, a moment with its time zone 10 minutes to 7 days away —
 ``defers``), ``review`` (from In Progress) and ``done``
 (from In Progress or Review, within the closing policy). Handing work to another agent comes with package C.
@@ -20,7 +21,7 @@ from typing import List, Mapping, Optional
 from kd import boss_board, worker_board
 from kd import contours as contour_file
 from kd.cabinet import (
-    api, briefs, continuations, councils, defers, problems, schema, stages, store as store_mod, waits,
+    api, briefs, continuations, councils, defers, deploys, problems, schema, stages, store as store_mod, waits,
 )
 
 WORK = ("To Do", "In Progress", "Blocked")
@@ -214,6 +215,12 @@ def _council_waits(store, record, named: List[str]) -> List[dict]:
     return [{"kind": "council", "ref": council_id, "blocking": 1} for council_id in named]
 
 
+def _deploy_waits(store, record, named: List[str]) -> List[dict]:
+    """runs of the projects' environments that hold a commit — named, or the card's last merged pull request's."""
+    refs = sorted({deploys.wait_ref(store, record, target) for target in named})
+    return [{"kind": "deploy", "ref": ref, "blocking": 1} for ref in refs]
+
+
 def _open_help(store, record, agent: Optional[str] = None) -> List[str]:
     from kd.cabinet import assists  # at call time: it loads the API this module registers on
 
@@ -229,11 +236,13 @@ def _specs(ctx, record, agent: str, outcome: str, request) -> List[dict]:
     named_assists = _ids(request, "assists", assists.ASSIST_ID)
     named_contours = _ids(request, "contours", contour_file.NAME_RE)
     named_councils = _ids(request, "councils", councils.COUNCIL_ID)
+    named_deploys = _ids(request, "deploys", deploys.TARGET)
     if named_decisions and outcome != "wait_user":
         raise _invalid("--decision goes with --outcome wait_user")
-    if ((named_cards or named_operations or named_assists or named_contours or named_councils)
+    if ((named_cards or named_operations or named_assists or named_contours or named_councils or named_deploys)
             and outcome != "wait_dependency"):
-        raise _invalid("--card, --operation, --assist, --contour and --council go with --outcome wait_dependency")
+        raise _invalid("--card, --operation, --assist, --contour, --council and --deploy go with --outcome "
+                       "wait_dependency")
     if outcome in ("review", "done", "wait_user") or named_councils:  # not past the council's findings
         from kd.cabinet import council_rounds  # at call time: it loads the jobs and the API
 
@@ -248,11 +257,12 @@ def _specs(ctx, record, agent: str, outcome: str, request) -> List[dict]:
     if outcome == "wait_user":
         return _decision_waits(s, record, agent, named_decisions)
     if outcome == "wait_dependency":
-        if named_cards or named_operations or named_assists or named_contours or named_councils:
+        if named_cards or named_operations or named_assists or named_contours or named_councils or named_deploys:
             cards = _card_waits(s, record, named_cards) if named_cards else []
             return (cards + _operation_waits(s, record, agent, named_operations)
                     + (_assist_waits(s, record, agent, named_assists) if named_assists else [])
-                    + _contour_waits(ctx, named_contours) + _council_waits(s, record, named_councils))
+                    + _contour_waits(ctx, named_contours) + _council_waits(s, record, named_councils)
+                    + _deploy_waits(s, record, named_deploys))
         helped = _assist_waits(s, record, agent, [])
         if helped and not any(_not_done(s, d) for d in record.dependencies):
             return helped

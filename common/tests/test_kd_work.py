@@ -340,6 +340,14 @@ def test_finish_contour_flag(env):
     assert rc == 0 and client.requests[0]["contours"] == ["app-ci"]
 
 
+def test_finish_deploy_flag(env):
+    """the turn waits for a deploy of the card's commit, repeatable."""
+    client = _Recorder()
+    rc, _, _ = _finish(env, "KD-5", "--outcome", "wait_dependency", "--note", "deploy", "--deploy", "api:staging",
+                       "--deploy", "alert:test@" + "a" * 40, client=client)
+    assert rc == 0 and client.requests[0]["deploys"] == ["api:staging", "alert:test@" + "a" * 40]
+
+
 def test_finish_prints_the_waits_and_the_refusal(env):
     from kd.cabinet import client as cabinet_client
 

@@ -49,6 +49,7 @@ deployment's names). `npm --prefix common/cabinet/web run screenshots` takes the
 
 - **Feed**: the journal — what happened without a card: notices of services, sign-in codes, releases. No notification leads here.
 - **Servers**: see below.
+- **Deploys**: see below.
 - **Settings**: notifications, devices, people and roles, projects, models (the subscription's and other providers'), the memory server's status.
 
 Live screens refresh at most once a second and say how fresh they are; after a lost connection they show «Data may be stale · Retry» and keep the drafts you were typing. An open tab picks up a new release by itself: it checks for one when it comes back into view and every ten minutes, then reloads once onto it (drafts survive).
@@ -365,6 +366,26 @@ stage of another role or project.
 - Agents read the same through `kd-monitor-read`; only the sysadmin acts on the monitor, and trust, acknowledgement and muting stay with the owner.
 
 ![Incidents: one tick's change on many servers is one group, acknowledged or muted together](images/cabinet/incidents.png)
+
+## Deploys
+
+**Deploys** (`/deploys`, under «More» on a phone) is for the owner and people with `deploys.read`. Each project whose passport names its environments (`repo.deploys` of `host/projects.json`, [deployment-overlay.md](deployment-overlay.md)) has a row per environment, in the passport's order: the status of its last Forgejo Actions run (waiting, running, success, failed, cancelled), the commit, when it was created, who started it, the inputs of a run started by hand (`confirm`, `skip_tests`) and a link to its log in Forgejo. Below them the platform's own last release — its revision, state and the card it came from. An environment whose project has not been read well for two minutes is marked «stale» with the time of its last good read; a failed read shows its error.
+
+The cabinet has no network and holds no Forgejo token. A timer under the Forgejo executor's user (`digipaddock-deploys.timer`, every 45 seconds, installed with the dev role) reads each project's latest runs with dev's read token and reports them to the cabinet, which keeps every run it has seen. The **Journal** under the statuses lists them newest first, 50 at a time with «Show more», the platform's releases among them, filtered by project and environment.
+
+### Waiting for a deploy
+
+An agent whose merged work deploys by itself ends its turn with `kd-work finish KD-<n> --outcome wait_dependency --deploy <project>:<env>[@<sha>]`. Without a commit the wait names the head of the card's last merged pull request in that project: a merge is a merge commit, so every later commit of the branch holds that head. A project or environment the page does not list is refused. Under each environment the page lists the cards waiting for it.
+
+The newest finished run of the environment that holds the commit decides: its own commit, or one whose ancestors hold it — for the commits the cards wait for the reader asks Forgejo (a compare of the two, at most 20 per tick) and reports the answer with the runs. A successful run wakes the card. A failed one wakes it too, «without the answer it needed», with the run's number and log; the card's thread gets a notice, and the run goes to **Inbox** under «Failed deploys» for everyone with `deploys.read` until one of them presses «Got it». A cancelled or skipped run decides nothing: the wait goes on. An environment the passports no longer name leaves the wait for routing. A prod wait has no deadline.
+
+### Deploy to prod
+
+An environment that runs only by hand (`manual: true` in the passport — the prod of `alert` and `api`) has the button **Deploy to prod**, shown to the owner alone: a person holding every permission over every project. Anyone else, `deploys.read` included, gets no button, and the server refuses the request. The button opens a sheet that names the branch; the owner types `deploy`, ticks «Skip the tests» where the workflow takes that input (`skip_tests: true` in the passport, off by default) and signs.
+
+This signature — `deploy_prod` — is the cabinet's only one without user verification: the browser is asked with `userVerification: discouraged`, so a saved passkey on a desktop signs without a fingerprint or PIN (the owner's choice; a browser may still ask for its PIN, and that is then kept). Every other decision, sign-in and step-up still requires user verification. The signed value (`kd.deploy_signature`) binds the launch's own id, the project, repository, environment, workflow, branch, the commit at the branch's head when the sheet asked, `skip_tests`, the person, a term of ten minutes (the approver takes no longer) and a nonce. A launch that Forgejo did not take (an error, no answer) is signed again: the nonce is spent before the call, so a signature never starts two deploys.
+
+The cabinet has no Forgejo token. It asks kd-review — the approver that holds its own token — for the branch's head, checks the assertion against the person's own key and hands the launch to kd-review, which checks it again against its registry of the owner's signing keys (`kd-signers sync --apply`), spends the nonce, reads the environment from the passports of the release tree and refuses when the branch's head is no longer the signed commit; only then it calls Forgejo's `workflow_dispatch` with the passport's inputs (`confirm` gets `deploy`, `skip_tests` the owner's choice). A forged or replayed signature, another commit, or `skip_tests` where the workflow has none start nothing. Each launch — started or refused, with its commit and `skip_tests` — is recorded (`deploy.launched`) and shown under its environment; the run itself comes with the reader's next read, its inputs in the journal. There is no rollback button: a rollback is a new deploy of an older commit, outside the cabinet.
 
 ## Notifications
 

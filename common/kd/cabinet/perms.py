@@ -24,6 +24,7 @@ PERMISSIONS = (
     "agents.control",
     "servers.read",
     "incidents.ack",
+    "deploys.read",
     "users.manage",
     "settings",
 )

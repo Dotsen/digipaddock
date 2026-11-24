@@ -57,6 +57,7 @@
   import SettingsHindsight from "./routes/SettingsHindsight.svelte";
   import Inbox from "./routes/Inbox.svelte";
   import Incident from "./routes/Incident.svelte";
+  import Deploys from "./routes/Deploys.svelte";
   import Incidents from "./routes/Incidents.svelte";
   import Login from "./routes/Login.svelte";
   import MonitorSettings from "./routes/MonitorSettings.svelte";
@@ -169,6 +170,8 @@
         {#key router.current.params.id}<Incident id={router.current.params.id} />{/key}
       {:else if router.current.name === "incidents"}
         <Incidents />
+      {:else if router.current.name === "deploys"}
+        <Deploys />
       {:else}
         <div class="topbar"><h1>{t("app.notfound")}</h1></div>
       {/if}

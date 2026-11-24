@@ -22,6 +22,7 @@ export type RouteName =
   | "monitor-settings"
   | "incident"
   | "incidents"
+  | "deploys"
   | "notfound";
 
 export interface Route {
@@ -56,6 +57,8 @@ const TABLE: [RouteName, RegExp, string[]][] = [
   ["server", /^\/servers\/([^/]+)$/, ["alias"]],
   ["incident", /^\/incidents\/(P-[0-9]+)$/, ["id"]],
   ["incidents", /^\/incidents$/, []],
+  // the projects' deploys and their journal
+  ["deploys", /^\/deploys$/, []],
 ];
 
 function decode(part: string): string {

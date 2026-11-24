@@ -19,8 +19,17 @@ approved — the decision, the mode, the target and the id of the PR's own diff 
 (``forge.clean_update``) with the same own diff (``forge.patch_id``), the required checks green on it. It reads all of
 that from Forgejo itself: the cabinet only names the PR and the two heads.
 
+It is also the service that starts a prod deploy for the owner (KD-9443, ``deploy_prod``): the cabinet's button asks
+``deploy_head`` for the head of the environment's branch, the owner signs the launch with a registered key — the one
+signature taken without user verification, ten minutes at most — and ``deploy`` recomputes the signed value
+(``kd.deploy_signature``), checks the key, the spent nonce, the environment in the passports of the release tree
+(``host/projects.json``: a manual one, the same workflow and branch, ``skip_tests`` only where the workflow takes it)
+and that the branch's head is still the signed commit, and only then calls ``workflow_dispatch`` with the inputs the
+passport names (``confirm`` gets the word ``deploy``). The nonce is spent before the call: a launch never starts twice,
+a failed one is signed again.
+
 One JSON line in, one out, on ``/run/digipaddock-review/review.sock`` (only the cabinet's user may connect): ``keys``,
-``live``, ``approve``, ``carry`` and ``comment``; the answer is ``{"ok": true, ...}`` or ``{"ok": false, "error": kind,
+``live``, ``approve``, ``carry``, ``comment``, ``deploy_head`` and ``deploy``; the answer is ``{"ok": true, ...}`` or ``{"ok": false, "error": kind,
 "message": text}`` (a PR that ended adds ``"live": "merged" | "closed"``). A spent nonce is kept on disk for its term
 (``used-nonces.json``), so a restart approves nothing twice. Each outcome is one JSON line on stderr (the journal) with
 no token, assertion or text.
@@ -38,9 +47,9 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "common"))  # …/DigiPaddock/common
-from kd import pr_signature  # noqa: E402
+from kd import deploy_signature, install_spec, pr_signature  # noqa: E402
 from kd.cabinet import config, passkeys  # noqa: E402
-from dev_agent import forge, repos  # noqa: E402
+from dev_agent import deploys, forge, repos  # noqa: E402
 
 SOCKET = "/run/digipaddock-review/review.sock"
 SIGNERS = "/var/lib/digipaddock/signers"
@@ -122,8 +131,9 @@ def _key(repo: str, number: int, head: str) -> str:
 
 class Reviewer:
     def __init__(self, *, api, repos_path=repos.REPOS, signers_dir=SIGNERS, origin: str, clock=time.time,
-                 nonces_path=None, approvals_path=None):
+                 nonces_path=None, approvals_path=None, projects_path=deploys.PROJECTS):
         self.api, self.repos_path, self.signers_dir, self.clock = api, repos_path, Path(signers_dir), clock
+        self.projects_path = projects_path  # the environments a prod deploy may start (the release tree's)
         self.rp = Rp(origin, config.check_origin(origin))
         self.nonces_path = Path(nonces_path) if nonces_path else None
         self.used = {}  # nonce → the end of its term: a signature approves once (on disk too, with nonces_path)
@@ -134,9 +144,10 @@ class Reviewer:
         if not isinstance(request, dict):
             raise Refused("invalid", "a request is a JSON object")
         handler = {"keys": self.keys, "live": self.live, "approve": self.approve, "carry": self.carry,
-                   "comment": self.comment}.get(request.get("op"))
+                   "comment": self.comment, "deploy_head": self.deploy_head, "deploy": self.deploy,
+                   }.get(request.get("op"))
         if handler is None:
-            raise Refused("invalid", "op must be keys, live, approve, carry or comment")
+            raise Refused("invalid", "op must be keys, live, approve, carry, comment, deploy_head or deploy")
         return handler(request)
 
     # --- what was approved --------------------------------------------------------------------------------------
@@ -380,6 +391,83 @@ class Reviewer:
         state, head, target = self._state(self._repo(request.get("project"), request.get("repo")), number)
         return {"state": state, "head": head, "target": target}
 
+    # --- a prod deploy -------------------------------------------------------------------------------------------
+    def _environment(self, project, repo, env) -> dict:
+        """A manual environment of the project's passport in the release tree, the repository the cabinet named."""
+        if not all(isinstance(v, str) and v for v in (project, repo, env)):
+            raise Refused("invalid", "project, repo and env are names")
+        try:
+            source = next((s for s in deploys.sources(self.projects_path) if s["project"] == project), None)
+        except (install_spec.InstallSpecError, repos.RepoError) as exc:
+            raise Refused("unavailable", f"host/projects.json: {exc}") from None
+        if source is None or source["repo"] != repo:
+            raise Refused("refused", f"project {project} deploys no {repo}")
+        spec = next((e for e in source["envs"] if e["env"] == env), None)
+        if spec is None or not spec["manual"]:
+            raise Refused("refused", f"{project}:{env} is not an environment started by hand")
+        return spec
+
+    def _branch_head(self, repo: str, branch: str) -> str:
+        head = forge._str(forge._dict(forge._dict(self.api.get(f"/repos/{repo}/branches/{branch}")).get("commit"))
+                          .get("id")).lower()
+        if not forge.SHA40_RE.fullmatch(head):
+            raise Refused("unavailable", f"branch {branch}: Forgejo gave no head")
+        return head
+
+    def deploy_head(self, request) -> dict:
+        """The commit a launch would deploy now: the head of the environment's branch, which the owner signs."""
+        spec = self._environment(request.get("project"), request.get("repo"), request.get("env"))
+        return {"sha": self._branch_head(request["repo"], spec["branch"]), "branch": spec["branch"],
+                "workflow": spec["workflow"], "skip_tests": spec["skip_tests"]}
+
+    def deploy(self, request) -> dict:
+        launch, payload, user = request.get("launch"), request.get("payload"), request.get("user")
+        expires, nonce, assertion = request.get("expires"), request.get("nonce"), request.get("assertion")
+        if (not isinstance(launch, str) or not HEX32.fullmatch(launch) or not isinstance(expires, str)
+                or not isinstance(nonce, str) or not HEX32.fullmatch(nonce) or not isinstance(assertion, dict)
+                or not isinstance(user, str) or not USER_RE.fullmatch(user)):
+            raise Refused("invalid", "deploy takes launch, payload, user, expires, nonce, assertion")
+        if not deploy_signature.valid_payload(payload):
+            raise Refused("invalid", f"the payload is not a {deploy_signature.TYPE}")
+        now, term = self.clock(), _term(expires)
+        if not now < term <= now + min(TERM_MAX, deploy_signature.TERM_SECONDS):
+            raise Refused("refused", "the signature's term is over or too far ahead")
+        if nonce in self._spent(now):
+            raise Refused("refused", "this signature was used already")
+        try:
+            raw = _b64(passkeys.credential_id_of(assertion))
+        except passkeys.PasskeyError as exc:
+            raise Refused("invalid", str(exc)) from None
+        key = next((k for k in self._registry(user) if k["credential_id"] == raw), None)
+        if key is None:
+            raise Refused("refused", f"the key is not one of {user}'s signers (kd-signers sync --apply)")
+        try:
+            value = deploy_signature.challenge(launch, payload, user, expires, nonce)
+            # the one signature without user verification: the owner's choice for a prod deploy (24.11.2026)
+            passkeys.verify_authentication(self.rp, assertion, challenge=value, sign_count=0,
+                                           public_key=_unb64(key.get("public_key", "")), user_verification=False)
+        except (ValueError, passkeys.PasskeyError):
+            raise Refused("refused", "the signature does not match this launch") from None
+        repo, env = payload["repo"], payload["env"]
+        spec = self._environment(payload["project"], repo, env)
+        if (spec["workflow"], spec["branch"]) != (payload["workflow"], payload["branch"]):
+            raise Refused("stale", f"{payload['project']}:{env} deploys {spec['workflow']} of {spec['branch']} now")
+        if payload["skip_tests"] and not spec["skip_tests"]:
+            raise Refused("refused", f"{payload['project']}:{env} has no skip_tests")
+        head = self._branch_head(repo, spec["branch"])
+        if head != payload["sha"]:
+            raise Refused("stale", f"{spec['branch']} moved on: head {head[:7]}, signed {payload['sha'][:7]}")
+        inputs = {}
+        if spec["confirm"]:
+            inputs[spec["confirm"]] = deploy_signature.CONFIRM
+        if spec["skip_tests"]:
+            inputs["skip_tests"] = "true" if payload["skip_tests"] else "false"
+        # spent before the call: a launch starts once; one Forgejo did not take is signed again
+        self._spend(nonce, term)
+        self.api.post(f"/repos/{repo}/actions/workflows/{spec['workflow']}/dispatches",
+                      {"ref": spec["branch"], "inputs": inputs})
+        return {"state": "dispatched", "sha": head, "inputs": inputs}
+
     # --- comment ------------------------------------------------------------------------------------------------
     def comment(self, request) -> dict:
         number, head = _number(request.get("number")), _head(request.get("head"))
@@ -416,8 +504,14 @@ def _log(request, outcome: str, why: str = ""):
     for name, value in (("decision", request.get("decision")), ("user", request.get("user")),
                         ("mode", request.get("mode")), ("repo", payload.get("repo", request.get("repo"))),
                         ("number", payload.get("number", request.get("number"))),
-                        ("head", payload.get("head", request.get("head")))):
-        if isinstance(value, (str, int)) and not isinstance(value, bool):
+                        ("head", payload.get("head", request.get("head"))),
+                        # a prod deploy: what was started, on which commit, with or without the tests
+                        ("launch", request.get("launch")), ("project", payload.get("project")),
+                        ("env", payload.get("env")), ("sha", payload.get("sha")),
+                        ("skip_tests", payload.get("skip_tests"))):
+        if name == "skip_tests" and isinstance(value, bool):
+            record[name] = value
+        elif isinstance(value, (str, int)) and not isinstance(value, bool):
             record[name] = str(value)[:100] if isinstance(value, str) else value
     if why:
         record["why"] = why[:300]

@@ -2450,7 +2450,8 @@ def inbox_count(ctx, principal) -> int:
     rows = {(d.get("payload") or {}).get("bundle") or d["id"] for d in mine}  # a bundle is one inbox row
     hidden = stage_gate.hidden_ids(ctx.store)  # a chain plan's stage the coordinator still decides on
     review = [c for c in review["cards"] if c["id"] not in deferred and c["id"] not in hidden]
-    return len(rows) + len(review) + len(incidents.collapse(incidents.alarms(ctx, principal)))
+    failed = len(deploys.alerts(ctx.store)) if allowed(ctx, principal, "deploys.read") else 0  # deploys nobody saw
+    return len(rows) + len(review) + len(incidents.collapse(incidents.alarms(ctx, principal))) + failed
 
 
 def _push_sent(ctx, principal, request):
@@ -2572,6 +2573,7 @@ from kd.cabinet import brief_reviews  # noqa: E402,F401 — registers independen
 from kd.cabinet import monitor_test  # noqa: E402,F401 — the owner's test critical alert, the same way
 from kd.cabinet import monitor_windows  # noqa: E402,F401 — the sysadmin's plan windows, the same way
 from kd.cabinet import defers  # noqa: E402 — a card put off until a time, the same way
+from kd.cabinet import deploys  # noqa: E402 — the projects' deploys and their runs, the same way
 
 OPS.update(voice.OPS)  # "Retry" of a transcription
 

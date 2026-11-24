@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from kd.cabinet import api, defers, incidents, stage_gate
+from kd.cabinet import api, defers, deploys, incidents, stage_gate
 from kd.cabinet.web import deps, stepup
 from kd.cabinet.web.errors import Failure
 
@@ -472,7 +472,8 @@ async def session_output(session_id: str, seq: int, request: Request, user: deps
 
 @router.get("/api/inbox")
 async def inbox(request: Request, user: deps.User = Depends(deps.current_user)):
-    """What waits for the person: decisions they may take, agents' questions, cards in Review."""
+    """What waits for the person: decisions they may take, agents' questions, cards in Review, crit incidents and
+    failed deploys (with ``deploys.read``)."""
     service = deps.svc(request)
     open_ = (await call(request, user, {"op": "decision.list", "state": "open"}))[
         "decisions"
@@ -493,9 +494,15 @@ async def inbox(request: Request, user: deps.User = Depends(deps.current_user)):
     alarms = await service.locked(
         lambda: incidents.collapse(incidents.alarms(service.ctx, deps.principal(user)))
     )
+    failed = (
+        await service.locked(lambda: deploys.alerts(service.ctx.store))
+        if service.users.can(user.id, "deploys.read")
+        else []
+    )
     return {
         "decisions": [d for d in mine if d["type"] != "question"],
         "questions": [d for d in mine if d["type"] == "question"],
         "review": review,
         "incidents": alarms,  # open crit nobody acknowledged or muted
+        "deploys": failed,  # failed runs that ended cards' deploy waits, nobody saw yet
     }

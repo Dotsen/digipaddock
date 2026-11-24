@@ -1284,3 +1284,84 @@ export interface WebSession {
   expires: string;
   current: boolean;
 }
+
+/** One deploy run: a Forgejo Actions run of an environment, or the platform's release (project "platform"). */
+export interface DeployRun {
+  project: string;
+  env: string;
+  run: number;
+  number: number;
+  workflow: string;
+  status: "unknown" | "waiting" | "running" | "success" | "failure" | "cancelled" | "skipped" | "blocked";
+  event: string;
+  sha: string;
+  ref: string;
+  url: string;
+  actor: string;
+  inputs: Record<string, string>;
+  title: string;
+  created: string;
+  started: string;
+  stopped: string;
+  card: string; // the platform's release: the card it came from
+}
+
+/** An environment of «Deploys» with its last run; stale — no good read for two minutes. */
+export interface DeployEnv {
+  project: string;
+  name: string;
+  repo: string;
+  env: string;
+  workflow: string;
+  branch: string;
+  manual: boolean;
+  read_at: string;
+  ok_at: string;
+  error: string;
+  stale: boolean;
+  run: DeployRun | null;
+  waiting: { card: string; sha: string }[]; // cards whose deploy wait names this environment
+  confirm: string; // a manual workflow's input that gets the typed word «deploy»
+  skip_tests: boolean; // a manual workflow takes skip_tests
+  launch: boolean; // the button «Deploy to prod»: a manual environment, for the owner
+  launched: DeployLaunch | null; // the newest launch from the cabinet
+}
+
+/** A launch the owner signed in the cabinet: dispatched, or refused with kd-review's reason. */
+export interface DeployLaunch {
+  id: string;
+  user: string;
+  project: string;
+  env: string;
+  sha: string;
+  skip_tests: boolean;
+  outcome: string; // dispatched | stale | refused | invalid | unavailable | review_timeout
+  message: string;
+  at: string;
+}
+
+/** The passkey request over a launch: the commit at the branch's head it binds. */
+export interface DeployChallenge {
+  challenge_id: string;
+  options: Record<string, unknown>;
+  expires: string;
+  launch: { project: string; env: string; branch: string; sha: string; skip_tests: boolean };
+}
+
+/** A failed run that ended cards' deploy waits, in the inbox until someone saw it. */
+export interface DeployAlert extends DeployRun {
+  cards: string[];
+  alerted: string;
+}
+
+export interface DeployList {
+  envs: DeployEnv[];
+  platform: DeployRun | null;
+  now: string;
+  stale_after: number;
+}
+
+export interface DeployPage {
+  items: DeployRun[];
+  next: string | null;
+}

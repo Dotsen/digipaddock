@@ -1,6 +1,7 @@
 """Passkeys (WebAuthn) over py_webauthn: registration, discoverable login and challenges bound to decisions.
 
-Every ceremony requires user verification (Face ID, a fingerprint, a PIN); the origin and rp id are
+Every ceremony requires user verification (Face ID, a fingerprint, a PIN) — but one: the owner's signature of a
+prod deploy (``deploy_prod``, ``kd.deploy_signature``), which the owner chose to give with the saved passkey alone; the origin and rp id are
 the cabinet's own (``config.Config``); the signature counter must grow when the authenticator keeps
 one. Any failure is a ``PasskeyError`` — callers answer 401/403 and never say which check failed.
 Imports of ``webauthn`` stay inside the functions: only the service's venv has it.
@@ -121,9 +122,10 @@ def verify_registration(cfg, credential_json, challenge: bytes) -> Registered:
 
 
 def authentication_options(
-    cfg, *, challenge: Optional[bytes] = None, allow: Iterable[bytes] = ()
+    cfg, *, challenge: Optional[bytes] = None, allow: Iterable[bytes] = (), user_verification: bool = True
 ) -> Tuple[str, bytes]:
-    """Options for ``navigator.credentials.get``; no ``allow`` = discoverable (the browser offers the passkeys)."""
+    """Options for ``navigator.credentials.get``; no ``allow`` = discoverable (the browser offers the passkeys).
+    ``user_verification=False`` asks for none (``discouraged``): the prod deploy's signature only (``deploy_prod``)."""
     from webauthn import generate_authentication_options, options_to_json
     from webauthn.helpers.structs import (
         PublicKeyCredentialDescriptor,
@@ -136,15 +138,18 @@ def authentication_options(
         challenge=challenge,
         timeout=TIMEOUT_MS,
         allow_credentials=[PublicKeyCredentialDescriptor(id=c) for c in allow],
-        user_verification=UserVerificationRequirement.REQUIRED,
+        user_verification=UserVerificationRequirement.REQUIRED
+        if user_verification
+        else UserVerificationRequirement.DISCOURAGED,
     )
     return options_to_json(options), challenge
 
 
 def verify_authentication(
-    cfg, credential_json, *, challenge: bytes, public_key: bytes, sign_count: int
+    cfg, credential_json, *, challenge: bytes, public_key: bytes, sign_count: int, user_verification: bool = True
 ) -> int:
-    """The new signature counter after a valid assertion; PasskeyError otherwise."""
+    """The new signature counter after a valid assertion; PasskeyError otherwise. ``user_verification=False`` takes
+    an assertion without it (the authenticator's presence still counts) — the prod deploy's signature only."""
     from webauthn import verify_authentication_response
     from webauthn.helpers.exceptions import WebAuthnException
 
@@ -157,7 +162,7 @@ def verify_authentication(
             expected_origin=cfg.origin,
             credential_public_key=public_key,
             credential_current_sign_count=sign_count,
-            require_user_verification=True,
+            require_user_verification=user_verification,
         )
     except (WebAuthnException, KeyError, TypeError, ValueError) as exc:
         raise PasskeyError("the passkey signature was not accepted") from exc

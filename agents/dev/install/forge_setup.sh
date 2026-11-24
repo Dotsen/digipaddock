@@ -3,11 +3,12 @@
 #   forge_setup.sh install|check|disable <agent> <user>
 # install: Forgejo deploy-key preflight, secrets directory and project registry, the forge user in the group digipaddock-cabinet
 # (merge and release reports go to the card's thread; an older install's Pult token ACL is removed), the
-#   merge/comment journal, and kd-release's request directory handed to the forge user (kd-merge --release). The
-# release service itself is the host's (stage_setup.sh). Idempotent.
+#   merge/comment journal, kd-release's request directory handed to the forge user (kd-merge --release) and the
+#   deploys reader's units (digipaddock-deploys.timer, the cabinet's «Deploys»). The release service itself is the
+#   host's (stage_setup.sh). Idempotent.
 # check: the same state, changing nothing; exit 1 with the reasons.
 # disable: the request directory goes back to root — dev requests no release; root's releases go on (the release
-#   switch is the host's path unit). Secrets and journal stay.
+#   switch is the host's path unit). Secrets, journal and the deploys reader (the owner's page, not dev's) stay.
 # The forge user (<prefix>-forge, naming.sh) is the capability's executor user, created by new_agent.sh
 # before
 # this script.
@@ -22,6 +23,8 @@ PULT=/etc/digipaddock/pult.env
 CABINET=$REPO/common/install/cabinet_setup.sh
 JOURNAL=/var/log/digipaddock-forge
 LOGROTATE=/etc/logrotate.d/digipaddock-forge
+UNITS=/etc/systemd/system
+DEPLOYS_UNITS="digipaddock-deploys.service digipaddock-deploys.timer"
 # Same ssh options as kd-release: only the host key pinned in the repository, no system known_hosts.
 ROOT_SSH="ssh -i /root/.ssh/forgejo_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=$KNOWN -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null -o UpdateHostKeys=no"
 
@@ -67,6 +70,12 @@ check() {
   want "$JOURNAL/forge.jsonl" "$forge:$user" 640 650
   grep -qs "^    su $forge $user\$" "$LOGROTATE" || problems+=("$LOGROTATE: no journal rotation with group $user")
   want /var/lib/digipaddock/release "$forge:root" 750
+  local unit
+  for unit in $DEPLOYS_UNITS; do
+    kd_render "$REPO/common/systemd/$unit" | cmp -s - "$UNITS/$unit" || problems+=("$UNITS/$unit: differs from the code")
+  done
+  systemctl is-enabled --quiet digipaddock-deploys.timer || problems+=("digipaddock-deploys.timer is disabled")
+  systemctl is-active --quiet digipaddock-deploys.timer || problems+=("digipaddock-deploys.timer is not running")
   if [ ${#problems[@]} -gt 0 ]; then
     printf 'forge.review: %s\n' "${problems[@]}" >&2
     exit 1
@@ -119,6 +128,16 @@ own_requests() {
   install -d -o "$forge" -g root -m 0750 /var/lib/digipaddock/release
 }
 
+install_deploys() {
+  # The «Deploys» page's reader: the projects' Actions runs into the cabinet, under the forge user, every 45 s.
+  local unit
+  for unit in $DEPLOYS_UNITS; do
+    kd_install_rendered "$REPO/common/systemd/$unit" "$UNITS/$unit" 0644
+  done
+  systemctl daemon-reload
+  systemctl enable --now digipaddock-deploys.timer
+}
+
 install_all() {
   [ -f /root/.ssh/forgejo_deploy ] || { echo "no /root/.ssh/forgejo_deploy: the Forgejo read key for kd-release" >&2; exit 1; }
   [ -s "$KNOWN" ] || { echo "no $KNOWN: the Forgejo host key is not deployed" >&2; exit 1; }
@@ -151,6 +170,7 @@ install_all() {
   bash "$CABINET" grant "$forge"
   install_journal
   own_requests
+  install_deploys
   if python3 -I -c 'import json, sys; sys.exit(0 if "digipaddock" in json.load(open(sys.argv[1])) else 1)' "$PROJECTS"; then
     runuser -u "$forge" -- "$DEV/bin/forge_exec.py" --agent setup selfcheck digipaddock \
       || echo "warning: the selfcheck of main's protection failed (see above): kd-merge will refuse until the main rule is as in the dev agent spec §4.1" >&2

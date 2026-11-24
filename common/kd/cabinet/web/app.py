@@ -13,6 +13,7 @@ from kd.cabinet.web import (
     auth,
     cards,
     decisions,
+    deploys,
     errors,
     feed,
     files,
@@ -40,7 +41,7 @@ def create_app(svc, *, dist: Path = DIST) -> FastAPI:
         return {"ok": True}
 
     for module in (auth, stepup, settings, cards, decisions, files, feed, agents, hindsight, llm, overview,
-                   monitor_settings, servers, ws):
+                   monitor_settings, servers, deploys, ws):
         app.include_router(module.router)
     if svc.cfg.dev:
         from kd.cabinet.web import dev  # an agent's write for e2e; never in production

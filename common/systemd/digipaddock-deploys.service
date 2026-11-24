@@ -1,0 +1,28 @@
+[Unit]
+Description=DigiPaddock: reading the projects' Forgejo Actions runs into the cabinet (deploys)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The Forgejo executor's user: dev's read token (/etc/digipaddock/forge, group <prefix>-forge) and the cabinet's
+# socket (group digipaddock-cabinet). It writes nothing on disk; a failed read is the project's error on the
+# «Deploys» page, not an alert — the page marks data older than two minutes.
+Type=oneshot
+User=@forge@
+Environment=LANG=C.UTF-8 PATH=/usr/bin:/bin
+ExecStart=/usr/bin/python3 -I /opt/digipaddock/agents/dev/bin/kd-deploys
+TimeoutStartSec=50
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+MemoryMax=256M

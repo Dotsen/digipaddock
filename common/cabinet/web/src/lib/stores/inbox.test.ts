@@ -82,6 +82,25 @@ describe("inbox", () => {
     expect(inbox.decisions[0]).toMatchObject({ view: { steps: [{}] }, card: { title: "План" } });
     expect(inbox.questions[0]).toMatchObject({ view: { text: "Как?" }, card: { title: "Вопрос" } });
     expect(inbox.review.map((c) => c.id)).toEqual(["KD-3"]);
+    expect(inbox.deploys).toEqual([]); // an older cabinet sends none
+  });
+
+  it("keeps a failed deploy until someone saw it", async () => {
+    const alert = { project: "api", env: "staging", run: 4, number: 4, url: "https://forge.example.test/r/4", cards: ["KD-5"] };
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/inbox") return json({ decisions: [], questions: [], review: [], deploys: [alert] });
+      if (url === "/api/decisions?state=open" || url === "/api/cards") return json([]);
+      if (url === "/api/deploys/alerts/seen") {
+        expect(JSON.parse(String(init?.body))).toEqual({ project: "api", run: 4 });
+        return json({ seen: true });
+      }
+      throw new Error(url);
+    });
+    vi.stubGlobal("fetch", fetch);
+    await inbox.load();
+    expect(inbox.deploys.map((a) => a.cards)).toEqual([["KD-5"]]);
+    await inbox.seen(inbox.deploys[0]);
+    expect(inbox.deploys).toEqual([]);
   });
 
   it("moves review cards one by one, each with its revision, and reports every card", async () => {

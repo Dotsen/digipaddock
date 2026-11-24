@@ -115,9 +115,10 @@ async def totp(request: Request, user: deps.User, code: str):
 
 
 async def verify_passkey(
-    request: Request, user: deps.User, credential, challenge: bytes, *, signing=False
+    request: Request, user: deps.User, credential, challenge: bytes, *, signing=False, user_verification=True
 ) -> dict:
-    """A valid assertion by one of the person's own passkeys over ``challenge``; the key's row. 403 otherwise."""
+    """A valid assertion by one of the person's own passkeys over ``challenge``; the key's row. 403 otherwise.
+    ``user_verification=False`` — the prod deploy's signature only (``web/deploys.py``)."""
     service = deps.svc(request)
     try:
         row = service.users.credential(passkeys.credential_id_of(credential))
@@ -133,6 +134,7 @@ async def verify_passkey(
             challenge=challenge,
             public_key=row["public_key"],
             sign_count=row["sign_count"],
+            user_verification=user_verification,
         )
     except passkeys.PasskeyError:
         raise Failure(403, "stepup_required", "the passkey signature was not accepted")

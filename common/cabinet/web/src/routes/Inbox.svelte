@@ -1,5 +1,6 @@
 <script lang="ts">
-  // What waits for the person: open crit incidents nobody acknowledged or muted (first), decisions (several
+  // What waits for the person: open crit incidents nobody acknowledged or muted (first), failed deploys that
+  // woke cards waiting for them, decisions (several
   // of one type signed at once), agents' questions, cards in Review (several accepted or sent back at once, one card
   // at a time with its own revision).
   import { onMount } from "svelte";
@@ -34,7 +35,9 @@
   let results = $state<TransitionResult[]>([]);
 
   const groups = $derived(groupByType(inbox.decisions));
-  const total = $derived(rowCount(inbox.decisions) + inbox.questions.length + inbox.review.length + inbox.incidents.length);
+  const total = $derived(
+    rowCount(inbox.decisions) + inbox.questions.length + inbox.review.length + inbox.incidents.length + inbox.deploys.length,
+  );
   const stepUp = $derived(picked.some((row) => row.decision.step_up));
   const movable = (card: CardCompact) => session.can("cards.transition", card.project);
   const anyMovable = $derived(inbox.review.some(movable));
@@ -65,7 +68,7 @@
     const release = watchAll();
     const stop = onLiveEvent((event) => {
       if (!event.kind.startsWith("decision.") && !event.kind.startsWith("card.") && !event.kind.startsWith("incident.")
-        && !event.kind.startsWith("monitor_trust.")) {
+        && !event.kind.startsWith("monitor_trust.") && !event.kind.startsWith("deploy.") && event.kind !== "wait.rejected") {
         return;
       }
       refresh();
@@ -218,6 +221,30 @@
         </span>
         <span class="age">{age(incident.opened_at)}</span>
       </a>
+    {/each}
+  </div>
+{/if}
+
+{#if inbox.deploys.length}
+  <!-- a failed run that woke the cards waiting for it; «Got it» takes it away -->
+  <div class="section-h">{t("inbox.deploys")} <span class="n">{inbox.deploys.length}</span></div>
+  <div class="list">
+    {#each inbox.deploys as alert (`${alert.project}:${alert.run}`)}
+      <div class="item">
+        <span class="kind crit" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 3l9 16H3z" /><path d="M12 10v4M12 17v.5" /></svg>
+        </span>
+        <span>
+          <span class="t">{t("deploys.failed_run", { project: alert.project, env: alert.env, number: alert.number || alert.run })}</span>
+          <span class="s">
+            {#if alert.url}<a href={alert.url} target="_blank" rel="noopener noreferrer">{t("deploys.log")}</a>{/if}
+            {#each alert.cards as card (card)} · <a href={`/cards/${card}`}>{card}</a>{/each}
+          </span>
+        </span>
+        <button class="btn small" type="button" onclick={() => inbox.seen(alert).catch((exc) => toast(errorText(exc), "error"))}>
+          {t("deploys.seen")}
+        </button>
+      </div>
     {/each}
   </div>
 {/if}
