@@ -4,10 +4,10 @@
   // not in work, still readable.
   import { t } from "../lib/i18n.svelte";
   import { session } from "../lib/session.svelte";
-  import { projects } from "../lib/stores/projects.svelte";
   import { dayTime } from "../lib/time";
   import type { CardCompact } from "../lib/types";
   import Avatar from "./Avatar.svelte";
+  import ProjectChip from "./ProjectChip.svelte";
   import StatusPill from "./StatusPill.svelte";
 
   // status: the card's pill; "phone" — below 900px only (the board's columns name the status on a desktop)
@@ -21,7 +21,7 @@
     {#if status}<span class="pill" class:phone={status === "phone"}><StatusPill status={card.status} /></span>{/if}
     {#if card.defer}<span class="chip defer" title={card.defer.reason}>{t("defer.badge", { when: dayTime(card.defer.until, session.me?.timezone) })}</span>{/if}
     {#if card.assignee}<Avatar name={card.assignee} kind={card.assignee === "@boss" ? "boss" : card.assignee.startsWith("@") ? "agent" : "owner"} size={20} />{/if}
-    <span class="chip project" style:--pc={projects.color(card.project) || null}>{projects.name(card.project)}</span>
+    <ProjectChip id={card.project} />
     {#each card.servers as server (server)}<span class="chip text">{server}</span>{/each}
     {#each card.labels as label (label)}<span class="chip acc text">{label}</span>{/each}
   </span>
@@ -35,7 +35,6 @@
   .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
   .pill { display: inline-flex; }
   .defer { color: var(--muted); white-space: nowrap; }
-  .project { border-color: var(--pc, var(--line)); }
   /* put off until a time: sunk into the page — hatched, a dashed edge, the title muted; the muted text keeps 4.5:1 at
      this opacity */
   .bc.deferred {

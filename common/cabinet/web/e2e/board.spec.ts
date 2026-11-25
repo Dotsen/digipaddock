@@ -194,6 +194,7 @@ test("the menu's search opens a card by its number and the board by words; the b
   const chip = page.locator(".filters .chip", { hasText: /^DigiPaddock$|^digipaddock$/i }).first();
   expect(await chip.evaluate((el) => getComputedStyle(el).borderTopColor)).not.toBe(
     await page.locator(".filters .chip").first().evaluate((el) => getComputedStyle(el).borderTopColor));
+  const projectEdge = await chip.evaluate((el) => getComputedStyle(el).borderTopColor);
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/board");
@@ -204,4 +205,18 @@ test("the menu's search opens a card by its number and the board by words; the b
     await expect(tile).toBeVisible();
     await page.screenshot({ path: `../../../tmp/cabinet-dev/board-${width}-search.png` });
   }
+  // the same project chip on the card's page and in the inbox
+  const line = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--line").trim());
+  const edge = (chip: import("@playwright/test").Locator) => chip.evaluate((el) => getComputedStyle(el).borderTopColor);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/cards/${id}`);
+  const onCard = page.locator("dd .chip.project");
+  await expect(onCard).toHaveText(/digipaddock/i);
+  expect(await edge(onCard)).toBe(projectEdge);
+  await page.screenshot({ path: "../../../tmp/cabinet-dev/card-project-1280.png" });
+  await page.goto("/inbox");
+  const inInbox = page.locator("main .chip.project").first();
+  await expect(inInbox).toBeVisible();
+  expect(await edge(inInbox)).not.toBe(line);
+  await page.screenshot({ path: "../../../tmp/cabinet-dev/inbox-1280.png" });
 });

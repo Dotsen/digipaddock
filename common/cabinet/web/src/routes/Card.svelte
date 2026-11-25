@@ -15,6 +15,7 @@
   import CouncilChip from "../components/CouncilChip.svelte";
   import ModelChips from "../components/ModelChips.svelte";
   import NextStep from "../components/NextStep.svelte";
+  import ProjectChip from "../components/ProjectChip.svelte";
   import { workingAgent } from "../components/RunState.svelte";
   import Sessions from "../components/Sessions.svelte";
   import StatusOverride from "../components/StatusOverride.svelte";
@@ -206,7 +207,7 @@
           {/if}
         </dd>
         <dt>{t("card.project")}</dt>
-        <dd>{projects.name(card.project)}</dd>
+        <dd><ProjectChip id={card.project} /></dd>
         {#if canModel || card.model || card.effort}
           <ModelChips {card} editable={canModel} saving={cardPage.saving} onchange={(changes) => void cardPage.save(changes)} />
         {/if}

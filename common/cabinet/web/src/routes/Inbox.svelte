@@ -8,6 +8,7 @@
   import CardRow from "../components/CardRow.svelte";
   import Freshness from "../components/Freshness.svelte";
   import Markdown from "../components/Markdown.svelte";
+  import ProjectChip from "../components/ProjectChip.svelte";
   import SignDialog from "../components/SignDialog.svelte";
   import { riskKey } from "../components/PlanSteps.svelte";
   import { coalesce } from "../lib/coalesce";
@@ -20,7 +21,6 @@
   import { checkName, incidentHref } from "../lib/servers";
   import { session } from "../lib/session.svelte";
   import { actMany, bundleRows, canSelect, groupByType, inbox, rowCount, type InboxRow, type TransitionResult } from "../lib/stores/inbox.svelte";
-  import { projects } from "../lib/stores/projects.svelte";
   import { synced } from "../lib/synced.svelte";
   import { age } from "../lib/time";
   import { toast } from "../lib/toast.svelte";
@@ -278,7 +278,7 @@
             <span class="meta">
               <span class="chip">{t(`decision.type.${row.decision.type}` as Key)}</span>
               {#if row.decision.card}<span class="chip">{row.decision.card}</span>{/if}
-              {#if row.decision.project}<span class="chip">{projects.name(row.decision.project)}</span>{/if}
+              {#if row.decision.project}<ProjectChip id={row.decision.project} />{/if}
               {#if row.view.stale}<span class="chip warn">{t("decision.stale")}</span>{/if}
             </span>
           </span>
@@ -327,7 +327,7 @@
           <span class="cb" aria-hidden="true">{on ? "✓" : ""}</span>
           <span>
             <span class="t">{card.title}</span>
-            <span class="meta"><span class="chip">{card.id}</span><span class="chip">{projects.name(card.project)}</span></span>
+            <span class="meta"><span class="chip">{card.id}</span><ProjectChip id={card.project} /></span>
           </span>
           <span class="age">{age(card.updated)}</span>
         </button>
