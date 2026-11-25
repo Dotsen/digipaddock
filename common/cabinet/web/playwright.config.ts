@@ -33,7 +33,7 @@ export default defineConfig({
     { name: "setup-desktop", testMatch: /login\.spec\.ts/, use: desktop, metadata: { state: state("desktop") } },
     {
       name: "desktop-chromium",
-      testMatch: /(board|brief|checklists|council|decisions|diagram|live|model-keys|monitoring|nav|overview|partner|pipeline|questions|result|review|sessions|widths)\.spec\.ts/,
+      testMatch: /(board|brief|checklists|council|decisions|deploys|diagram|live|model-keys|monitoring|nav|overview|partner|pipeline|questions|result|review|sessions|widths)\.spec\.ts/,
       dependencies: ["setup-desktop"],
       use: desktop,
       metadata: { state: state("desktop") },

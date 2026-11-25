@@ -150,8 +150,8 @@ What `bootstrap.sh` installs ([install.md](install.md)); optional for an overlay
   `{"test": {"workflow": "deploy-test.yml", "branch": "master"}, "prod": {"workflow": "deploy-prod.yml",
   "branch": "master", "manual": true}}` — the Forgejo Actions workflow file that deploys each (one file per
   environment), the branch it deploys and whether it runs only by hand. A manual one gets the owner's button
-  «Deploy to prod» ([cabinet.md](cabinet.md)): `"confirm": "<input>"` names the workflow's text input that gets the
-  typed word `deploy`, `"skip_tests": true` says the workflow takes the boolean input `skip_tests`; both only with
+  «Deploy to prod» ([cabinet.md](cabinet.md)): `"confirm": "<input>"` names the workflow's text input that the approver fills
+  with the word `deploy` (the owner types nothing), `"skip_tests": true` says the workflow takes the boolean input `skip_tests`; both only with
   `"manual": true`. The deploys reader reads it from the
   release tree at every run, so a change is live after the release, with no reinstall.
 

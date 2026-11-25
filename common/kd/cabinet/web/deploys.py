@@ -9,10 +9,10 @@
 
 The button «Deploy to prod» (``deploy_prod``), the owner's only — a person holding every permission:
 
-- ``POST /api/deploys/launch/challenge {project, env, confirm: "deploy", skip_tests}`` — kd-review names the head of
-  the environment's branch (``deploy_head``; the cabinet has no network), and the person gets a passkey request over
-  the launch (``kd.deploy_signature``) with ``userVerification: discouraged`` — the one signature of the cabinet
-  without a fingerprint or PIN — and the commit it binds;
+- ``POST /api/deploys/launch/challenge {project, env, skip_tests}`` — no typed word (the owner's choice): kd-review
+  names the head of the environment's branch (``deploy_head``; the cabinet has no network), and the person gets a
+  passkey request over the launch (``kd.deploy_signature``) with ``userVerification: discouraged`` — the one
+  signature of the cabinet without a fingerprint or PIN — and the commit it binds;
 - ``POST /api/deploys/launch {challenge_id, credential}`` — the cabinet checks the assertion against the person's own
   key (no user verification asked), kd-review checks it again with its own registry, the spent nonce and the branch's
   live head and calls ``workflow_dispatch`` with its own token; the launch — dispatched or refused — is recorded
@@ -94,8 +94,6 @@ async def launch_challenge(request: Request, user: deps.User = Depends(deps.writ
     """The passkey request over a prod launch: the environment, the commit at its branch's head now, skip_tests."""
     service = deps.svc(request)
     body = await deps.json_body(request)
-    if body.get("confirm") != deploy_signature.CONFIRM:
-        raise Failure(400, "invalid", f"type {deploy_signature.CONFIRM} to confirm")
     skip_tests = body.get("skip_tests", False)
     if not isinstance(skip_tests, bool):
         raise Failure(400, "invalid", "skip_tests is true or false")

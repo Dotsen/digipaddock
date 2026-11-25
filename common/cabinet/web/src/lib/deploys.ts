@@ -1,12 +1,12 @@
-// The «Deploys» page: the journal's address, its filters and how a run's status looks; the owner's prod launch.
+// The «Deploy» page: the journal's address, its filters, how a run's status looks, what an environment says about
+// its commits; the owner's prod launch.
 import { apiPost } from "./api";
+import type { Key } from "./i18n.svelte";
 import type { DeployChallenge, DeployEnv, DeployRun } from "./types";
 import { assertPasskey } from "./webauthn";
 
 export const PLATFORM = "platform";
 export const RELEASE_ENV = "release";
-/** The word the owner types to start a prod deploy (the workflow's own «Type deploy to confirm»). */
-export const CONFIRM_WORD = "deploy";
 
 export interface Launched {
   state: string;
@@ -17,17 +17,16 @@ export interface Launched {
 }
 
 /** The launch: a challenge over the environment's branch head now, the saved passkey's signature without a
- *  fingerprint or PIN (the server asks `userVerification: discouraged`), then kd-review dispatches it. */
+ *  fingerprint or PIN (the server asks `userVerification: discouraged`), then kd-review dispatches it. No typed
+ *  word: the passkey is the confirmation. */
 export async function launchDeploy(
   row: Pick<DeployEnv, "project" | "env">,
-  confirm: string,
   skipTests: boolean,
   sign: (options: Record<string, unknown>) => Promise<unknown> = assertPasskey,
 ): Promise<Launched> {
   const challenge = await apiPost<DeployChallenge>("/api/deploys/launch/challenge", {
     project: row.project,
     env: row.env,
-    confirm,
     skip_tests: skipTests,
   });
   const credential = await sign(challenge.options);
@@ -64,12 +63,58 @@ export function statusMark(status: DeployRun["status"] | undefined): string {
   }
 }
 
-/** One row per project: its environments in the page's order; stale — any of them is. */
-export function projectRows(envs: DeployEnv[]): { id: string; name: string; envs: DeployEnv[]; stale: boolean }[] {
+export interface ProjectRow {
+  id: string;
+  name: string;
+  envs: DeployEnv[];
+  stale: boolean; // no good read of the project for two minutes
+  error: string; // the reader's last error on the project
+  okAt: string; // its last good read, '' never
+  launch: boolean; // an environment of it has the owner's button: the panel keeps the button's column
+}
+
+/** One panel per project: its environments in the page's order and how its last read went (one read per project). */
+export function projectRows(envs: DeployEnv[]): ProjectRow[] {
   return projectsOf(envs).map((p) => {
     const own = envs.filter((e) => e.project === p.id);
-    return { ...p, envs: own, stale: own.some((e) => e.stale) };
+    return {
+      ...p,
+      envs: own,
+      stale: own.some((e) => e.stale),
+      error: own.find((e) => e.error)?.error ?? "",
+      okAt: own[0]?.ok_at ?? "",
+      launch: own.some((e) => e.launch),
+    };
   });
+}
+
+export interface Delta {
+  key: Key;
+  params: Record<string, string | number>;
+  tone: "acc" | "warn" | "muted";
+}
+
+/** What an environment says about its commits: how far what it runs is ahead of prod (`ahead_of`), and how many
+ *  commits of its branch wait to be deployed there; prod itself says «all deployed» when none wait. */
+export function deltas(row: DeployEnv): Delta[] {
+  const out: Delta[] = [];
+  if (row.ahead_of && row.ahead !== null) {
+    out.push(row.ahead > 0
+      ? { key: "deploys.ahead", params: { n: row.ahead, env: row.ahead_of }, tone: "acc" }
+      : { key: "deploys.even", params: { env: row.ahead_of }, tone: "muted" });
+  }
+  if (row.pending !== null && row.pending > 0) {
+    out.push({ key: "deploys.pending", params: { n: row.pending }, tone: "warn" });
+  } else if (row.pending === 0 && !row.ahead_of) {
+    out.push({ key: "deploys.up_to_date", params: {}, tone: "muted" });
+  }
+  return out;
+}
+
+/** The run whose commit runs on the environment, when its last run is another one (failed, running). */
+export function live(row: DeployEnv): DeployRun | null {
+  const { run, deployed } = row;
+  return deployed && run && deployed.sha !== run.sha ? deployed : null;
 }
 
 /** The journal shows its runs twenty at a time. */

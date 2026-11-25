@@ -78,6 +78,10 @@ def state(store, card_id: str) -> dict:
         rev = next((n["rev"] for n in reversed(notices) if n["rev"]), "")
         current = [newest]
     last = current[-1]
+    health = [n for n in current if n["key"] in HEALTH]
+    if last["key"] == "notice.forge.released" and health:
+        # kd-merge posts «released» once the release's result is in, after the health check's own notice
+        last = health[-1]
     found.update(rev=rev, host=next((n["host"] for n in reversed(current) if n["host"]), ""), at=last["at"],
                  seq=last["seq"], key=last["key"],
                  deploy_rev=next((n["deploy_rev"] for n in reversed(current) if n["deploy_rev"]), ""))

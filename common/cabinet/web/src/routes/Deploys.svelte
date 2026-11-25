@@ -1,18 +1,21 @@
 <script lang="ts">
-  // The projects' deploys, compact: one row per project with a chip per environment — its last run's status — and
-  // the platform's last release; a chip opens the run's commit, time, who started it, the log and the cards waiting
-  // for it. The journal of runs is folded away under a button and shows twenty one-line runs at a time, with a
-  // project and environment filter. The forge reader brings the runs every 45 s; the page reads itself every 30 s,
-  // and an environment whose project was not read well for two minutes says «stale» with the time of its last good
-  // read. The owner starts a manual environment (prod) from its row: the word «deploy» typed, skip_tests where the
-  // workflow takes it, the saved passkey's signature with no fingerprint or PIN; kd-review dispatches it with its
-  // own token, and the run comes with the reader's next read.
+  // «Деплой»: a panel per project and a row per environment in the passport's order — the status of its last run,
+  // the commit it ran and when, the commit that runs there when the last run is another one, how far it is ahead of
+  // prod (`ahead_of`) and how many commits of its branch wait to be deployed there. The columns are fixed: a status
+  // or the owner's button never moves the rest. A row opens its details (the branch and its head, who started the
+  // run, its inputs and log, the cards waiting for it, the last launch from the cabinet). A project whose read
+  // failed says since when there is no fresh data and why. The platform's own release has a panel of its own; the
+  // journal of runs is folded under a button, twenty one-line runs at a time, with a project and environment filter.
+  // The forge reader brings the runs and the counts every 45 s; the page reads itself every 30 s. The owner starts a
+  // manual environment (prod) from its row: the sheet names the commit that goes out and how many new commits it
+  // brings, skip_tests where the workflow takes it, then the saved passkey's signature with no fingerprint or PIN —
+  // no typed word; kd-review dispatches it with its own token, and the run comes with the reader's next read.
   import { onMount } from "svelte";
   import Freshness from "../components/Freshness.svelte";
   import Sheet from "../components/Sheet.svelte";
   import { apiGet } from "../lib/api";
   import {
-    CONFIRM_WORD, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, PLATFORM, projectRows,
+    deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, PLATFORM, projectRows,
     projectsOf, shortSha, statusClass, statusMark,
   } from "../lib/deploys";
   import { errorText, t, type Key } from "../lib/i18n.svelte";
@@ -33,25 +36,23 @@
   let loadingMore = $state(false);
   let journalError = $state<unknown>(null);
   let launching = $state<DeployEnv | null>(null);
-  let word = $state("");
   let skipTests = $state(false);
   let busy = $state(false);
   let launchError = $state("");
 
   function openLaunch(row: DeployEnv) {
     launching = row;
-    word = "";
     skipTests = false;
     launchError = "";
   }
 
   async function launch() {
     const row = launching;
-    if (!row || word !== CONFIRM_WORD) return;
+    if (!row) return;
     busy = true;
     launchError = "";
     try {
-      const done = await launchDeploy(row, word, row.skip_tests && skipTests);
+      const done = await launchDeploy(row, row.skip_tests && skipTests);
       toast(t("deploys.launch.done", { project: row.name, env: done.env, sha: shortSha(done.sha) }));
       launching = null;
       await data.run();
@@ -66,7 +67,6 @@
   const rows = $derived(list ? projectRows(list.envs) : []);
   const envChoices = $derived(project && list ? envsOf(list.envs, project) : []);
   const view = $derived(journalView(journal.length, wanted, next !== null));
-  const openedEnv = $derived((list?.envs ?? []).find((e) => `${e.project}:${e.env}` === opened) ?? null);
 
   function toggle(key: string) {
     opened = opened === key ? "" : key;
@@ -151,31 +151,26 @@
   {#if run.card} · <a href={`/cards/${run.card}`}>{t("deploys.card", { id: run.card })}</a>{/if}
 {/snippet}
 
-{#snippet chip(key: string, label: string, status: DeployRun["status"] | undefined, stale: boolean, waiting: number)}
-  <button type="button" class="env level {statusClass(status)}" class:dim={stale} aria-expanded={opened === key}
-          aria-label={t("deploys.env_label", { env: label, status: statusText(status) })}
-          title={statusText(status)} onclick={() => toggle(key)}>
-    <span aria-hidden="true">{statusMark(status)}</span> {label}{#if waiting}<span class="count">{waiting}</span>{/if}
-  </button>
+{#snippet pill(status: DeployRun["status"] | undefined)}
+  <span class="pill {statusClass(status)}"><span aria-hidden="true">{statusMark(status)}</span> {statusText(status)}</span>
 {/snippet}
 
 {#snippet details(row: DeployEnv)}
+  {@const was = live(row)}
   <div class="details">
     <span class="muted">
-      <b>{row.name} · {row.env}</b> · <code>{t("deploys.branch", { branch: row.branch })}</code>
-      {#if row.manual} · {t("deploys.manual")}{/if} · {statusText(row.run?.status)}
+      <code>{t("deploys.branch", { branch: row.branch })}</code>
+      {#if row.head} · {t("deploys.head", { branch: row.branch, sha: shortSha(row.head) })}{/if}
+      {#if row.manual} · {t("deploys.manual")}{/if}
     </span>
-    {#if row.run}<span class="muted">{@render runLine(row.run)}</span>{/if}
+    {#if row.run}<span class="muted">{statusText(row.run.status)}: {@render runLine(row.run)}</span>{/if}
+    {#if was}<span class="muted">{statusText(was.status)}: {@render runLine(was)}</span>{/if}
     {#if row.waiting?.length}
       <span class="muted">
         {t("deploys.waiting")}:
         {#each row.waiting as w, i (w.card)}{#if i}, {/if}<a href={`/cards/${w.card}`} title={w.sha}>{w.card}</a>{/each}
       </span>
     {/if}
-    {#if row.stale}
-      <span class="warn-text">{t("deploys.stale_title", { time: row.ok_at ? when(row.ok_at) : "—" })}</span>
-    {/if}
-    {#if row.error}<span class="err">{t("deploys.read_error", { error: row.error })}</span>{/if}
     {#if row.launched}
       <span class="muted" class:err={row.launched.outcome !== "dispatched"} title={row.launched.message}>
         {t(row.launched.outcome === "dispatched" ? "deploys.launch.last" : "deploys.launch.last_refused", {
@@ -195,35 +190,62 @@
   {#if data.error}<p class="empty" role="alert">{errorText(data.error)}</p>{:else}<p class="empty">{t("app.loading")}</p>{/if}
 {:else}
   {#if list.envs.length === 0}<p class="empty">{t("deploys.empty")}</p>{/if}
-  <div class="table">
+  <div class="projects">
     {#each rows as group (group.id)}
-      <div class="prow">
-        <b class="name">{group.name}</b>
-        <div class="envs">
+      <section class="project" aria-labelledby={`deploy-${group.id}`}>
+        <h2 id={`deploy-${group.id}`}>{group.name}</h2>
+        {#if group.stale || group.error}
+          <p class="readfail" role="status">
+            <span aria-hidden="true">⚠</span>
+            {group.okAt ? t("deploys.no_data", { time: when(group.okAt) }) : t("deploys.no_data_never")}{#if group.error}:
+              <span class="why">{group.error}</span>{/if}
+          </p>
+        {/if}
+        <div class="envs" class:launchable={group.launch}>
           {#each group.envs as row (row.env)}
-            <span class="pair">
-              {@render chip(`${row.project}:${row.env}`, row.env, row.run?.status, row.stale, row.waiting?.length ?? 0)}
+            {@const key = `${row.project}:${row.env}`}
+            {@const was = live(row)}
+            <div class="erow" class:open={opened === key} class:dim={group.stale}>
+              <button type="button" class="ehead" aria-expanded={opened === key} onclick={() => toggle(key)}>
+                <span class="ename">{row.env}</span>
+                {@render pill(row.run?.status)}
+                <span class="what">
+                  {#if row.run}
+                    <span><code title={row.run.sha}>{shortSha(row.run.sha)}</code>
+                      <span class="muted" title={when(row.run.created)}>{age(row.run.created)}</span></span>
+                  {/if}
+                  {#if was}<span class="muted">{t("deploys.live", { sha: shortSha(was.sha), age: age(was.created) })}</span>{/if}
+                  {#each deltas(row) as d (d.key)}<span class="delta {d.tone}">{t(d.key, d.params)}</span>{/each}
+                  {#if row.waiting?.length}
+                    <span class="delta muted">{t("deploys.waiting_count", { n: row.waiting.length })}</span>
+                  {/if}
+                </span>
+              </button>
               {#if row.launch}
-                <button class="btn small primary" type="button" onclick={() => openLaunch(row)}>
-                  {t("deploys.launch.button")}
-                </button>
+                <span class="act">
+                  <button class="btn small primary" type="button" onclick={() => openLaunch(row)}>
+                    {t("deploys.launch.button")}
+                  </button>
+                </span>
               {/if}
-            </span>
+              {#if opened === key}{@render details(row)}{/if}
+            </div>
           {/each}
         </div>
-        {#if group.stale}
-          <span class="chip warn">{t("deploys.stale")}</span>
-        {/if}
-      </div>
-      {#if openedEnv && openedEnv.project === group.id}{@render details(openedEnv)}{/if}
+      </section>
     {/each}
-    <div class="prow">
-      <b class="name">{t("deploys.platform")}</b>
+    <section class="project" aria-labelledby="deploy-platform">
+      <h2 id="deploy-platform">{t("deploys.platform")}</h2>
       <div class="envs">
-        {@render chip(PLATFORM, t("deploys.release"), list.platform?.status, false, 0)}
-        {#if list.platform}<span class="muted line">{@render runLine(list.platform)}</span>{/if}
+        <div class="erow">
+          <div class="ehead static">
+            <span class="ename">{t("deploys.release")}</span>
+            {@render pill(list.platform?.status)}
+            <span class="what muted">{#if list.platform}<span>{@render runLine(list.platform)}</span>{/if}</span>
+          </div>
+        </div>
       </div>
-    </div>
+    </section>
   </div>
 
   <section class="journal">
@@ -251,7 +273,7 @@
         <ul class="runs" aria-label={t("deploys.journal")}>
           {#each journal.slice(0, view.shown) as run (`${run.project}:${run.run}`)}
             <li>
-              <span class="mark level {statusClass(run.status)}" title={statusText(run.status)}>
+              <span class="mark {statusClass(run.status)}" title={statusText(run.status)}>
                 <span aria-hidden="true">{statusMark(run.status)}</span>
                 <span class="visually-hidden">{statusText(run.status)}</span>
               </span>
@@ -272,11 +294,20 @@
 
 {#if launching}
   <Sheet title={t("deploys.launch.title", { project: launching.name, env: launching.env })} onclose={() => (launching = null)}>
-    <p>{t("deploys.launch.what", { branch: launching.branch })}</p>
-    <label class="field">
-      <span>{t("deploys.launch.type", { word: CONFIRM_WORD })}</span>
-      <input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={word} />
-    </label>
+    <p>
+      {launching.head
+        ? t("deploys.launch.head", { branch: launching.branch, sha: shortSha(launching.head) })
+        : t("deploys.launch.head_unknown", { branch: launching.branch })}
+    </p>
+    {#if launching.pending !== null}
+      <p>
+        {launching.pending > 0
+          ? t("deploys.launch.pending", {
+              env: launching.env, sha: launching.deployed ? shortSha(launching.deployed.sha) : "—", n: launching.pending,
+            })
+          : t("deploys.launch.nothing", { env: launching.env })}
+      </p>
+    {/if}
     {#if launching.skip_tests}
       <label class="check">
         <input type="checkbox" bind:checked={skipTests} />
@@ -287,41 +318,65 @@
     {#if launchError}<p class="error-text" role="alert">{launchError}</p>{/if}
     <div class="actions">
       <button type="button" class="btn" disabled={busy} onclick={() => (launching = null)}>{t("action.cancel")}</button>
-      <button type="button" class="btn primary" disabled={busy || word !== CONFIRM_WORD} onclick={() => void launch()}>
-        {t("deploys.launch.sign")}
+      <button type="button" class="btn primary" disabled={busy} onclick={() => void launch()}>
+        {t("deploys.launch.go")}
       </button>
     </div>
   </Sheet>
 {/if}
 
 <style>
-  .table {
-    margin-top: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  .projects { display: grid; gap: 14px; margin-top: 4px; }
+  .project {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
   }
-  .prow {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 12px;
+  .project h2 { margin: 0; padding: 14px 16px 10px; font-size: 17px; font-weight: 650; line-height: 1.3; }
+  .readfail {
+    margin: 0 16px 10px; padding: 8px 10px; border-radius: 8px; font-size: 13px; line-height: 1.4;
+    color: var(--warn); background: var(--warn-bg); overflow-wrap: anywhere;
+  }
+  .readfail .why { color: var(--text); }
+  /* one grid per panel: the environment, its status, what it runs, the owner's button — the columns never move */
+  .envs { display: grid; grid-template-columns: 6.5rem 8rem minmax(0, 1fr); }
+  .envs.launchable { grid-template-columns: 6.5rem 8rem minmax(0, 1fr) 8rem; }
+  .erow {
+    grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center;
     border-top: 1px solid var(--line);
   }
-  .prow:first-child { border-top: 0; }
-  .name { min-width: 96px; font-size: 14px; }
-  .envs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-  .pair { display: inline-flex; align-items: center; gap: 4px; }
-  .env {
-    display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 10px;
-    border: 1px solid var(--line); border-radius: var(--radius); font: inherit; font-size: 13px; cursor: pointer;
+  .erow.dim .ehead { opacity: .75; }
+  .ehead {
+    grid-column: 1 / 4; display: grid; grid-template-columns: subgrid; align-items: center; min-height: 48px;
+    padding: 8px 0 8px 16px; background: none; border: 0; color: inherit; font: inherit; text-align: left;
+    cursor: pointer;
   }
-  .env[aria-expanded="true"] { border-color: currentColor; }
-  .env.dim { opacity: .7; }
-  .count {
-    margin-left: 2px; padding: 0 5px; border-radius: 8px; font-size: 11px;
-    background: var(--surface); color: var(--muted);
+  .ehead:hover, .erow.open .ehead { background: var(--surface-2); }
+  .ehead.static { cursor: default; }
+  .ehead.static:hover { background: none; }
+  .ename { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; padding-right: 8px; }
+  .pill {
+    justify-self: start; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px;
+    border-radius: 999px; font-size: 12.5px; font-weight: 500; white-space: nowrap;
   }
+  .what {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; padding-right: 12px;
+    font-size: 13px; overflow-wrap: anywhere;
+  }
+  .delta { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .delta.acc { color: var(--accent); }
+  .delta.warn { color: var(--warn); }
+  .delta.muted { color: var(--muted); font-weight: 400; }
+  .act { grid-column: 4; padding-right: 16px; }
+  .act .btn { width: 100%; }
   .details {
-    display: grid; gap: 2px; padding: 6px 12px 8px; font-size: 12px; overflow-wrap: anywhere;
-    border-top: 1px dashed var(--line);
+    grid-column: 1 / -1; display: grid; gap: 3px; padding: 8px 16px 12px; font-size: 12.5px;
+    background: var(--surface-2); overflow-wrap: anywhere;
   }
-  .line { font-size: 12px; overflow-wrap: anywhere; }
-  .journal { margin-top: 12px; }
+  :is(.pill, .mark).ok { color: var(--good); background: var(--good-bg); }
+  :is(.pill, .mark).crit { color: var(--crit); background: var(--crit-bg); }
+  :is(.pill, .mark).warn { color: var(--warn); background: var(--warn-bg); }
+  :is(.pill, .mark).off { color: var(--muted); background: var(--surface-2); }
+  .err { color: var(--crit); }
+  .journal { margin-top: 14px; }
   .filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
   .runs { list-style: none; margin: 0; padding: 0; }
   .runs li {
@@ -330,15 +385,13 @@
   }
   .runs li b { font-size: 13px; }
   .mark { display: inline-flex; justify-content: center; min-width: 22px; border-radius: var(--radius); }
-  .err { color: var(--crit); }
-  .warn-text { color: var(--warn); }
   .check { display: flex; gap: 8px; align-items: center; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; }
-  .level.crit { color: var(--crit); background: var(--crit-bg); }
-  .level.warn, .chip.warn { color: var(--warn); background: var(--warn-bg); }
-  .level.ok { color: var(--good); background: var(--good-bg); }
-  .level.off { color: var(--muted); background: var(--surface); }
+  /* a phone: the environment and its status on one line, what it runs under the status, the button full width */
   @media (max-width: 599px) {
-    .name { min-width: 0; flex-basis: 100%; }
+    .envs, .envs.launchable { grid-template-columns: 5.5rem minmax(0, 1fr); }
+    .ehead { grid-column: 1 / -1; row-gap: 4px; padding-right: 16px; }
+    .what { grid-column: 2; padding-right: 0; }
+    .act { grid-column: 1 / -1; padding: 0 16px 12px; }
   }
 </style>

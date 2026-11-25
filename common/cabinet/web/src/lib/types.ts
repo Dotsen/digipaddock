@@ -1321,10 +1321,15 @@ export interface DeployEnv {
   stale: boolean;
   run: DeployRun | null;
   waiting: { card: string; sha: string }[]; // cards whose deploy wait names this environment
-  confirm: string; // a manual workflow's input that gets the typed word «deploy»
+  confirm: string; // a manual workflow's input kd-review fills with the word «deploy»
   skip_tests: boolean; // a manual workflow takes skip_tests
   launch: boolean; // the button «Deploy to prod»: a manual environment, for the owner
   launched: DeployLaunch | null; // the newest launch from the cabinet
+  deployed: DeployRun | null; // its newest successful run: what runs there
+  head: string; // its branch's head as the reader last saw it, '' unknown
+  pending: number | null; // commits of the branch not deployed there yet; null unknown
+  ahead: number | null; // commits it runs that ahead_of (prod) does not; null unknown
+  ahead_of: string; // the environment it is measured against, '' none (prod itself)
 }
 
 /** A launch the owner signed in the cabinet: dispatched, or refused with kd-review's reason. */

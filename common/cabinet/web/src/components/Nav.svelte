@@ -1,8 +1,8 @@
 <script lang="ts">
   // The app's menu: a bottom tab bar on a phone, a side menu from 900px. The inbox first, then the dashboard
   // and the coordinator's page with its chat (new tasks and "how is it going" in one tap); the inbox
-  // shows its badge. The tab bar keeps the inbox, the dashboard, BOSS and the agents, the rest is under
-  // "More" (a sheet from below); the side menu folds to a strip of icons. The incidents join the tab bar
+  // shows its badge. The tab bar keeps the inbox, the dashboard, BOSS and the deploys (the agents for who does
+  // not read the deploys), the rest is under "More" (a sheet from below); the side menu folds to a strip of icons. The incidents join the tab bar
   // for who reads the servers, with the count of those not resolved. "Add task" opens the new
   // card's form from any page — at the top of the side menu, the first entry of "More" on a phone.
   import { t, type Key } from "../lib/i18n.svelte";
@@ -21,6 +21,7 @@
     icon: string;
     agent?: string; // the agent route of this agent only; the agents item then skips it
     more?: boolean; // on a phone: under "More", not in the tab bar
+    moreFor?: string; // under "More" for who holds this permission (its tab goes to the item that needs it)
     perm?: string; // shown only to who holds it (the servers — servers.read)
   }
 
@@ -56,10 +57,12 @@
       icon: '<rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="13" rx="1"/>',
     },
     {
-      path: "/agents",
-      label: "nav.agents",
-      routes: ["agents", "agent"],
-      icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+      // the projects' deploys and their journal: the owner and who holds deploys.read; the agents' tab
+      path: "/deploys",
+      label: "nav.deploys",
+      routes: ["deploys"],
+      perm: "deploys.read",
+      icon: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/>',
     },
     {
       path: "/servers",
@@ -75,13 +78,12 @@
       icon: '<path d="M12 3L2 21h20L12 3z"/><path d="M12 9v5M12 17v1"/>',
     },
     {
-      // the projects' deploys and their journal: the owner and who holds deploys.read
-      path: "/deploys",
-      label: "nav.deploys",
-      routes: ["deploys"],
-      more: true,
-      perm: "deploys.read",
-      icon: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/>',
+      // in the tab bar for who does not read the deploys, under "More" for who does
+      path: "/agents",
+      label: "nav.agents",
+      routes: ["agents", "agent"],
+      moreFor: "deploys.read",
+      icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
     },
     {
       path: "/feed",
@@ -109,8 +111,9 @@
   const ITEMS = $derived(
     ALL.filter((item) => (!item.agent || session.can("agents.chat")) && (!item.perm || session.can(item.perm))),
   );
-  const TABS = $derived(ITEMS.filter((item) => !item.more));
-  const MORE = $derived(ITEMS.filter((item) => item.more));
+  const underMore = (item: Item) => item.more || (!!item.moreFor && session.can(item.moreFor));
+  const TABS = $derived(ITEMS.filter((item) => !underMore(item)));
+  const MORE = $derived(ITEMS.filter(underMore));
   const coordinatorItem = $derived(ITEMS.some((item) => item.agent === COORDINATOR));
   const moreActive = $derived(MORE.some(active));
 

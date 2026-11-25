@@ -176,7 +176,7 @@ def _signer(w, client=None):
 
 def _challenge(w, client=None, **over):
     client = client or w.client
-    body = {"project": "api", "env": "prod", "confirm": "deploy", "skip_tests": False, **over}
+    body = {"project": "api", "env": "prod", "skip_tests": False, **over}
     return client.post("/api/deploys/launch/challenge", headers=_h(w, client), json=body)
 
 
@@ -224,13 +224,16 @@ def test_another_person_gets_no_button_and_a_refusal(w):
     assert w.review.calls == []
 
 
-def test_without_the_typed_word_nothing_is_asked(w):
+def test_the_launch_asks_for_the_passkey_alone(w):
+    """No typed word: the sheet shows what goes out, the passkey signs it (the owner's choice after KD-9447).
+    A word a client still sends changes nothing; a broken skip_tests or a self-deploying environment asks nothing."""
     w.login("owner")
     _signer(w)
-    for over in ({"confirm": ""}, {"confirm": "Deploy"}, {"confirm": None}, {"skip_tests": "yes"}):
-        assert _challenge(w, **over).status_code == 400, over
+    assert _challenge(w).status_code == 200
+    assert _challenge(w, confirm="whatever").status_code == 200
+    assert _challenge(w, skip_tests="yes").status_code == 400
     assert _challenge(w, env="staging").status_code == 404  # deploys by itself: no button
-    assert [c for c in w.review.calls if c["op"] != "keys"] == []
+    assert [c["op"] for c in w.review.calls if c["op"] != "keys"] == ["deploy_head", "deploy_head"]
 
 
 def test_without_a_signature_nothing_starts(w):

@@ -104,6 +104,7 @@ def authors() -> frozenset:
 STATUS_PREFIX = "devcheck/"  # a passport profile's status context (spec §9)
 TIMEOUT = 30
 LIMIT = 1024 * 1024
+TOTAL_BODY = 64 * 1024  # a one-item list asked only for its X-Total-Count header
 COMMENT_MAX = 4096
 PR_RE = re.compile(r"[1-9][0-9]{0,6}")
 # kd-forge status: a commit by its hash only — a branch name would read whatever it points at now
@@ -226,10 +227,26 @@ class Api:
             "Authorization": f"token {self._token}", "Accept": "text/plain"})
         return self._read(req, limit).decode("utf-8", "replace")
 
+    def total(self, path: str, params: Optional[dict] = None) -> int:
+        """The size of a list from its ``X-Total-Count`` header; ask for one item (``limit=1``), the body is not
+        read past a small cap."""
+        url = self.base + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        req = urllib.request.Request(url, method="GET", headers={
+            "Authorization": f"token {self._token}", "Accept": "application/json"})
+        _, headers = self._fetch(req, TOTAL_BODY)
+        value = str(headers.get("X-Total-Count", "") if headers is not None else "")
+        if not value.isdigit():
+            raise ForgeError("Forgejo не дал X-Total-Count")
+        return int(value)
+
     def _read(self, req, limit: int) -> bytes:
+        return self._fetch(req, limit)[0]
+
+    def _fetch(self, req, limit: int):
+        """At most ``limit + 1`` bytes of the answer and its headers (None when the opener gives none)."""
         try:
             with self._opener(req, timeout=TIMEOUT) as resp:
-                return resp.read(limit + 1)
+                return resp.read(limit + 1), getattr(resp, "headers", None)
         except urllib.error.HTTPError as exc:
             try:
                 message = json.loads(exc.read(LIMIT) or b"{}").get("message", "")
@@ -369,6 +386,15 @@ def _target(repo: repos.Repo, data: dict) -> str:
     if base not in repo.targets:
         raise ForgeError(f"PR в ветку {base or '?'} — её нет в targets проекта: {', '.join(repo.targets)}")
     return base
+
+
+def commits_between(api: Api, repo: str, head: str, base: str) -> int:
+    """How many commits ``head`` has that ``base`` lacks (``git rev-list --count base..head``): the commits list's
+    total, one item asked, no diff computed — a compare would build the whole range's diff for a number."""
+    if head == base:
+        return 0
+    return api.total(f"/repos/{repo}/commits", {"sha": head, "not": base, "limit": 1, "page": 1, "stat": "false",
+                                                "verification": "false", "files": "false"})
 
 
 def contains(api: Api, repo: str, head: str, base_sha: str) -> bool:

@@ -91,13 +91,26 @@ def _run(run, workflow="deploy-test.yml", status="success", **over):
 
 
 class Api:
-    def __init__(self, answers):
-        self.answers, self.calls = answers, []
+    """Forgejo's answers by path; a branch it does not name is Forgejo's 404. ``totals``: (head, base) → the count
+    of commits head has that base lacks (forge.commits_between)."""
+
+    def __init__(self, answers, totals=None):
+        self.answers, self.calls, self.totals = answers, [], dict(totals or {})
 
     def get(self, path, params=None, max_bytes=forge.LIMIT):
         self.calls.append((path, params))
         self.max_bytes = max_bytes
-        answer = self.answers[path]
+        default = forge.ForgeError("Forgejo 404: not found", 404) if "/branches/" in path else KeyError(path)
+        answer = self.answers.get(path, default)
+        if callable(answer):  # an answer per request (per workflow_id)
+            answer = answer(params)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def total(self, path, params=None):
+        self.calls.append((path, params))
+        answer = self.totals.get((params["sha"], params["not"]), forge.ForgeError("Forgejo 500", 500))
         if isinstance(answer, Exception):
             raise answer
         return answer
@@ -244,10 +257,11 @@ def test_main_reports_every_project_and_one_failure_is_that_projects_error(
         )
         == 0
     )
-    # one read per environment, of its own workflow: a busy workflow never pushes another env's runs out
+    # one read per environment, of its own workflow: a busy workflow never pushes another env's runs out; page 1
+    # named — without it Forgejo 15 ignores limit and sends the whole history
     assert api.calls[:2] == [
-        ("/repos/o/alert/actions/runs", {"workflow_id": "deploy-test.yml", "limit": deploys.LIMIT}),
-        ("/repos/o/alert/actions/runs", {"workflow_id": "deploy-prod.yml", "limit": deploys.LIMIT}),
+        ("/repos/o/alert/actions/runs", {"workflow_id": "deploy-test.yml", "limit": deploys.LIMIT, "page": 1}),
+        ("/repos/o/alert/actions/runs", {"workflow_id": "deploy-prod.yml", "limit": deploys.LIMIT, "page": 1}),
     ]
     assert api.max_bytes == deploys.RUNS_MAX
     (request,) = client.requests
@@ -375,6 +389,104 @@ def test_without_the_watch_list_the_runs_are_reported_all_the_same(tmp_path, cap
     assert deploys.main(api_factory=lambda: api, client=client, projects=_projects(tmp_path)) == 0
     assert client.requests[0]["sources"][0]["includes"] == []
     assert "ожидания карточек не прочитаны" in capsys.readouterr().err
+
+
+def _env(env, branch, manual=False):
+    return {"env": env, "workflow": f"deploy-{env}.yml", "branch": branch, "manual": manual, "confirm": "",
+            "skip_tests": False}
+
+
+def test_an_answer_that_ignores_the_limit_is_cut_and_a_source_fits_the_cabinet():
+    """Forgejo once sent a repository's whole history for limit=20 (arm: 411 runs): the cabinet refuses a source of
+    more than 100 runs, and with it the whole report — the reader keeps each workflow's newest LIMIT runs and the
+    source's newest 100."""
+    envs = [_env(f"e{i}", "main") for i in range(6)]
+    items = [
+        _run(n * 100 + k, workflow=f"deploy-e{n}.yml", prettyref="main",
+             created=f"2026-11-{10 + n:02d}T{k:02d}:00:00Z")
+        for n in range(6) for k in range(24)
+    ]
+    api = Api({"/repos/o/many/actions/runs": lambda params: {"workflow_runs": [
+        i for i in items if i["workflow_id"] == params["workflow_id"]]}})
+    got = deploys.read(api, {"project": "many", "repo": "o/many", "envs": envs})
+    assert got["error"] == "" and len(got["runs"]) == cabinet_deploys.RUNS_MAX
+    # each workflow kept its first LIMIT items of the answer, and the source kept the newest of them
+    assert {r["run"] % 100 for r in got["runs"]} <= set(range(deploys.LIMIT))
+    assert min(r["created"] for r in got["runs"]) >= "2026-11-11"
+    cabinet_deploys._sources([{**got, "includes": []}])  # the cabinet takes it
+
+
+T, S, P, X, H = ("1" * 40, "2" * 40, "3" * 40, "4" * 40, "5" * 40)
+ALERT = [_env("test", "master"), _env("stage", "dev"), _env("prod", "master", manual=True)]
+
+
+def _r(run, env, status, sha, created):
+    return {"run": run, "env": env, "status": status, "sha": sha, "created": created}
+
+
+def _source(runs, envs=ALERT):
+    return {"project": "alert", "repo": "o/alert", "envs": envs, "runs": runs, "error": ""}
+
+
+MASTER = {"/repos/o/alert/branches/master": {"name": "master", "commit": {"id": H}}}
+
+
+def test_each_environment_says_what_waits_and_how_far_it_is_ahead_of_prod():
+    """prod (the only manual environment) deployed P; its newer run failed, so P is still what runs there. master's
+    head H is 3 commits past P; test deployed H itself (nothing waits, no question asked), 3 commits ahead of prod;
+    stage deploys dev — a branch Forgejo does not know: its head is unknown, its lead over prod is still counted."""
+    runs = [
+        _r(1, "test", "success", H, "2026-11-25T10:00:00Z"),
+        _r(2, "stage", "success", S, "2026-11-25T09:00:00Z"),
+        _r(3, "prod", "success", P, "2026-11-25T08:00:00Z"),
+        _r(4, "prod", "failure", X, "2026-11-25T11:00:00Z"),
+        _r(5, "test", "running", T, "2026-11-25T12:00:00Z"),
+    ]
+    api = Api(MASTER, totals={(H, P): 3, (S, P): 2})
+    budget = [20]
+    measured = deploys.measure(api, _source(runs), budget)
+    assert [(e["env"], e["head"], e["pending"], e["ahead"], e["ahead_of"]) for e in measured] == [
+        ("test", H, 0, 3, "prod"),
+        ("stage", "", None, 2, "prod"),
+        ("prod", H, 3, None, ""),
+    ]
+    assert measured[2]["manual"] is True  # the passport's fields stay
+    assert [p for p, _ in api.calls if "/branches/" in p] == [
+        "/repos/o/alert/branches/master", "/repos/o/alert/branches/dev"]
+    assert budget == [17]  # three counts: test and stage against prod, prod's own pending
+
+
+def test_a_count_past_the_budget_or_refused_is_unknown():
+    runs = [_r(1, "test", "success", T, "2026-11-25T10:00:00Z"), _r(2, "prod", "success", P, "2026-11-25T08:00:00Z")]
+    api = Api(MASTER, totals={(H, T): forge.ForgeError("Forgejo 500", 500), (T, P): 4, (H, P): 5})
+    measured = deploys.measure(api, _source(runs, ALERT[:1] + ALERT[2:]), [2])
+    assert [(e["env"], e["pending"], e["ahead"]) for e in measured] == [("test", None, 4), ("prod", None, None)]
+
+
+@pytest.mark.parametrize("envs, expected", [
+    (ALERT, "prod"),
+    ([_env("staging", "main"), _env("live", "main", manual=True)], "live"),
+    ([_env("a", "main", manual=True), _env("prod", "main", manual=True)], "prod"),
+    ([_env("prod", "main")], "prod"),
+    ([_env("test", "main"), _env("stage", "dev")], ""),
+])
+def test_the_reference_is_the_only_manual_environment_or_prod(envs, expected):
+    assert deploys.reference(envs) == expected
+
+
+def test_the_measured_environments_reach_the_cabinet(tmp_path):
+    api = Api({
+        "/repos/o/alert/actions/runs": {"workflow_runs": [
+            _run(1, commit_sha=H), _run(2, workflow="deploy-prod.yml", commit_sha=P)]},
+        "/repos/o/keeta/actions/runs": {"workflow_runs": []},
+        **MASTER,
+    }, totals={(H, P): 3})
+    client = Client()
+    assert deploys.main(api_factory=lambda: api, client=client, projects=_projects(tmp_path)) == 0
+    alert, keeta = client.requests[0]["sources"]
+    assert [(e["env"], e["pending"], e["ahead"], e["ahead_of"]) for e in alert["envs"]] == [
+        ("test", 0, 3, "prod"), ("prod", 3, None, "")]
+    assert [(e["env"], e["head"], e["pending"]) for e in keeta["envs"]] == [("prod", "", None)]
 
 
 @pytest.mark.parametrize(

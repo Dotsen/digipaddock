@@ -7,8 +7,10 @@ timer under the forge user) reads the Actions runs of every environment the proj
 - ``deploy.report {sources: [{project, repo, envs, runs, error}]}`` — the forge only: the environments of every
   project with deploys (a project the report leaves out is no longer shown), the runs it read (one row per run,
   updated while it runs) and what failed reading it. Returns the runs that changed (``changed``).
-- ``deploy.list`` — the page's top: each environment's last run, ``stale`` when its project was last read
-  successfully more than ``STALE_S`` seconds ago, and the platform's own last release (``platform``).
+- ``deploy.list`` — the page's top: each environment's last run, what it deployed (``deployed``, its newest
+  successful run), the reader's measures (``head`` of its branch, ``pending`` commits not deployed yet, ``ahead``
+  of the environment ``ahead_of`` names — prod), ``stale`` when its project was last read successfully more than
+  ``STALE_S`` seconds ago, and the platform's own last release (``platform``).
 - ``deploy.runs {project?, env?, before?, limit?}`` — the journal: runs newest first, the platform's releases
   among them (project ``platform``, env ``release``).
 - ``deploy.watch`` — the forge only: the commits the cards' open ``deploy`` waits name, with the runs whose
@@ -52,6 +54,8 @@ PLATFORM, RELEASE_ENV = "platform", "release"
 SOURCES_MAX, ENVS_MAX, RUNS_MAX = 32, 8, 100
 JOURNAL_DEFAULT, JOURNAL_MAX = 50, 200
 INPUTS_MAX, INPUT_MAX = 8, 200
+# the reader's measures of an environment, with their values when it sends none
+MEASURES = {"head": "", "pending": None, "ahead": None, "ahead_of": ""}
 NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
 REPO = re.compile(r"[A-Za-z0-9_.-]{1,64}/[A-Za-z0-9_.-]{1,100}")
 WORKFLOW = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.ya?ml")
@@ -106,22 +110,24 @@ def _text(value, name: str, limit: int) -> str:
     return value
 
 
+def _count(value, name: str):
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+        raise _invalid(f"{name} is a count of commits or null")
+    return value
+
+
 def _envs(project: str, value) -> List[dict]:
     if not isinstance(value, list) or len(value) > ENVS_MAX:
         raise _invalid(f"{project}: envs is a list of at most {ENVS_MAX}")
     out, names, files = [], set(), set()
     for item in value:
         # confirm and skip_tests: a manual environment's inputs to the owner's button (a reader of before KD-9447
-        # sends neither)
+        # sends neither); head, pending, ahead, ahead_of: the reader's measures (none from an older reader)
         if not isinstance(item, dict) or not {"env", "workflow", "branch", "manual"} <= set(item) <= {
-            "env",
-            "workflow",
-            "branch",
-            "manual",
-            "confirm",
-            "skip_tests",
+            "env", "workflow", "branch", "manual", "confirm", "skip_tests", *MEASURES,
         }:
-            raise _invalid(f"{project}: an env is {{env, workflow, branch, manual[, confirm, skip_tests]}}")
+            raise _invalid(f"{project}: an env is {{env, workflow, branch, manual[, confirm, skip_tests, head, "
+                           "pending, ahead, ahead_of]}}")
         env, workflow, branch, manual = (
             item["env"],
             item["workflow"],
@@ -151,12 +157,22 @@ def _envs(project: str, value) -> List[dict]:
             raise _invalid(
                 f"{project}: {env}: branch is a branch name, manual true or false"
             )
+        head, ahead_of = item.get("head", ""), item.get("ahead_of", "")
+        if not isinstance(head, str) or (head and not SHA40.fullmatch(head)):
+            raise _invalid(f"{project}: {env}: head is a full commit hash or ''")
+        if not isinstance(ahead_of, str) or (ahead_of and not NAME.fullmatch(ahead_of)) or ahead_of == env:
+            raise _invalid(f"{project}: {env}: ahead_of names another environment or ''")
         names.add(env)
         files.add(workflow)
         out.append(
             {"env": env, "workflow": workflow, "branch": branch, "manual": manual,
-             "confirm": confirm if manual else "", "skip_tests": skip_tests and manual}
+             "confirm": confirm if manual else "", "skip_tests": skip_tests and manual, "head": head,
+             "pending": _count(item.get("pending"), f"{project}: {env}: pending"),
+             "ahead": _count(item.get("ahead"), f"{project}: {env}: ahead"), "ahead_of": ahead_of}
         )
+    for item in out:
+        if item["ahead_of"] and item["ahead_of"] not in names:
+            raise _invalid(f"{project}: {item['env']}: ahead_of names another environment or ''")
     return out
 
 
@@ -394,10 +410,21 @@ def last_run(s, project: str, env: str) -> Optional[dict]:
     return found[0] if found else None
 
 
+def deployed(s, project: str, env: str) -> Optional[dict]:
+    """The environment's newest successful run: what runs there, even when a later run failed."""
+    row = s._conn.execute(
+        "SELECT * FROM deploy_runs WHERE project=? AND env=? AND status='success' ORDER BY created DESC, run DESC"
+        " LIMIT 1", (project, env)).fetchone()
+    return _row(row) if row else None
+
+
 def platform_releases(s, limit: int = JOURNAL_DEFAULT) -> List[dict]:
     """The platform's releases as runs, newest first: one per revision its notices name — when it switched, the
-    card it came from, its latest state (switched → running, healthy → success, degraded or refused → failure)."""
+    card it came from, its state (switched → running, healthy → success, degraded or refused → failure). The newest
+    notice that decides — any but the forge's «released» — is the state: kd-merge posts «released» once the
+    release's result is in, seconds after the health check's own notice."""
     by_rev: Dict[str, dict] = {}
+    decided: Dict[str, bool] = {}
     order: List[str] = []
     for r in s._conn.execute(RELEASES, (RELEASE_SCAN,)):
         payload = json.loads(r["payload"])
@@ -408,11 +435,12 @@ def platform_releases(s, limit: int = JOURNAL_DEFAULT) -> List[dict]:
         )  # a refusal names no revision: a row of its own
         state = releases.FORGE.get(key) or releases.HEALTH.get(key) or ""
         status = RELEASE_STATUS.get(state, "unknown")
+        decides = key != "notice.forge.released"
         if rev not in by_rev:
             if len(order) == limit:
                 break
-            # newest first: the first notice of a revision is its state
             order.append(rev)
+            decided[rev] = decides
             by_rev[rev] = {
                 "project": PLATFORM,
                 "env": RELEASE_ENV,
@@ -433,8 +461,12 @@ def platform_releases(s, limit: int = JOURNAL_DEFAULT) -> List[dict]:
                 "card": r["card"] or "",
             }
         else:  # an older notice of the revision moves its start back to the switch
-            by_rev[rev]["created"] = by_rev[rev]["started"] = r["ts"]
-            by_rev[rev]["card"] = by_rev[rev]["card"] or r["card"] or ""
+            row = by_rev[rev]
+            row["created"] = row["started"] = r["ts"]
+            row["card"] = row["card"] or r["card"] or ""
+            if decides and not decided[rev]:
+                decided[rev] = True
+                row["status"], row["stopped"] = status, (r["ts"] if status in FINISHED else "")
     return [by_rev[rev] for rev in order[:limit]]
 
 
@@ -688,12 +720,14 @@ def _list(ctx, principal, request):
                     "project": src["project"],
                     "name": names.get(src["project"], src["project"]),
                     "repo": src["repo"],
+                    **MEASURES,
                     **env,
                     "read_at": src["read_at"],
                     "ok_at": src["ok_at"],
                     "error": src["error"],
                     "stale": stale,
                     "run": last_run(s, src["project"], env["env"]),
+                    "deployed": deployed(s, src["project"], env["env"]),
                     "waiting": waiting(s, src["project"], env["env"]),
                     # the button «Deploy to prod»: a manual environment, for the owner only
                     "launch": owner and env["manual"],

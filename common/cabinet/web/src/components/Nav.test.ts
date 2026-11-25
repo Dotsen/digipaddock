@@ -36,8 +36,8 @@ it("lists the inbox first, the dashboard, BOSS, then the rest; the tab bar keeps
   const { container } = render(Nav);
   const side = container.querySelector<HTMLElement>("nav.side")!;
   const tabbar = container.querySelector<HTMLElement>("nav.tabbar")!;
-  expect(names(side)).toEqual(["Входящие", "Дашборд", "BOSS", "Доска", "Агенты", "Серверы", "Инциденты", "Выкаты", "Лента", "Настройки"]);
-  expect(names(tabbar)).toEqual(["Входящие", "Дашборд", "BOSS", "Агенты", "Инциденты"]);
+  expect(names(side)).toEqual(["Входящие", "Дашборд", "BOSS", "Доска", "Деплой", "Серверы", "Инциденты", "Агенты", "Лента", "Настройки"]);
+  expect(names(tabbar)).toEqual(["Входящие", "Дашборд", "BOSS", "Деплой", "Инциденты"]);
   expect(within(tabbar).getByRole("button", { name: "Ещё" })).toBeTruthy();
 });
 
@@ -71,14 +71,19 @@ it("puts «Серверы» under «Ещё» on a phone and in the side menu, fo
   expect(names(partner.querySelector<HTMLElement>("nav.side")!)).not.toContain("Серверы");
 });
 
-it("puts «Выкаты» under «Ещё» for who holds deploys.read only", async () => {
+it("puts «Деплой» in the tab bar in place of «Агенты» for who holds deploys.read only", async () => {
   signIn({ "*": ["cards.read", "deploys.read"] });
   const { container } = render(Nav);
-  expect(names(container.querySelector<HTMLElement>("nav.side")!)).toContain("Выкаты");
-  expect(names(container.querySelector<HTMLElement>("nav.tabbar")!)).not.toContain("Выкаты");
+  const tabbar = container.querySelector<HTMLElement>("nav.tabbar")!;
+  expect(names(container.querySelector<HTMLElement>("nav.side")!)).toContain("Деплой");
+  expect(names(tabbar)).toEqual(["Входящие", "Дашборд", "Деплой"]);
+  await fireEvent.click(within(tabbar).getByRole("button", { name: "Ещё" }));
+  expect(names(container.ownerDocument.querySelector<HTMLElement>(".more-sheet")!)).toContain("Агенты");
   cleanup();
-  signIn({ "*": ["cards.read", "servers.read"] });
-  expect(names(render(Nav).container.querySelector<HTMLElement>("nav.side")!)).not.toContain("Выкаты");
+  signIn({ "*": ["cards.read", "servers.read"] }); // no deploys: «Агенты» keep their tab
+  const other = render(Nav).container;
+  expect(names(other.querySelector<HTMLElement>("nav.side")!)).not.toContain("Деплой");
+  expect(names(other.querySelector<HTMLElement>("nav.tabbar")!)).toContain("Агенты");
 });
 
 it("has no BOSS item without agents.chat", () => {
@@ -95,7 +100,7 @@ it("opens «Ещё» as a sheet that a choice, a tap outside and Esc close", asy
   const sheet = () => container.ownerDocument.querySelector<HTMLElement>(".more-sheet");
 
   await fireEvent.click(more);
-  expect(names(sheet()!)).toEqual(["Доска", "Серверы", "Выкаты", "Лента", "Настройки"]);
+  expect(names(sheet()!)).toEqual(["Доска", "Серверы", "Агенты", "Лента", "Настройки"]);
   await fireEvent.click(within(sheet()!).getByRole("link", { name: "Лента" }));
   expect(location.pathname).toBe("/feed");
   expect(sheet()).toBeNull();

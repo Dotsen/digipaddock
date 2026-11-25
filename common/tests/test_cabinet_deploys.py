@@ -132,6 +132,47 @@ def test_the_page_shows_each_environments_last_run_and_who_started_it(env):
     assert rows["test"]["stale"] is False and found["stale_after"] == 120
 
 
+def test_each_environment_says_what_runs_there_and_what_waits(env):
+    """The reader's measures (its branch's head, commits not deployed yet, the lead over prod) come back per
+    environment; ``deployed`` is the newest successful run — what runs there even when the last run failed."""
+    head, prod_sha = "b" * 40, "c" * 40
+    envs = [
+        {**ENVS[0], "head": head, "pending": 0, "ahead": 3, "ahead_of": "prod"},
+        {**ENVS[1], "head": head, "pending": 3, "ahead": None, "ahead_of": ""},
+    ]
+    _report(env, _source(envs=envs, runs=[
+        _run(1, env="prod", sha=prod_sha, created="2026-10-14T09:00:00Z"),
+        _run(2, env="prod", status="failure", sha="d" * 40, created="2026-10-14T09:30:00Z"),
+        _run(3, sha=head),
+    ]))
+    rows = {e["env"]: e for e in _person(env, "owner", {"op": "deploy.list"})["envs"]}
+    assert (rows["test"]["head"], rows["test"]["pending"], rows["test"]["ahead"], rows["test"]["ahead_of"]) == (
+        head, 0, 3, "prod")
+    assert (rows["prod"]["pending"], rows["prod"]["ahead"], rows["prod"]["ahead_of"]) == (3, None, "")
+    assert rows["prod"]["run"]["status"] == "failure"
+    assert (rows["prod"]["deployed"]["sha"], rows["prod"]["deployed"]["run"]) == (prod_sha, 1)
+    assert rows["test"]["deployed"]["sha"] == head
+
+
+def test_a_reader_without_measures_is_taken_and_listed_unknown(env):
+    _report(env, _source(runs=[_run(1, status="failure")]))
+    row = _person(env, "owner", {"op": "deploy.list"})["envs"][0]
+    assert (row["head"], row["pending"], row["ahead"], row["ahead_of"], row["deployed"]) == ("", None, None, "", None)
+
+
+@pytest.mark.parametrize("extra", [
+    {"head": "HEAD"},
+    {"pending": -1},
+    {"pending": True},
+    {"ahead": "3"},
+    {"ahead_of": "nowhere"},
+    {"ahead_of": "test"},  # never the environment itself
+])
+def test_broken_measures_are_refused(env, extra):
+    envs = [{**ENVS[0], **extra}, ENVS[1]]
+    assert _code(lambda: _report(env, _source(envs=envs))) == "invalid"
+
+
 def test_an_environment_without_runs_is_listed_empty(env):
     _report(env, _source())
     rows = _person(env, "owner", {"op": "deploy.list"})["envs"]
@@ -228,15 +269,17 @@ def test_the_journal_lists_runs_newest_first_with_filters_and_pages(env):
 
 
 def test_the_platforms_releases_come_from_the_cards_release_notices(env):
+    """As a release really goes: the health check's notice first, the forge's «released» two seconds later — the
+    health decides, the later «released» does not turn a healthy release back into a running one."""
     card = env.card()
     for key, rev in (
-        ("notice.forge.released", "abc1234"),
         ("notice.release.healthy", "abc1234"),
+        ("notice.forge.released", "abc1234"),
     ):
         env.now = (
-            "2026-10-14T10:00:00Z"
+            "2026-10-14T10:00:02Z"
             if key.endswith("released")
-            else "2026-10-14T10:02:00Z"
+            else "2026-10-14T10:00:00Z"
         )
         notices.post_in_tx(
             env.store,
@@ -267,7 +310,7 @@ def test_the_platforms_releases_come_from_the_cards_release_notices(env):
     ]
     assert [(r["sha"], r["status"], r["created"], r["stopped"]) for r in journal] == [
         ("def5678", "running", "2026-10-14T11:00:00Z", ""),
-        ("abc1234", "success", "2026-10-14T10:00:00Z", "2026-10-14T10:02:00Z"),
+        ("abc1234", "success", "2026-10-14T10:00:00Z", "2026-10-14T10:00:00Z"),
     ]
     _report(env, _source(runs=[_run(1, created="2026-10-14T10:30:00Z")]))
     mixed = _person(env, "owner", {"op": "deploy.runs"})["items"]

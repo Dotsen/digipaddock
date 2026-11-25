@@ -66,6 +66,15 @@ def test_state_follows_the_notices_and_the_operations(cab):
     assert releases.state(cab.store, card.id)["state"] == "degraded"
 
 
+def test_the_forges_released_after_the_health_check_keeps_the_release_healthy(cab):
+    """kd-merge posts «released» once the release's result is in — after the health check's own notice."""
+    card = cab.card(status="In Progress")
+    post(cab, card, "notice.release.healthy", rev=REV, checks="health")
+    post(cab, card, "notice.forge.released", rev=REV, host="stage")
+    found = releases.state(cab.store, card.id)
+    assert (found["state"], found["rev"], found["host"]) == ("healthy", REV, "stage")
+
+
 def test_a_degraded_health_notice_raises_one_problem_per_rev_and_healthy_resolves_it(cab):
     card = cab.card(status="In Progress", assignee="@dev")
     post(cab, card, "notice.forge.released", rev=REV, host="stage")

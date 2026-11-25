@@ -3,7 +3,8 @@ once a minute. It reads the Forgejo Actions runs of every environment the projec
 (``repo.deploys`` of the release tree's ``host/projects.json``) with dev's read token and reports them to the
 cabinet (``deploy.report``) — the cabinet has no network and holds no Forgejo token. For the commits the cards'
 ``deploy`` waits name (``deploy.watch``) it asks Forgejo whether a finished run's commit holds them and reports that
-too (``includes``).
+too (``includes``). Each environment also carries what the page compares (``measure``): its branch's head, how many
+commits of it are not deployed there yet, and how far its deployed commit is ahead of prod's.
 
 One project's failure (Forgejo refused, a broken answer) is that project's ``error`` in the report, its runs kept
 as the cabinet has them; the others are read as usual. Exit codes: 0 reported; 1 the cabinet did not take the
@@ -12,6 +13,7 @@ report, or the passports are unreadable."""
 import json
 import re
 import sys
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -25,6 +27,8 @@ from kd.cabinet import client as cabinet_client  # noqa: E402
 
 PROJECTS = TREE / "host" / "projects.json"
 LIMIT = 20  # runs read per environment and tick: the table keeps the history, the journal pages through it
+SOURCE_RUNS = 100  # the cabinet's RUNS_MAX: one source over it and the cabinet refuses the whole report
+COUNTS_MAX = 20  # commit counts per tick (what waits for each environment, how far it is ahead of prod)
 # a run carries its whole event payload (a push's commits): 20 of them pass forge.LIMIT on a busy repository
 RUNS_MAX = 8 * forge.LIMIT
 STATUSES = (
@@ -173,8 +177,9 @@ def read(api, source: dict) -> dict:
     runs: Dict[int, dict] = {}
     for workflow in envs:
         try:
+            # page named: without it Forgejo 15 ignores limit and sends the workflow's whole history
             data = api.get(f"/repos/{source['repo']}/actions/runs",
-                           {"workflow_id": workflow, "limit": LIMIT}, max_bytes=RUNS_MAX)
+                           {"workflow_id": workflow, "limit": LIMIT, "page": 1}, max_bytes=RUNS_MAX)
         except forge.ForgeError as exc:
             return {
                 **source,
@@ -184,11 +189,73 @@ def read(api, source: dict) -> dict:
         items = data.get("workflow_runs") if isinstance(data, dict) else None
         if not isinstance(items, list):
             return {**source, "runs": [], "error": "ответ Forgejo без workflow_runs"}
-        for item in items:
+        for item in items[:LIMIT]:  # a server that ignores limit still gives the cabinet no more
             run = run_of(item, envs) if isinstance(item, dict) else None
             if run is not None:
                 runs.setdefault(run["run"], run)
-    return {**source, "runs": list(runs.values()), "error": ""}
+    found = list(runs.values())
+    if len(found) > SOURCE_RUNS:
+        found = sorted(found, key=lambda r: (r["created"], r["run"]), reverse=True)[:SOURCE_RUNS]
+    return {**source, "runs": found, "error": ""}
+
+
+def reference(envs: List[dict]) -> str:
+    """The environment the others are measured against: the project's only manual one, else the one named prod;
+    '' — none."""
+    manual = [e["env"] for e in envs if e["manual"]]
+    if len(manual) == 1:
+        return manual[0]
+    return "prod" if any(e["env"] == "prod" for e in envs) else ""
+
+
+def _head(api, repo: str, branch: str) -> str:
+    """The branch's head commit; '' when Forgejo does not answer it (a branch the repository does not have)."""
+    try:
+        data = api.get(f"/repos/{repo}/branches/{urllib.parse.quote(branch, safe='/')}")
+    except forge.ForgeError:
+        return ""
+    commit = data.get("commit") if isinstance(data, dict) else None
+    sha = str(commit.get("id") or "").lower() if isinstance(commit, dict) else ""
+    return sha if SHA_RE.fullmatch(sha) else ""
+
+
+def _count(api, repo: str, head: str, base: str, budget: List[int]) -> Optional[int]:
+    """Commits ``head`` has that ``base`` lacks; None — unknown (a commit missing, the budget spent, Forgejo
+    refused)."""
+    if not head or not base:
+        return None
+    if head == base:
+        return 0
+    if budget[0] <= 0:
+        return None
+    budget[0] -= 1
+    try:
+        return forge.commits_between(api, repo, head, base)
+    except forge.ForgeError:
+        return None
+
+
+def measure(api, source: dict, budget: List[int]) -> List[dict]:
+    """The source's environments, each with ``head`` (its branch's head, '' unknown), ``pending`` (commits of the
+    branch not deployed there yet) and, beside the reference, ``ahead`` (commits deployed there that the reference
+    has not) with ``ahead_of`` naming the reference; None — unknown. What an environment deployed is its newest
+    successful run among the runs read."""
+    deployed: Dict[str, str] = {}
+    for run in sorted(source["runs"], key=lambda r: (r["created"], r["run"]), reverse=True):
+        if run["status"] == "success" and run["sha"]:
+            deployed.setdefault(run["env"], run["sha"])
+    ref, heads, out = reference(source["envs"]), {}, []
+    for env in source["envs"]:
+        if env["branch"] not in heads:
+            heads[env["branch"]] = _head(api, source["repo"], env["branch"])
+        head, mine = heads[env["branch"]], deployed.get(env["env"], "")
+        item = {**env, "head": head, "pending": _count(api, source["repo"], head, mine, budget), "ahead": None,
+                "ahead_of": ""}
+        if ref and env["env"] != ref:
+            item["ahead"] = _count(api, source["repo"], mine, deployed.get(ref, ""), budget)
+            item["ahead_of"] = ref
+        out.append(item)
+    return out
 
 
 def includes(api, source: dict, watch: List[dict], budget: List[int]) -> List[dict]:
@@ -228,11 +295,13 @@ def collect(found: List[dict], api_factory=None, watch=()) -> List[dict]:
         )()
     except forge.ForgeError as exc:
         return [{**s, "runs": [], "error": _clean(str(exc), ERROR_MAX)} for s in found]
-    budget = [CHECKS_MAX]
+    budget, counts = [CHECKS_MAX], [COUNTS_MAX]
     out = []
     for source in found:
         got = read(api, source)
         got["includes"] = includes(api, got, list(watch), budget) if not got["error"] else []
+        if not got["error"]:
+            got["envs"] = measure(api, got, counts)
         out.append(got)
     return out
 

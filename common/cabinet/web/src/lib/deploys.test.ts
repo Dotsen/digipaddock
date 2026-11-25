@@ -1,16 +1,22 @@
 // the «Deploys» page's journal address, filters and status colours.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, projectRows, projectsOf, shortSha,
-  statusClass, statusMark,
+  deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, projectRows, projectsOf,
+  shortSha, statusClass, statusMark,
 } from "./deploys";
-import type { DeployEnv } from "./types";
+import type { DeployEnv, DeployRun } from "./types";
+
+const RUN: DeployRun = {
+  project: "api", env: "prod", run: 1, number: 1, workflow: "deploy-prod.yml", status: "success", event: "push",
+  sha: "a".repeat(40), ref: "main", url: "", actor: "dev", inputs: {}, title: "", created: "2026-11-25T10:00:00Z",
+  started: "", stopped: "", card: "",
+};
 
 function env(project: string, name: string, e: string): DeployEnv {
   return {
     project, name, repo: `o/${project}`, env: e, workflow: `deploy-${e}.yml`, branch: "main", manual: false,
     read_at: "", ok_at: "", error: "", stale: false, run: null, waiting: [], confirm: "", skip_tests: false,
-    launch: false, launched: null,
+    launch: false, launched: null, deployed: null, head: "", pending: null, ahead: null, ahead_of: "",
   };
 }
 
@@ -21,7 +27,7 @@ function json(body: unknown, status = 200) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("the owner's prod launch", () => {
-  it("asks a challenge with the typed word and skip_tests, signs it and sends the signature", async () => {
+  it("asks a challenge with skip_tests and no typed word, signs it and sends the signature", async () => {
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(json({ challenge_id: "c1", options: { challenge: "v1", userVerification: "discouraged" },
@@ -30,11 +36,11 @@ describe("the owner's prod launch", () => {
                                     skip_tests: true }));
     vi.stubGlobal("fetch", fetch);
     const sign = vi.fn(async (options: Record<string, unknown>) => ({ id: "cred", over: options.challenge }));
-    const done = await launchDeploy({ project: "api", env: "prod" }, "deploy", true, sign);
+    const done = await launchDeploy({ project: "api", env: "prod" }, true, sign);
     expect(done.state).toBe("dispatched");
     expect(sign).toHaveBeenCalledWith({ challenge: "v1", userVerification: "discouraged" });
     expect(fetch.mock.calls.map(([url, init]) => [url, JSON.parse(init.body)])).toEqual([
-      ["/api/deploys/launch/challenge", { project: "api", env: "prod", confirm: "deploy", skip_tests: true }],
+      ["/api/deploys/launch/challenge", { project: "api", env: "prod", skip_tests: true }],
       ["/api/deploys/launch", { challenge_id: "c1", credential: { id: "cred", over: "v1" } }],
     ]);
   });
@@ -42,7 +48,7 @@ describe("the owner's prod launch", () => {
   it("asks no signature when the cabinet refuses the challenge", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json({ error: "refused", message: "owner only" }, 403)));
     const sign = vi.fn();
-    await expect(launchDeploy({ project: "api", env: "prod" }, "deploy", false, sign)).rejects.toThrow();
+    await expect(launchDeploy({ project: "api", env: "prod" }, false, sign)).rejects.toThrow();
     expect(sign).not.toHaveBeenCalled();
   });
 });
@@ -82,13 +88,41 @@ describe("the deploys page", () => {
     expect(statusMark(undefined)).toBe("–");
   });
 
-  it("puts each project on one row with its environments in the page's order", () => {
-    const stale = { ...env("api", "Api", "stage"), stale: true };
+  it("puts each project in one panel with its environments in the page's order and its read's state", () => {
+    const stale = { ...env("api", "Api", "stage"), stale: true, error: "Forgejo 500", ok_at: "2026-11-25T10:00:00Z" };
     const rows = projectRows([env("alert", "Alert", "test"), env("alert", "Alert", "prod"), stale]);
-    expect(rows.map((r) => [r.id, r.envs.map((e) => e.env), r.stale])).toEqual([
-      ["alert", ["test", "prod"], false],
-      ["api", ["stage"], true],
+    expect(rows.map((r) => [r.id, r.envs.map((e) => e.env), r.stale, r.error, r.okAt, r.launch])).toEqual([
+      ["alert", ["test", "prod"], false, "", "", false],
+      ["api", ["stage"], true, "Forgejo 500", "2026-11-25T10:00:00Z", false],
     ]);
+    expect(projectRows([{ ...env("api", "Api", "prod"), launch: true }])[0].launch).toBe(true);
+  });
+
+  it("says how far an environment is ahead of prod and what waits to be deployed", () => {
+    const base = env("alert", "Alert", "test");
+    expect(deltas({ ...base, ahead: 3, ahead_of: "prod", pending: 0 })).toEqual([
+      { key: "deploys.ahead", params: { n: 3, env: "prod" }, tone: "acc" },
+    ]);
+    expect(deltas({ ...base, ahead: 0, ahead_of: "prod" })).toEqual([
+      { key: "deploys.even", params: { env: "prod" }, tone: "muted" },
+    ]);
+    const prod = { ...env("alert", "Alert", "prod"), manual: true };
+    expect(deltas({ ...prod, pending: 3 })).toEqual([{ key: "deploys.pending", params: { n: 3 }, tone: "warn" }]);
+    expect(deltas({ ...prod, pending: 0 })).toEqual([{ key: "deploys.up_to_date", params: {}, tone: "muted" }]);
+    // a test environment behind its own branch (its deploy failed) says so beside its lead
+    expect(deltas({ ...base, ahead: 1, ahead_of: "prod", pending: 2 }).map((d) => d.key)).toEqual([
+      "deploys.ahead", "deploys.pending"]);
+    expect(deltas(base)).toEqual([]);  // nothing measured: nothing said
+  });
+
+  it("names what runs on the environment when its last run is not it", () => {
+    const run = (status: DeployRun["status"], sha: string) => ({ ...RUN, status, sha });
+    const base = env("api", "Api", "prod");
+    expect(live({ ...base, run: run("failure", "b".repeat(40)), deployed: run("success", "a".repeat(40)) }))
+      .toEqual(run("success", "a".repeat(40)));
+    expect(live({ ...base, run: run("success", "a".repeat(40)), deployed: run("success", "a".repeat(40)) }))
+      .toBeNull();
+    expect(live({ ...base, run: run("running", "b".repeat(40)), deployed: null })).toBeNull();
   });
 
   it("shows the journal by pages of twenty and asks the server when the loaded runs end", () => {
