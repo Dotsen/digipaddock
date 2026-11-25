@@ -4,19 +4,21 @@
   // prod (`ahead_of`) and how many commits of its branch wait to be deployed there. The columns are fixed: a status
   // or the owner's button never moves the rest. A row opens its details (the branch and its head, who started the
   // run, its inputs and log, the cards waiting for it, the last launch from the cabinet) and lists the commits behind
-  // its counts — title, author, when, a link to Forgejo, the description on a tap. A project whose read
+  // its counts — title, author, when, a link to Forgejo, its checks (a failed one with its log; the row itself says
+  // how many failed), the description on a tap. A project whose read
   // failed says since when there is no fresh data and why. The platform's own release has a panel of its own; the
   // journal of runs is folded under a button, twenty one-line runs at a time, with a project and environment filter.
   // The forge reader brings the runs and the counts every 45 s; the page reads itself every 30 s. The owner starts a
   // manual environment (prod) from its row: the sheet names the commit that goes out and the new commits it
   // brings, skip_tests where the workflow takes it, then the saved passkey's signature with no fingerprint or PIN —
-  // no typed word; kd-review dispatches it with its own token, and the run comes with the reader's next read.
+  // no typed word; kd-review dispatches it with its own token, and the run comes with the reader's next read. While
+  // a deploy is under way (`in_flight`) the button waits, and the server refuses a second launch.
   import { onMount } from "svelte";
   import Freshness from "../components/Freshness.svelte";
   import Sheet from "../components/Sheet.svelte";
   import { apiGet } from "../lib/api";
   import {
-    commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, PLATFORM,
+    checkMark, commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, PLATFORM,
     projectRows, projectsOf, shortSha, statusClass, statusMark, type CommitGroup,
   } from "../lib/deploys";
   import { errorText, t, type Key } from "../lib/i18n.svelte";
@@ -168,10 +170,20 @@
             <span class="ctitle">{c.title}</span>
           {/if}
           <span class="cmeta">
-            {#if c.url}<a href={c.url} target="_blank" rel="noopener noreferrer" title={t("deploys.commits.open")}><code
+            {#if checkMark(c.status)}{@const m = checkMark(c.status)!}<span
+              class="cmark {m.tone}" title={t(`deploys.check.${c.status}` as Key)}>{m.mark}</span>
+            {/if}{#if c.url}<a href={c.url} target="_blank" rel="noopener noreferrer" title={t("deploys.commits.open")}><code
               >{shortSha(c.sha)}</code></a>{:else}<code>{shortSha(c.sha)}</code>{/if}{#if c.author}{` · ${c.author}`}{/if}{#if
               c.date}{` · ${when(c.date)}`}{/if}
           </span>
+          {#each c.checks ?? [] as check (check.context)}
+            {@const m = checkMark(check.state)}
+            {#if check.url}
+              <a class="cfail {m?.tone}" href={check.url} target="_blank" rel="noopener noreferrer">{m?.mark} {check.context}</a>
+            {:else}
+              <span class="cfail {m?.tone}">{m?.mark} {check.context}</span>
+            {/if}
+          {/each}
         </li>
       {/each}
     </ul>
@@ -248,8 +260,10 @@
               </button>
               {#if row.launch}
                 <span class="act">
-                  <button class="btn small primary" type="button" onclick={() => openLaunch(row)}>
-                    {t("deploys.launch.button")}
+                  <button class="btn small primary" type="button" disabled={row.in_flight}
+                          title={row.in_flight ? t("deploys.launch.in_flight_note") : undefined}
+                          onclick={() => openLaunch(row)}>
+                    {t(row.in_flight ? "deploys.launch.in_flight" : "deploys.launch.button")}
                   </button>
                 </span>
               {/if}
@@ -333,6 +347,8 @@
           : t("deploys.launch.nothing", { env: launching.env })}
       </p>
       {#each commitGroups(launching).filter((g) => g.key === "deploys.commits.pending") as group (group.key)}
+        {@const failed = group.commits.filter((c) => c.status === "failure").length}
+        {#if failed}<p class="error-text">{t("deploys.launch.checks_failed", { n: failed })}</p>{/if}
         {@render commitList(group, false)}
       {/each}
     {/if}
@@ -393,6 +409,7 @@
   .delta.acc { color: var(--accent); }
   .delta.warn { color: var(--warn); }
   .delta.muted { color: var(--muted); font-weight: 400; }
+  .delta.crit { color: var(--crit); }
   .act { grid-column: 4; align-self: stretch; display: flex; align-items: center; padding-right: 16px; }
   .erow.open .act { background: var(--surface-2); }
   .act .btn { width: 100%; }
@@ -410,6 +427,11 @@
   .cbody { margin: 4px 0 2px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
   .cmeta { font-size: 12px; color: var(--muted); }
   .cmore { margin: 0; font-size: 12px; color: var(--muted); }
+  .cmark { font-weight: 700; margin-right: 4px; }
+  .cfail { font-size: 12px; overflow-wrap: anywhere; }
+  :is(.cmark, .cfail).ok { color: var(--good); }
+  :is(.cmark, .cfail).crit { color: var(--crit); }
+  :is(.cmark, .cfail).warn { color: var(--warn); }
   :is(.pill, .mark).ok { color: var(--good); background: var(--good-bg); }
   :is(.pill, .mark).crit { color: var(--crit); background: var(--crit-bg); }
   :is(.pill, .mark).warn { color: var(--warn); background: var(--warn-bg); }

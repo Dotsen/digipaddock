@@ -1,7 +1,7 @@
 // the «Deploys» page's journal address, filters and status colours.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, projectRows,
+  checkMark, commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, projectRows,
   projectsOf, shortSha, statusClass, statusMark,
 } from "./deploys";
 import type { DeployCommit, DeployEnv, DeployRun } from "./types";
@@ -17,7 +17,7 @@ function env(project: string, name: string, e: string): DeployEnv {
     project, name, repo: `o/${project}`, env: e, workflow: `deploy-${e}.yml`, branch: "main", manual: false,
     read_at: "", ok_at: "", error: "", stale: false, run: null, waiting: [], confirm: "", skip_tests: false,
     launch: false, launched: null, deployed: null, head: "", pending: null, pending_commits: [], ahead: null,
-    ahead_commits: [], ahead_of: "",
+    ahead_commits: [], ahead_of: "", in_flight: false,
   };
 }
 
@@ -134,6 +134,30 @@ describe("the deploys page", () => {
     expect(commitGroups({ ...prod, pending_commits: [] })).toEqual([]);
     expect(commitGroups({ ...prod, pending: 0 })).toEqual([]);
     expect(commitGroups({ ...env("alert", "Alert", "prod"), pending: 3 } as DeployEnv)).toEqual([]);
+  });
+
+  it("says in the row how many of the listed commits failed their checks", () => {
+    const failed = { ...commit("a", "feat: a"), status: "failure" as const };
+    const prod = { ...env("alert", "Alert", "prod"), manual: true, pending: 3,
+                   pending_commits: [failed, commit("b", "fix: b"), { ...commit("c", "c"), status: "pending" as const }] };
+    expect(deltas(prod)).toEqual([
+      { key: "deploys.pending", params: { n: 3 }, tone: "warn" },
+      { key: "deploys.checks_failed", params: { n: 1 }, tone: "crit" },
+    ]);
+    // the same commit in both lists counts once; a list of before the checks says nothing
+    const test = { ...env("alert", "Alert", "test"), ahead: 1, ahead_of: "prod", ahead_commits: [failed],
+                   pending: 1, pending_commits: [failed] };
+    expect(deltas(test).find((d) => d.key === "deploys.checks_failed")?.params).toEqual({ n: 1 });
+    expect(deltas({ ...prod, pending_commits: [commit("a", "a")] }).map((d) => d.key)).toEqual(["deploys.pending"]);
+  });
+
+  it("marks a commit's checks with a sign and a colour", () => {
+    expect(checkMark("success")).toEqual({ mark: "✓", tone: "ok" });
+    expect(checkMark("failure")).toEqual({ mark: "✗", tone: "crit" });
+    expect(checkMark("pending")).toEqual({ mark: "…", tone: "warn" });
+    expect(checkMark("warning")).toEqual({ mark: "!", tone: "warn" });
+    expect(checkMark("")).toBeNull();
+    expect(checkMark(undefined)).toBeNull();
   });
 
   it("names what runs on the environment when its last run is not it", () => {

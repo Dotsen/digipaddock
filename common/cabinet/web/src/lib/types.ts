@@ -1331,6 +1331,7 @@ export interface DeployEnv {
   pending_commits: DeployCommit[]; // the newest of them (at most 20)
   ahead: number | null; // commits it runs that ahead_of (prod) does not; null unknown
   ahead_commits: DeployCommit[]; // the newest of them (at most 20)
+  in_flight: boolean; // a deploy under way (a manual environment): the button waits, the server refuses another
   ahead_of: string; // the environment it is measured against, '' none (prod itself)
 }
 
@@ -1342,6 +1343,17 @@ export interface DeployCommit {
   body: string;
   author: string;
   date: string;
+  url: string;
+  status?: CheckState | ""; // its checks' worst state; '' (or absent — a reader of before the checks) none known
+  checks?: DeployCheck[]; // the checks that did not pass, the failed first, each with its log
+}
+
+export type CheckState = "pending" | "success" | "warning" | "failure";
+
+/** A commit's check in Forgejo (an Actions job, a devcheck) that did not pass. */
+export interface DeployCheck {
+  context: string;
+  state: CheckState;
   url: string;
 }
 

@@ -100,7 +100,8 @@ class Api:
     def get(self, path, params=None, max_bytes=forge.LIMIT):
         self.calls.append((path, params))
         self.max_bytes = max_bytes
-        default = forge.ForgeError("Forgejo 404: not found", 404) if "/branches/" in path else KeyError(path)
+        missing = "/branches/" in path or path.endswith("/status")  # Forgejo's own 404s
+        default = forge.ForgeError("Forgejo 404: not found", 404) if missing else KeyError(path)
         answer = self.answers.get(path, default)
         if callable(answer):  # an answer per request (per workflow_id)
             answer = answer(params)
@@ -511,6 +512,54 @@ def test_a_range_nobody_answered_has_no_commits():
     assert (prod["pending"], prod["pending_commits"]) == (None, [])
 
 
+def _status(*checks):
+    """Forgejo's combined status of a commit: (context, state) pairs, each with its job's log."""
+    return {"state": "x", "total_count": len(checks), "statuses": [
+        {"context": c, "status": st, "target_url": f"https://forge.example.test/o/alert/actions/runs/{n}/jobs/0",
+         "description": "Failing after 1m"} for n, (c, st) in enumerate(checks)]}
+
+
+def _listed(api, runs, budget=20):
+    """The environments as collect reports them: measured, each listed commit with its checks."""
+    envs = deploys.measure(api, _source(runs, ALERT[:1] + ALERT[2:]), [20])
+    return deploys.with_checks(api, "o/alert", envs, [budget])
+
+
+def test_each_listed_commit_carries_its_checks():
+    """A commit that failed its tests says so before anyone deploys it: its checks' worst state, and the checks that
+    did not pass with their logs — an error is a failure; the passed ones are the state alone."""
+    runs = [_r(1, "test", "success", H, "2026-11-25T10:00:00Z"), _r(2, "prod", "success", P, "2026-11-25T08:00:00Z")]
+    api = Api({**MASTER,
+               f"/repos/o/alert/commits/{H}/status": _status(("CI / Deploy (push)", "success"),
+                                                             ("CI / Run tests (push)", "failure"),
+                                                             ("CI / lint (push)", "error")),
+               f"/repos/o/alert/commits/{X}/status": _status(("CI / Run tests (push)", "success")),
+               f"/repos/o/alert/commits/{T}/status": _status(("CI / Run tests (push)", "pending"))},
+              totals={(H, P): (3, [_fc(H, "a"), _fc(X, "b"), _fc(T, "c"), _fc(S, "d")])})
+    test, prod = _listed(api, runs)
+    h, x, t, s = prod["pending_commits"]
+    assert (h["status"], h["checks"]) == ("failure", [
+        {"context": "CI / Run tests (push)", "state": "failure",
+         "url": "https://forge.example.test/o/alert/actions/runs/1/jobs/0"},
+        {"context": "CI / lint (push)", "state": "failure",
+         "url": "https://forge.example.test/o/alert/actions/runs/2/jobs/0"}])
+    assert (x["status"], x["checks"]) == ("success", [])
+    assert (t["status"], [c["state"] for c in t["checks"]]) == ("pending", ["pending"])
+    assert (s["status"], s["checks"]) == ("", [])  # Forgejo has none
+    assert test["ahead_commits"][0]["status"] == "failure"  # the same commit in two lists
+    asked = [p for p, _ in api.calls if p.endswith("/status")]
+    assert len(asked) == len(set(asked)) == 4  # each commit asked once
+
+
+def test_checks_past_the_budget_are_unknown():
+    runs = [_r(1, "test", "success", H, "2026-11-25T10:00:00Z"), _r(2, "prod", "success", P, "2026-11-25T08:00:00Z")]
+    api = Api({**MASTER, f"/repos/o/alert/commits/{H}/status": _status(("CI", "failure")),
+               f"/repos/o/alert/commits/{X}/status": _status(("CI", "failure"))},
+              totals={(H, P): (2, [_fc(H, "a"), _fc(X, "b")])})
+    _, prod = _listed(api, runs, budget=1)
+    assert [c["status"] for c in prod["pending_commits"]] == ["failure", ""]
+
+
 @pytest.mark.parametrize("envs, expected", [
     (ALERT, "prod"),
     ([_env("staging", "main"), _env("live", "main", manual=True)], "live"),
@@ -528,6 +577,7 @@ def test_the_measured_environments_reach_the_cabinet(tmp_path):
             _run(1, commit_sha=H), _run(2, workflow="deploy-prod.yml", commit_sha=P)]},
         "/repos/o/keeta/actions/runs": {"workflow_runs": []},
         **MASTER,
+        f"/repos/o/alert/commits/{H}/status": _status(("CI / tests", "failure")),
     }, totals={(H, P): (3, [_fc(H, "feat: a\n\nwhy")])})
     client = Client()
     assert deploys.main(api_factory=lambda: api, client=client, projects=_projects(tmp_path)) == 0
@@ -535,6 +585,8 @@ def test_the_measured_environments_reach_the_cabinet(tmp_path):
     assert [(e["env"], e["pending"], e["ahead"], e["ahead_of"]) for e in alert["envs"]] == [
         ("test", 0, 3, "prod"), ("prod", 3, None, "")]
     assert [c["title"] for c in alert["envs"][1]["pending_commits"]] == ["feat: a"]
+    assert alert["envs"][1]["pending_commits"][0]["checks"] == [
+        {"context": "CI / tests", "state": "failure", "url": "https://forge.example.test/o/alert/actions/runs/0/jobs/0"}]
     cabinet_deploys._sources([alert, keeta])  # the cabinet takes the commits too
     assert [(e["env"], e["head"], e["pending"]) for e in keeta["envs"]] == [("prod", "", None)]
 

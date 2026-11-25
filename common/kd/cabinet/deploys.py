@@ -59,6 +59,14 @@ INPUTS_MAX, INPUT_MAX = 8, 200
 MEASURES = {"head": "", "pending": None, "pending_commits": (), "ahead": None, "ahead_commits": (), "ahead_of": ""}
 COMMITS_MAX, BODY_MAX = 20, 1000
 COMMIT_KEYS = {"sha", "title", "body", "author", "date", "url"}
+# a commit's checks (a reader of before them sends none): its worst state ('' — none or unknown) and those that did
+# not pass
+COMMIT_STATES = ("", "pending", "success", "warning", "failure")
+CHECK_STATES, COMMIT_CHECKS_MAX = ("pending", "warning", "failure", "success"), 5
+# the owner's button waits while a deploy is under way: a launch kd-review dispatched (or whose answer was lost)
+# holds it until the reader shows its run, at most LAUNCH_HOLD_S; Forgejo's clock may run RUN_SLACK_S apart
+LAUNCH_HOLD_S, RUN_SLACK_S = 900, 120
+HOLDING = ("dispatched", "review_timeout")
 NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
 REPO = re.compile(r"[A-Za-z0-9_.-]{1,64}/[A-Za-z0-9_.-]{1,100}")
 WORKFLOW = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.ya?ml")
@@ -125,15 +133,31 @@ def _url(value, name: str) -> str:
     return _text(value, name, URL_MAX)
 
 
+def _checks(where: str, value) -> List[dict]:
+    if not isinstance(value, list) or len(value) > COMMIT_CHECKS_MAX:
+        raise _invalid(f"{where}: checks is a list of at most {COMMIT_CHECKS_MAX}")
+    out = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"context", "state", "url"} \
+                or item["state"] not in CHECK_STATES:
+            raise _invalid(f"{where}: a check is {{context, state, url}}, its state one of {', '.join(CHECK_STATES)}")
+        out.append({"context": _text(item["context"], f"{where}: context", TEXT["title"]), "state": item["state"],
+                    "url": _url(item["url"], where)})
+    return out
+
+
 def _commits(where: str, value) -> List[dict]:
     """The commits behind a count, as the reader lists them: a title of one line, a description that keeps its line
-    breaks, the author, when it landed (or '') and its page in Forgejo (or '')."""
+    breaks, the author, when it landed (or '') and its page in Forgejo (or ''), its checks' worst state and those
+    that did not pass."""
     if not isinstance(value, list) or len(value) > COMMITS_MAX:
         raise _invalid(f"{where} is a list of at most {COMMITS_MAX} commits")
     out = []
     for item in value:
-        if not isinstance(item, dict) or set(item) != COMMIT_KEYS:
-            raise _invalid(f"{where}: a commit is {{{', '.join(sorted(COMMIT_KEYS))}}}")
+        if not isinstance(item, dict) or not COMMIT_KEYS <= set(item) <= COMMIT_KEYS | {"status", "checks"}:
+            raise _invalid(f"{where}: a commit is {{{', '.join(sorted(COMMIT_KEYS))}[, status, checks]}}")
+        if item.get("status", "") not in COMMIT_STATES:
+            raise _invalid(f"{where}: status is one of {', '.join(COMMIT_STATES[1:])} or ''")
         sha, body = item["sha"], item["body"]
         if not isinstance(sha, str) or not SHA40.fullmatch(sha):
             raise _invalid(f"{where}: sha is a full commit hash")
@@ -141,7 +165,8 @@ def _commits(where: str, value) -> List[dict]:
             raise _invalid(f"{where}: body is text of at most {BODY_MAX} characters")
         out.append({"sha": sha, "title": _text(item["title"], f"{where}: title", TEXT["title"]), "body": body,
                     "author": _text(item["author"], f"{where}: author", TEXT["actor"]),
-                    "date": _time(item["date"], f"{where}: date", empty=True), "url": _url(item["url"], where)})
+                    "date": _time(item["date"], f"{where}: date", empty=True), "url": _url(item["url"], where),
+                    "status": item.get("status", ""), "checks": _checks(where, item.get("checks", []))})
     return out
 
 
@@ -443,6 +468,30 @@ def last_run(s, project: str, env: str) -> Optional[dict]:
     return found[0] if found else None
 
 
+def in_flight(run: Optional[dict], launch: Optional[dict], now: str) -> bool:
+    """Whether a deploy of the environment is under way: its last run waits or runs, or a launch from the cabinet
+    that started (or may have: kd-review's answer was lost) is younger than LAUNCH_HOLD_S and the reader has not shown
+    its run yet — a run of the launch's commit since it."""
+    if run and run["status"] in ("waiting", "running"):
+        return True
+    if not launch or launch.get("outcome") not in HOLDING:
+        return False
+    at = users.parse_time(launch["at"])
+    if (users.parse_time(now) - at).total_seconds() >= LAUNCH_HOLD_S:
+        return False
+    seen = run and run["sha"] == launch.get("sha") and (
+        users.parse_time(run["created"]) - at).total_seconds() >= -RUN_SLACK_S
+    return not seen
+
+
+def last_launch(s, project: str, env: str) -> Optional[dict]:
+    """The environment's newest launch from the cabinet."""
+    row = s._conn.execute(
+        "SELECT ts, payload FROM events WHERE kind='deploy.launched' AND json_extract(payload, '$.project')=?"
+        " AND json_extract(payload, '$.env')=? ORDER BY seq DESC LIMIT 1", (project, env)).fetchone()
+    return {"at": row["ts"], **json.loads(row["payload"])} if row else None
+
+
 def deployed(s, project: str, env: str) -> Optional[dict]:
     """The environment's newest successful run: what runs there, even when a later run failed."""
     row = s._conn.execute(
@@ -676,6 +725,8 @@ def _launchable(ctx, principal, request):
     found = launchable(ctx.store, project, env)
     if found is None:
         raise api.ApiError("not_found", f"{project}:{env}: no environment started by hand")
+    if in_flight(last_run(ctx.store, project, env), last_launch(ctx.store, project, env), ctx.now()):
+        raise api.ApiError("conflict", f"{project}:{env}: a deploy is under way", reason="deploy_running")
     return {"env": found}
 
 
@@ -741,13 +792,14 @@ def _list(ctx, principal, request):
     s, now = ctx.store, ctx.now()
     names = {p["id"]: p["name"] for p in s.project_rows()}
     owner = can_launch(ctx, principal)
-    last_launch = {}
+    newest = {}
     for item in reversed(launches(s)):
-        last_launch[(item.get("project"), item.get("env"))] = item
+        newest[(item.get("project"), item.get("env"))] = item
     envs = []
     for src in s._conn.execute("SELECT * FROM deploy_sources ORDER BY project"):
         stale = _stale(now, src["ok_at"])
         for env in json.loads(src["envs"] or "[]"):
+            run, launched = last_run(s, src["project"], env["env"]), newest.get((src["project"], env["env"]))
             envs.append(
                 {
                     "project": src["project"],
@@ -759,12 +811,14 @@ def _list(ctx, principal, request):
                     "ok_at": src["ok_at"],
                     "error": src["error"],
                     "stale": stale,
-                    "run": last_run(s, src["project"], env["env"]),
+                    "run": run,
                     "deployed": deployed(s, src["project"], env["env"]),
                     "waiting": waiting(s, src["project"], env["env"]),
                     # the button «Deploy to prod»: a manual environment, for the owner only
                     "launch": owner and env["manual"],
-                    "launched": last_launch.get((src["project"], env["env"])),
+                    "launched": launched,
+                    # a deploy under way: the button waits, the server refuses a second launch
+                    "in_flight": env["manual"] and in_flight(run, launched, now),
                 }
             )
     found = platform_releases(s, 1)

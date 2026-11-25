@@ -139,7 +139,10 @@ def test_each_environment_says_what_runs_there_and_what_waits(env):
     waits = [{"sha": head, "title": "fix(status): a silent run still writes the status",
               "body": "A loud skip notifies.\n\n- one\n\t- two", "author": "dev", "date": "2026-10-14T08:00:00Z",
               "url": f"https://forge.example.test/o/alert/commit/{head}"},
-             {"sha": "e" * 40, "title": "fix: x", "body": "", "author": "", "date": "", "url": ""}]
+             {"sha": "e" * 40, "title": "fix: x", "body": "", "author": "", "date": "", "url": "",
+              "status": "failure", "checks": [
+                  {"context": "CI / Run tests (push)", "state": "failure",
+                   "url": "https://forge.example.test/o/alert/actions/runs/7/jobs/0"}]}]
     envs = [
         {**ENVS[0], "head": head, "pending": 0, "pending_commits": [], "ahead": 3, "ahead_commits": waits,
          "ahead_of": "prod"},
@@ -158,8 +161,10 @@ def test_each_environment_says_what_runs_there_and_what_waits(env):
     assert rows["prod"]["run"]["status"] == "failure"
     assert (rows["prod"]["deployed"]["sha"], rows["prod"]["deployed"]["run"]) == (prod_sha, 1)
     assert rows["test"]["deployed"]["sha"] == head
-    # the commits behind each count: the owner reads what waits for prod
-    assert rows["prod"]["pending_commits"] == waits and rows["test"]["ahead_commits"] == waits
+    # the commits behind each count: the owner reads what waits for prod, and which of them failed their checks;
+    # a reader of before the checks sends a commit without them
+    listed = [{**waits[0], "status": "", "checks": []}, waits[1]]
+    assert rows["prod"]["pending_commits"] == listed and rows["test"]["ahead_commits"] == listed
     assert rows["prod"]["ahead_commits"] == [] and rows["test"]["pending_commits"] == []
 
 
@@ -190,6 +195,12 @@ COMMIT = {"sha": "a" * 40, "title": "feat: x", "body": "", "author": "dev", "dat
     {"pending_commits": [{**COMMIT, "body": "bell\x07"}]},
     {"pending_commits": [{**COMMIT, "date": "yesterday"}]},
     {"pending_commits": [{**COMMIT, "url": "javascript:alert(1)"}]},
+    {"pending_commits": [{**COMMIT, "status": "red"}]},
+    {"pending_commits": [{**COMMIT, "status": "failure", "checks": None}]},
+    {"pending_commits": [{**COMMIT, "checks": [{"context": "CI", "state": "failure", "url": ""}] * 6}]},
+    {"pending_commits": [{**COMMIT, "checks": [{"context": "CI", "state": "broken", "url": ""}]}]},
+    {"pending_commits": [{**COMMIT, "checks": [{"context": "CI", "state": "failure", "url": "http://x"}]}]},
+    {"pending_commits": [{**COMMIT, "checks": [{"context": "CI", "state": "failure"}]}]},
 ])
 def test_broken_measures_are_refused(env, extra):
     envs = [{**ENVS[0], **extra}, ENVS[1]]

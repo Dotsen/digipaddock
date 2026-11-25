@@ -5,7 +5,8 @@ cabinet (``deploy.report``) — the cabinet has no network and holds no Forgejo 
 ``deploy`` waits name (``deploy.watch``) it asks Forgejo whether a finished run's commit holds them and reports that
 too (``includes``). Each environment also carries what the page compares (``measure``): its branch's head, the
 commits of it not deployed there yet, and the commits its deployed one has that prod's lacks — how many, and the
-newest of them with their titles, descriptions and authors.
+newest of them with their titles, descriptions, authors and checks (``with_checks``: Forgejo's commit statuses — a
+commit that failed its tests says so before anyone deploys it).
 
 One project's failure (Forgejo refused, a broken answer) is that project's ``error`` in the report, its runs kept
 as the cabinet has them; the others are read as usual. Exit codes: 0 reported; 1 the cabinet did not take the
@@ -32,6 +33,12 @@ SOURCE_RUNS = 100  # the cabinet's RUNS_MAX: one source over it and the cabinet 
 COUNTS_MAX = 20  # commit ranges per tick (what waits for each environment, how far it is ahead of prod)
 COMMITS_SHOWN = 20  # commits listed per range, newest first; the count says how many there are in all
 BODY_MAX = 1000  # a commit's description past its title
+STATUSES_MAX = 40  # listed commits whose checks are asked per tick
+CHECKS_SHOWN = 5  # a commit's checks that did not pass, listed with their logs
+# a check's state as the page shows it (an error is a failure); a commit's state is the worst of its checks
+CHECK_STATES = {"success": "success", "failure": "failure", "error": "failure", "pending": "pending",
+                "warning": "warning"}
+WORST = ("failure", "pending", "warning", "success")
 # a run carries its whole event payload (a push's commits): 20 of them pass forge.LIMIT on a busy repository
 RUNS_MAX = 8 * forge.LIMIT
 STATUSES = (
@@ -234,15 +241,58 @@ def commit(item: dict) -> Optional[dict]:
     title, _, body = message.strip().partition("\n")
     user = item.get("author") if isinstance(item.get("author"), dict) else {}
     author, committer = (data.get(k) if isinstance(data.get(k), dict) else {} for k in ("author", "committer"))
-    url = item.get("html_url")
     return {
         "sha": sha,
         "title": " ".join(_clean(title, TEXT_MAX).split()),
         "body": "".join(c if c in "\n\t" or ord(c) >= 32 else " " for c in body.strip())[:BODY_MAX],
         "author": _clean(str(user.get("login") or author.get("name") or ""), TEXT_MAX // 2).strip(),
         "date": utc(committer.get("date")) or utc(author.get("date")),
-        "url": url if isinstance(url, str) and url.startswith("https://") and len(url) <= URL_MAX else "",
+        "url": _link(item.get("html_url")),
     }
+
+
+def _link(value) -> str:
+    """A page in Forgejo the cabinet links to: an https address, else ''."""
+    return value if isinstance(value, str) and value.startswith("https://") and len(value) <= URL_MAX else ""
+
+
+def _checks(api, repo: str, sha: str) -> Tuple[str, List[dict]]:
+    """A commit's checks from Forgejo's combined status: the worst state ('' — none) and the checks that did not
+    pass, the failed first, each with its log."""
+    data = api.get(f"/repos/{repo}/commits/{sha}/status")
+    entries = data.get("statuses") if isinstance(data, dict) else None
+    found = []
+    for entry in entries if isinstance(entries, list) else []:
+        state = CHECK_STATES.get(str(entry.get("status") or entry.get("state") or "")) if isinstance(
+            entry, dict) else None
+        if state:
+            found.append({"context": " ".join(_clean(entry.get("context")).split()), "state": state,
+                          "url": _link(entry.get("target_url"))})
+    status = next((w for w in WORST if any(c["state"] == w for c in found)), "")
+    open_ = sorted((c for c in found if c["state"] != "success"), key=lambda c: WORST.index(c["state"]))
+    return status, open_[:CHECKS_SHOWN]
+
+
+def with_checks(api, repo: str, envs: List[dict], budget: List[int]) -> List[dict]:
+    """The environments with each listed commit's ``status`` (its checks' worst state; '' — none, or not asked) and
+    ``checks`` (those that did not pass): one request a commit, a commit in two lists asked once; ``budget`` — the
+    requests left in this tick."""
+    found: Dict[str, Tuple[str, List[dict]]] = {}
+    for env in envs:
+        for item in env["pending_commits"] + env["ahead_commits"]:
+            if item["sha"] in found:
+                continue
+            found[item["sha"]] = "", []
+            if budget[0] <= 0:
+                continue
+            budget[0] -= 1
+            try:
+                found[item["sha"]] = _checks(api, repo, item["sha"])
+            except forge.ForgeError:
+                pass
+    lists = ("pending_commits", "ahead_commits")
+    return [{**env, **{key: [{**c, "status": found[c["sha"]][0], "checks": found[c["sha"]][1]} for c in env[key]]
+                       for key in lists}} for env in envs]
 
 
 def _range(api, repo: str, head: str, base: str, budget: List[int], seen: dict) -> Tuple[Optional[int], List[dict]]:
@@ -326,13 +376,13 @@ def collect(found: List[dict], api_factory=None, watch=()) -> List[dict]:
         )()
     except forge.ForgeError as exc:
         return [{**s, "runs": [], "error": _clean(str(exc), ERROR_MAX)} for s in found]
-    budget, counts = [CHECKS_MAX], [COUNTS_MAX]
+    budget, counts, statuses = [CHECKS_MAX], [COUNTS_MAX], [STATUSES_MAX]
     out = []
     for source in found:
         got = read(api, source)
         got["includes"] = includes(api, got, list(watch), budget) if not got["error"] else []
         if not got["error"]:
-            got["envs"] = measure(api, got, counts)
+            got["envs"] = with_checks(api, got["repo"], measure(api, got, counts), statuses)
         out.append(got)
     return out
 

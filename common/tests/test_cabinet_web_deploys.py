@@ -253,14 +253,14 @@ def test_without_a_signature_nothing_starts(w):
 def test_a_challenge_is_used_once_and_by_its_session(w):
     w.login("owner")
     auth = _signer(w)
-    ch = _challenge(w).json()
+    ch, second = _challenge(w).json(), _challenge(w).json()
     body = {"challenge_id": ch["challenge_id"], "credential": auth.assert_(ch["options"], uv=False)}
     assert w.client.post("/api/deploys/launch", headers=w.headers(), json=body).status_code == 200
     assert w.client.post("/api/deploys/launch", headers=w.headers(), json=body).status_code == 410
     other = _as(w, "owner")
-    ch = _challenge(w).json()
     r = other.post("/api/deploys/launch", headers=_h(w, other),
-                   json={"challenge_id": ch["challenge_id"], "credential": auth.assert_(ch["options"], uv=False)})
+                   json={"challenge_id": second["challenge_id"],
+                         "credential": auth.assert_(second["options"], uv=False)})
     assert r.status_code == 403
     assert len(_deploys(w)) == 1
 
@@ -273,14 +273,14 @@ def test_the_signature_lives_ten_minutes(w):
     auth = _signer(w)
     moment = [0.0]
     w.svc.challenges.clock = lambda: moment[0]
-    ch = _challenge(w).json()
+    ch, late = _challenge(w).json(), _challenge(w).json()
     assert ch["expires"] == users.shift(w.svc.now(), seconds=600)
     moment[0] = 590.0  # past the store's 300 s
     r = w.client.post("/api/deploys/launch", headers=w.headers(),
                       json={"challenge_id": ch["challenge_id"], "credential": auth.assert_(ch["options"], uv=False)})
     assert r.status_code == 200, r.text
-    ch = _challenge(w).json()
-    moment[0] = 590.0 + 601
+    ch = late
+    moment[0] = 600 + 1
     r = w.client.post("/api/deploys/launch", headers=w.headers(),
                       json={"challenge_id": ch["challenge_id"], "credential": auth.assert_(ch["options"], uv=False)})
     assert r.status_code == 410
@@ -304,3 +304,51 @@ def test_no_signing_key_known_to_kd_review_asks_for_setup(w):
     w.review.keys = []
     r = _challenge(w)
     assert r.status_code == 403 and r.json()["error"] == "setup_required"
+
+
+def _report_prod(w, *runs):
+    w.env.call("digi-forge", {"op": "deploy.report", "sources": [
+        {"project": "api", "repo": "o/api", "envs": ENVS, "runs": list(runs), "error": ""}]})
+
+
+def test_a_deploy_under_way_blocks_the_next_launch(w):
+    """After «Deploy» the button waits: the launch kd-review dispatched holds it until the reader shows its run, and
+    the run holds it while it waits or runs; the server refuses a second launch all the same (another tab, a second
+    device) before it asks kd-review anything."""
+    w.login("owner")
+    auth = _signer(w)
+    assert _launch(w, auth).status_code == 200
+    prod = lambda: {e["env"]: e for e in w.client.get("/api/deploys").json()["envs"]}["prod"]  # noqa: E731
+    assert prod()["in_flight"] is True
+    calls = len(w.review.calls)
+    r = _challenge(w)
+    assert r.status_code == 409 and r.json()["reason"] == "deploy_running", r.text
+    assert len(w.review.calls) == calls
+    # the reader brings the launch's run: it holds the button while it runs, and lets it go when it ends
+    w.env.now = "2026-10-14T10:02:00Z"
+    _report_prod(w, _run(100, env="prod", created="2026-10-14T10:00:30Z", status="running", sha=HEAD))
+    assert prod()["in_flight"] is True and _challenge(w).status_code == 409
+    _report_prod(w, _run(100, env="prod", created="2026-10-14T10:00:30Z", status="success", sha=HEAD))
+    assert prod()["in_flight"] is False and _challenge(w).status_code == 200
+
+
+def test_a_launch_forgejo_never_ran_lets_the_button_go_in_fifteen_minutes(w):
+    w.login("owner")
+    auth = _signer(w)
+    assert _launch(w, auth).status_code == 200
+    w.env.now = "2026-10-14T10:14:00Z"
+    assert _challenge(w).status_code == 409
+    w.env.now = "2026-10-14T10:15:01Z"
+    assert _challenge(w).status_code == 200
+
+
+def test_a_refused_launch_holds_nothing_and_a_lost_answer_holds(w):
+    w.login("owner")
+    auth = _signer(w)
+    w.review.fail["deploy"] = review_client.ReviewRefused("stale", "main moved on")
+    assert _launch(w, auth).status_code == 409
+    assert _challenge(w).status_code == 200
+    w.review.fail["deploy"] = review_client.ReviewTimeout("kd-review did not answer")
+    assert _launch(w, auth).status_code == 503
+    r = _challenge(w)  # it may have dispatched: the page shows the run if it did
+    assert r.status_code == 409 and r.json()["reason"] == "deploy_running"

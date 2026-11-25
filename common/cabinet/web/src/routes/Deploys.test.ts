@@ -25,13 +25,15 @@ function env(e: string, over: Partial<DeployEnv> = {}): DeployEnv {
     project: "alert", name: "Alert app", repo: "o/alert", env: e, workflow: `deploy-${e}.yml`,
     branch: "master", manual: false, read_at: "", ok_at: "2026-11-25T10:00:00Z", error: "", stale: false, run: null,
     waiting: [], confirm: "", skip_tests: false, launch: false, launched: null, deployed: null, head: H, pending: null,
-    pending_commits: [], ahead: null, ahead_commits: [], ahead_of: "", ...over,
+    pending_commits: [], ahead: null, ahead_commits: [], ahead_of: "", in_flight: false, ...over,
   };
 }
 
 const WAITS: DeployCommit[] = [
   { sha: H, title: "fix(status): тихий прогон пишет статус", body: "Громкий пропуск уведомляет.",
-    author: "dev", date: "2026-11-24T18:10:59Z", url: `https://forge.example.test/o/alert/commit/${H}` },
+    author: "dev", date: "2026-11-24T18:10:59Z", url: `https://forge.example.test/o/alert/commit/${H}`,
+    status: "failure", checks: [{ context: "CI / Run tests (push)", state: "failure",
+                                  url: "https://forge.example.test/o/alert/actions/runs/9/jobs/0" }] },
   { sha: "c".repeat(40), title: "fix: одна строка", body: "", author: "Ada", date: "2026-11-24T17:00:00Z",
     url: "" },
 ];
@@ -100,6 +102,28 @@ describe("Deploys", () => {
     expect(within(list.parentElement as HTMLElement).getByText("…и ещё 1 постарше")).toBeTruthy();
   });
 
+  it("says which waiting commit failed its checks, in the row and under the commit with its log", async () => {
+    render(Deploys);
+    const alert = await panel("Alert app");
+    const prod = alert.getAllByRole("button").find((b) => b.querySelector(".ename")?.textContent === "prod")!;
+    expect(within(prod).getByText("упали проверки: 1")).toBeTruthy();
+    await fireEvent.click(prod);
+    const [first] = within(alert.getByRole("list", { name: "Не выкачено на prod: 3" })).getAllByRole("listitem");
+    expect(within(first).getByTitle("проверки упали")).toBeTruthy();
+    const log = within(first).getByRole("link", { name: /CI \/ Run tests \(push\)/ }) as HTMLAnchorElement;
+    expect(log.href).toBe("https://forge.example.test/o/alert/actions/runs/9/jobs/0");
+  });
+
+  it("holds the button while a deploy is under way", async () => {
+    fetch.mockImplementation(async () => json({ ...LIST, envs: LIST.envs.map((e) =>
+      e.project === "alert" && e.env === "prod" ? { ...e, in_flight: true } : e) }));
+    render(Deploys);
+    const alert = await panel("Alert app");
+    const button = alert.getByRole("button", { name: "Выкатывается…" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(alert.queryByRole("button", { name: "Выкатить" })).toBeNull();
+  });
+
   it("says in words why a project has no fresh data", async () => {
     render(Deploys);
     const arm = await panel("Arm app");
@@ -117,6 +141,7 @@ describe("Deploys", () => {
     expect(within(sheet).getByText("Уйдёт голова ветки master — 26711f9.")).toBeTruthy();
     expect(within(sheet).getByText("Новых коммитов против того, что сейчас на prod (11efc6c): 3.")).toBeTruthy();
     expect(within(sheet).getByText("fix(status): тихий прогон пишет статус")).toBeTruthy();
+    expect(within(sheet).getByText("У 1 из уходящих коммитов упали проверки.")).toBeTruthy();
     expect(within(sheet).queryByRole("textbox")).toBeNull();
     const go = within(sheet).getByRole("button", { name: "Выкатить" }) as HTMLButtonElement;
     expect(go.disabled).toBe(false);

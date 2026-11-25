@@ -2,7 +2,7 @@
 // its commits; the owner's prod launch.
 import { apiPost } from "./api";
 import type { Key } from "./i18n.svelte";
-import type { DeployChallenge, DeployCommit, DeployEnv, DeployRun } from "./types";
+import type { CheckState, DeployChallenge, DeployCommit, DeployEnv, DeployRun } from "./types";
 import { assertPasskey } from "./webauthn";
 
 export const PLATFORM = "platform";
@@ -91,7 +91,7 @@ export function projectRows(envs: DeployEnv[]): ProjectRow[] {
 export interface Delta {
   key: Key;
   params: Record<string, string | number>;
-  tone: "acc" | "warn" | "muted";
+  tone: "acc" | "warn" | "muted" | "crit";
 }
 
 /** What an environment says about its commits: how far what it runs is ahead of prod (`ahead_of`), and how many
@@ -108,7 +108,20 @@ export function deltas(row: DeployEnv): Delta[] {
   } else if (row.pending === 0 && !row.ahead_of) {
     out.push({ key: "deploys.up_to_date", params: {}, tone: "muted" });
   }
+  // a listed commit that failed its checks is said in the row: the owner sees it before opening anything
+  const failed = new Set([...(row.pending_commits ?? []), ...(row.ahead_commits ?? [])]
+    .filter((c) => c.status === "failure").map((c) => c.sha));
+  if (failed.size) out.push({ key: "deploys.checks_failed", params: { n: failed.size }, tone: "crit" });
   return out;
+}
+
+/** A commit's checks (or one check) as a sign and a colour; null — none known. */
+export function checkMark(state: CheckState | "" | undefined): { mark: string; tone: string } | null {
+  if (state === "success") return { mark: "✓", tone: "ok" };
+  if (state === "failure") return { mark: "✗", tone: "crit" };
+  if (state === "pending") return { mark: "…", tone: "warn" };
+  if (state === "warning") return { mark: "!", tone: "warn" };
+  return null;
 }
 
 export interface CommitGroup {
