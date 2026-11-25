@@ -44,9 +44,10 @@ const LIST = {
     env("api", "Api app", "staging", { branch: "main", run: run("api", "staging", "success", H), pending: 0,
                                                ahead: 0, ahead_of: "prod" }),
     env("api", "Api app", "prod", { branch: "main", manual: true, launch: true, skip_tests: true, pending: 0,
-                                            in_flight: true,
                                             run: run("api", "prod", "success", H) }),
     env("arm", "Arm app", "prod", { stale: true, ok_at: "", error: "ответ Forgejo больше 8 МБ" }),
+    env("keeta", "Keeta app", "prod", { manual: true, launch: true, in_flight: true, pending: 1,
+                                                run: run("keeta", "prod", "running", H) }),
   ],
   platform: { ...run("platform", "release", "success", "84903f4"), card: "KD-9434" },
   now: "2026-11-25T10:00:00Z", stale_after: 120,
@@ -64,8 +65,13 @@ test("«Деплой»: every environment's status and counts fit narrow and wid
     await expect(page.locator(".erow", { has: page.locator(".ename", { hasText: /^prod$/ }) }).first()
       .getByText("упали проверки: 1")).toBeVisible();
     await expect(page.getByRole("button", { name: "Выкатывается…" })).toBeDisabled();
+    // api's prod has everything deployed: its row is green, its button grey
+    const apiProd = page.locator("section", { has: page.getByRole("heading", { name: "Api app" }) })
+      .locator(".erow.settled");
+    await expect(apiProd).toHaveCount(1);
+    await expect(apiProd.getByRole("button", { name: "Выкатить" })).not.toHaveClass(/primary/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `width ${width}`).toBe(true);
-    const [alert, api] = await page.locator(".act .btn").all();  // api's waits for its deploy under way
+    const [alert, api] = await page.locator(".act .btn").all();
     const a = (await alert.boundingBox())!;
     const b = (await api.boundingBox())!;
     expect(Math.abs(a.x - b.x), `buttons aligned at ${width}`).toBeLessThan(1);

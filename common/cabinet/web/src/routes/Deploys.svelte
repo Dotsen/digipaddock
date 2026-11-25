@@ -4,7 +4,8 @@
   // prod (`ahead_of`) and how many commits of its branch wait to be deployed there. The columns are fixed: a status
   // or the owner's button never moves the rest. A row opens its details (the branch and its head, who started the
   // run, its inputs and log, the cards waiting for it, the last launch from the cabinet) and lists the commits behind
-  // its counts — title, author, when, a link to Forgejo, its checks (a failed one with its log; the row itself says
+  // its counts (a row with everything deployed and its last run passed is green, its button grey) — title, author,
+  // when, a link to Forgejo, its checks (a failed one with its log; the row itself says
   // how many failed), the description on a tap. A project whose read
   // failed says since when there is no fresh data and why. The platform's own release has a panel of its own; the
   // journal of runs is folded under a button, twenty one-line runs at a time, with a project and environment filter.
@@ -19,7 +20,7 @@
   import { apiGet } from "../lib/api";
   import {
     checkMark, commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, PLATFORM,
-    projectRows, projectsOf, shortSha, statusClass, statusMark, type CommitGroup,
+    projectRows, projectsOf, settled, shortSha, statusClass, statusMark, type CommitGroup,
   } from "../lib/deploys";
   import { errorText, t, type Key } from "../lib/i18n.svelte";
   import { synced } from "../lib/synced.svelte";
@@ -242,7 +243,7 @@
           {#each group.envs as row (row.env)}
             {@const key = `${row.project}:${row.env}`}
             {@const was = live(row)}
-            <div class="erow" class:open={opened === key} class:dim={group.stale}>
+            <div class="erow" class:open={opened === key} class:dim={group.stale} class:settled={settled(row)}>
               <button type="button" class="ehead" aria-expanded={opened === key} onclick={() => toggle(key)}>
                 <span class="ename">{row.env}</span>
                 {@render pill(row.run?.status)}
@@ -260,7 +261,7 @@
               </button>
               {#if row.launch}
                 <span class="act">
-                  <button class="btn small primary" type="button" disabled={row.in_flight}
+                  <button class="btn small" class:primary={!settled(row)} type="button" disabled={row.in_flight}
                           title={row.in_flight ? t("deploys.launch.in_flight_note") : undefined}
                           onclick={() => openLaunch(row)}>
                     {t(row.in_flight ? "deploys.launch.in_flight" : "deploys.launch.button")}
@@ -410,6 +411,9 @@
   .delta.warn { color: var(--warn); }
   .delta.muted { color: var(--muted); font-weight: 400; }
   .delta.crit { color: var(--crit); }
+  .delta.ok { color: var(--good); }
+  /* everything deployed: the whole row is green, hovering or open it stays so */
+  .erow.settled, .erow.settled .ehead:hover, .erow.settled.open .ehead { background: var(--good-bg); }
   .act { grid-column: 4; align-self: stretch; display: flex; align-items: center; padding-right: 16px; }
   .erow.open .act { background: var(--surface-2); }
   .act .btn { width: 100%; }

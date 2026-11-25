@@ -374,7 +374,7 @@ stage of another role or project.
 - the status of its last Forgejo Actions run (waiting, running, success, failed, cancelled) as a sign, a word and a colour;
 - the commit of that run and how long ago it started; when the last run is not the one that runs there (it failed, it is still running), «running `<commit>`» names the commit of its newest successful run;
 - how far it is ahead of prod: «+3 vs prod» — commits the environment runs that prod does not («same as prod» when none). Prod is the project's only manual environment, else the one named `prod`;
-- «waiting to deploy: N» — commits of its branch's head that the environment does not run yet; on prod with none, «all deployed»;
+- «waiting to deploy: N» — commits of its branch's head that the environment does not run yet; on prod with none, «all deployed» — with its last run passed and no deploy under way the whole row turns green and the button goes grey (it still deploys again);
 - the number of cards waiting for it;
 - «checks failed: N» — listed commits (below) whose checks in Forgejo failed, so a commit that broke its tests is seen before anyone deploys it.
 

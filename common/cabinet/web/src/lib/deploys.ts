@@ -91,7 +91,7 @@ export function projectRows(envs: DeployEnv[]): ProjectRow[] {
 export interface Delta {
   key: Key;
   params: Record<string, string | number>;
-  tone: "acc" | "warn" | "muted" | "crit";
+  tone: "acc" | "warn" | "muted" | "crit" | "ok";
 }
 
 /** What an environment says about its commits: how far what it runs is ahead of prod (`ahead_of`), and how many
@@ -106,13 +106,20 @@ export function deltas(row: DeployEnv): Delta[] {
   if (row.pending !== null && row.pending > 0) {
     out.push({ key: "deploys.pending", params: { n: row.pending }, tone: "warn" });
   } else if (row.pending === 0 && !row.ahead_of) {
-    out.push({ key: "deploys.up_to_date", params: {}, tone: "muted" });
+    out.push({ key: "deploys.up_to_date", params: {}, tone: "ok" });
   }
   // a listed commit that failed its checks is said in the row: the owner sees it before opening anything
   const failed = new Set([...(row.pending_commits ?? []), ...(row.ahead_commits ?? [])]
     .filter((c) => c.status === "failure").map((c) => c.sha));
   if (failed.size) out.push({ key: "deploys.checks_failed", params: { n: failed.size }, tone: "crit" });
   return out;
+}
+
+/** Everything is deployed there: the row says «all deployed» (nothing waits on the environment the others are
+ *  measured against), its last run passed, no deploy is under way and the data is fresh — the row is painted green
+ *  and its button goes grey. */
+export function settled(row: DeployEnv): boolean {
+  return row.pending === 0 && !row.ahead_of && row.run?.status === "success" && !row.in_flight && !row.stale;
 }
 
 /** A commit's checks (or one check) as a sign and a colour; null — none known. */

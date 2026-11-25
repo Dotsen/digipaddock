@@ -114,6 +114,27 @@ describe("Deploys", () => {
     expect(log.href).toBe("https://forge.example.test/o/alert/actions/runs/9/jobs/0");
   });
 
+  it("paints a row green when everything is deployed there, and its button grey", async () => {
+    fetch.mockImplementation(async () => json({ ...LIST, envs: [
+      env("prod", { manual: true, launch: true, run: run("prod", "success", H), deployed: run("prod", "success", H),
+                    pending: 0 })] }));
+    render(Deploys);
+    const alert = await panel("Alert app");
+    expect(alert.getByText("всё выкачено")).toBeTruthy();
+    const button = alert.getByRole("button", { name: "Выкатить" }) as HTMLButtonElement;
+    expect(button.closest(".erow")?.classList.contains("settled")).toBe(true);
+    expect(button.classList.contains("primary")).toBe(false);
+    expect(button.disabled).toBe(false);  // a redeploy of the same commit stays possible
+  });
+
+  it("keeps the button bright while commits wait", async () => {
+    render(Deploys);
+    const alert = await panel("Alert app");
+    const button = alert.getByRole("button", { name: "Выкатить" });
+    expect(button.classList.contains("primary")).toBe(true);
+    expect(button.closest(".erow")?.classList.contains("settled")).toBe(false);
+  });
+
   it("holds the button while a deploy is under way", async () => {
     fetch.mockImplementation(async () => json({ ...LIST, envs: LIST.envs.map((e) =>
       e.project === "alert" && e.env === "prod" ? { ...e, in_flight: true } : e) }));

@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkMark, commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, projectRows,
-  projectsOf, shortSha, statusClass, statusMark,
+  projectsOf, settled, shortSha, statusClass, statusMark,
 } from "./deploys";
 import type { DeployCommit, DeployEnv, DeployRun } from "./types";
 
@@ -113,7 +113,7 @@ describe("the deploys page", () => {
     ]);
     const prod = { ...env("alert", "Alert", "prod"), manual: true };
     expect(deltas({ ...prod, pending: 3 })).toEqual([{ key: "deploys.pending", params: { n: 3 }, tone: "warn" }]);
-    expect(deltas({ ...prod, pending: 0 })).toEqual([{ key: "deploys.up_to_date", params: {}, tone: "muted" }]);
+    expect(deltas({ ...prod, pending: 0 })).toEqual([{ key: "deploys.up_to_date", params: {}, tone: "ok" }]);
     // a test environment behind its own branch (its deploy failed) says so beside its lead
     expect(deltas({ ...base, ahead: 1, ahead_of: "prod", pending: 2 }).map((d) => d.key)).toEqual([
       "deploys.ahead", "deploys.pending"]);
@@ -149,6 +149,19 @@ describe("the deploys page", () => {
                    pending: 1, pending_commits: [failed] };
     expect(deltas(test).find((d) => d.key === "deploys.checks_failed")?.params).toEqual({ n: 1 });
     expect(deltas({ ...prod, pending_commits: [commit("a", "a")] }).map((d) => d.key)).toEqual(["deploys.pending"]);
+  });
+
+  it("calls an environment settled when everything is deployed there and its last run passed", () => {
+    const prod = { ...env("alert", "Alert", "prod"), manual: true, pending: 0, run: RUN };
+    expect(settled(prod)).toBe(true);
+    expect(settled({ ...prod, pending: 2 })).toBe(false);  // commits wait
+    expect(settled({ ...prod, pending: null })).toBe(false);  // unknown
+    expect(settled({ ...prod, run: { ...RUN, status: "failure" } })).toBe(false);
+    expect(settled({ ...prod, run: null })).toBe(false);
+    expect(settled({ ...prod, in_flight: true })).toBe(false);  // a deploy under way
+    expect(settled({ ...prod, stale: true })).toBe(false);  // no fresh data: nothing to vouch for
+    // an environment measured against prod says «как prod», not «всё выкачено»: it is not painted
+    expect(settled({ ...env("alert", "Alert", "test"), pending: 0, run: RUN, ahead: 0, ahead_of: "prod" })).toBe(false);
   });
 
   it("marks a commit's checks with a sign and a colour", () => {
