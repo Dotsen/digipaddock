@@ -3,8 +3,12 @@
   // and the coordinator's page with its chat (new tasks and "how is it going" in one tap); the inbox
   // shows its badge. The tab bar keeps the inbox, the dashboard, BOSS and the deploys (the agents for who does
   // not read the deploys), the rest is under "More" (a sheet from below); the side menu folds to a strip of icons. The incidents join the tab bar
-  // for who reads the servers, with the count of those not resolved. "Add task" opens the new
-  // card's form from any page — at the top of the side menu, the first entry of "More" on a phone.
+  // for who reads the servers, with the count of those not resolved. At the top of the side menu (the first row of
+  // "More" on a phone) the cards' search and "+": the search opens the board searched — or the card itself when a
+  // number names one card; "+" opens the new card's form from any page. Folded, both are icons; the search's
+  // unfolds the menu on its field.
+  import { tick } from "svelte";
+  import { searchTarget } from "../lib/findcard";
   import { t, type Key } from "../lib/i18n.svelte";
   import { chats } from "../lib/chats.svelte";
   import { live } from "../lib/live.svelte";
@@ -105,6 +109,7 @@
   const FOLD_ICON = '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>';
   const LOGOUT_ICON = '<path d="M15 4h4v16h-4"/><path d="M10 8l-4 4 4 4M6 12h10"/>';
   const ADD_ICON = '<path d="M12 5v14M5 12h14"/>';
+  const FIND_ICON = '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>';
 
   // The chat item is for those who may write to agents; a viewer keeps the agents page. An item with a permission
   // is for its holders only (the servers: a partner never sees them).
@@ -120,6 +125,30 @@
   const canAdd = $derived(session.canAny("cards.create"));
 
   let moreOpen = $state(false);
+  let side: HTMLElement;
+  let findText = $state("");
+  let finding = false;
+
+  async function find(event: SubmitEvent) {
+    event.preventDefault();
+    if (finding) return;
+    finding = true;
+    try {
+      const path = await searchTarget(findText);
+      moreOpen = false;
+      findText = "";
+      navigate(path);
+    } finally {
+      finding = false;
+    }
+  }
+
+  /** Folded: the search's icon unfolds the menu on its field. */
+  async function unfoldToFind() {
+    sideMenu.toggle();
+    await tick();
+    side.querySelector<HTMLInputElement>(".find input")?.focus();
+  }
 
   /** The new card's form; on the board it opens on the board's project. */
   function add() {
@@ -158,7 +187,19 @@
 
 <svelte:window onkeydown={onKey} />
 
-<nav class="side" class:folded={sideMenu.collapsed} aria-label={t("app.title")}>
+{#snippet finder()}
+  <form class="find" role="search" onsubmit={find}>
+    <svg class="glass" viewBox="0 0 24 24" aria-hidden="true">{@html FIND_ICON}</svg>
+    <input type="search" placeholder={t("nav.find")} aria-label={t("nav.find")} enterkeyhint="search" bind:value={findText} />
+    {#if canAdd}
+      <button type="button" class="plus" aria-haspopup="dialog" aria-label={t("nav.add_card")} title={t("nav.add_card")} onclick={add}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">{@html ADD_ICON}</svg>
+      </button>
+    {/if}
+  </form>
+{/snippet}
+
+<nav class="side" class:folded={sideMenu.collapsed} aria-label={t("app.title")} bind:this={side}>
   <div class="head">
     {#if !sideMenu.collapsed}<img class="brand" src="/images/logo.png" alt={t("app.title")} width="110" height="36" />{/if}
     <button
@@ -172,18 +213,17 @@
       <svg viewBox="0 0 24 24" aria-hidden="true">{@html FOLD_ICON}</svg>
     </button>
   </div>
-  {#if canAdd}
-    <button
-      type="button"
-      class="add"
-      aria-haspopup="dialog"
-      aria-label={sideMenu.collapsed ? t("nav.add_card") : undefined}
-      title={sideMenu.collapsed ? t("nav.add_card") : undefined}
-      onclick={add}
-    >
-      <svg viewBox="0 0 24 24" aria-hidden="true">{@html ADD_ICON}</svg>
-      {#if !sideMenu.collapsed}<span>{t("nav.add_card")}</span>{/if}
+  {#if sideMenu.collapsed}
+    <button type="button" class="plus" aria-label={t("nav.find")} title={t("nav.find")} onclick={unfoldToFind}>
+      <svg viewBox="0 0 24 24" aria-hidden="true">{@html FIND_ICON}</svg>
     </button>
+    {#if canAdd}
+      <button type="button" class="plus" aria-haspopup="dialog" aria-label={t("nav.add_card")} title={t("nav.add_card")} onclick={add}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">{@html ADD_ICON}</svg>
+      </button>
+    {/if}
+  {:else}
+    {@render finder()}
   {/if}
   {#each ITEMS as item (item.path)}
     <a
@@ -240,12 +280,7 @@
 {#if moreOpen}
   <div class="veil more-veil" role="presentation" onclick={(e) => e.target === e.currentTarget && (moreOpen = false)}>
     <div class="sheet more-sheet" role="dialog" aria-modal="true" aria-label={t("nav.more")}>
-      {#if canAdd}
-        <button type="button" class="add" aria-haspopup="dialog" onclick={add}>
-          <svg viewBox="0 0 24 24" aria-hidden="true">{@html ADD_ICON}</svg>
-          <span>{t("nav.add_card")}</span>
-        </button>
-      {/if}
+      {@render finder()}
       {#each MORE as item (item.path)}
         <a href={item.path} class:on={active(item)} aria-current={active(item) ? "page" : undefined} onclick={(e) => go(e, item)}>
           <svg viewBox="0 0 24 24" aria-hidden="true">{@html item.icon}</svg>
@@ -283,11 +318,16 @@
   .more-sheet { gap: 4px; padding: 8px; max-height: calc(100dvh - var(--nav-h) - env(safe-area-inset-bottom, 0px) - 16px); align-content: start; }
   .more-sheet a { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 12px; border-radius: 8px; font-size: 15px; }
   .more-sheet a.on { background: var(--surface-2); }
-  .add {
-    display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px;
-    background: none; color: var(--accent); font: inherit; font-size: 15px; text-align: left; cursor: pointer;
+  /* the search and "+" in one row: the field takes the width, "+" a square beside it */
+  .find { display: flex; gap: 8px; align-items: center; position: relative; min-width: 0; }
+  .find input { flex: 1; min-width: 0; padding-left: 34px; }
+  .find .glass { position: absolute; left: 10px; width: 17px; height: 17px; color: var(--muted); pointer-events: none; }
+  .plus {
+    flex: none; width: 44px; height: 44px; display: grid; place-items: center; padding: 0;
+    border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--accent); cursor: pointer;
   }
-  .add:hover { background: var(--surface-2); }
+  .plus:hover { background: var(--surface-2); }
+  .more-sheet .find { margin-bottom: 4px; }
   .fold {
     background: none; border: 0; padding: 6px; border-radius: 8px; color: var(--muted);
     display: grid; place-items: center;
@@ -304,8 +344,11 @@
     .brand { display: block; width: 110px; height: auto; flex: 0 1 110px; min-width: 0; margin-right: auto; object-fit: contain; }
     .side a { flex-direction: row; justify-content: flex-start; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 14px; }
     .side a.on { background: var(--surface-2); }
-    .side .add { gap: 10px; padding: 8px 12px; margin-bottom: 8px; font-size: 14px; }
-    .side.folded .add { padding: 8px; justify-content: center; }
+    .side .find { margin-bottom: 8px; }
+    .side .find input { padding-top: 7px; padding-bottom: 7px; }
+    .side .plus { width: 38px; height: 38px; }
+    .side.folded .plus { margin-bottom: 4px; }
+    .side .plus svg { width: 20px; height: 20px; }
     .side .badge-at { margin-left: auto; }
     .who { margin-top: auto; display: grid; gap: 8px; padding: 0 12px; font-size: 13px; }
     /* folded: a strip of icons, the badges over them, the names in aria-label and the tooltip */

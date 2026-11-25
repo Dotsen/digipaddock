@@ -161,3 +161,47 @@ test("the menu's «Добавить задачу» opens the new card's form awa
   await expect(form).toBeHidden();
   await expect(page).toHaveURL(/\/inbox$/);
 });
+
+// The menu's search: a card's number opens that card, words open the board searched; the board searches as one
+// types. A card put off until a time is shaded on the board, the project chips wear their colours.
+test("the menu's search opens a card by its number and the board by words; the board searches as one types", async ({ page }) => {
+  await page.goto("/inbox");
+  const made = await api(page, "POST", "/api/cards", { title: "E2E: put off till tomorrow", project: "digipaddock" });
+  expect(made.status).toBe(201);
+  const id: string = made.body.id;
+  const until = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 16);
+  expect((await api(page, "POST", `/api/cards/${id}/defer`, { until, reason: "e2e" })).status).toBe(200);
+
+  const find = page.locator("nav.side").getByRole("searchbox", { name: "Найти задачу" });
+  await find.fill(id.split("-")[1]); // the bare number
+  await find.press("Enter");
+  await page.waitForURL(new RegExp(`/cards/${id}$`));
+  await expect(find).toHaveValue("");
+
+  await find.fill("Nightly backup");
+  await find.press("Enter");
+  await page.waitForURL(/\/board\?q=Nightly/);
+  const search = page.getByRole("searchbox", { name: "Поиск по карточкам" });
+  await expect(search).toHaveValue("Nightly backup");
+  await expect(page.locator("a.bc", { hasText: "Nightly backup check" }).first()).toBeVisible();
+
+  // no Enter: the board follows the field
+  await search.fill("put off till");
+  await page.waitForURL(/q=put\+off\+till|q=put%20off%20till/);
+  const tile = page.locator(`a.bc[href='/cards/${id}']`);
+  await expect(tile).toHaveClass(/deferred/);
+  await expect(search).toHaveValue("put off till");
+  const chip = page.locator(".filters .chip", { hasText: /^DigiPaddock$|^digipaddock$/i }).first();
+  expect(await chip.evaluate((el) => getComputedStyle(el).borderTopColor)).not.toBe(
+    await page.locator(".filters .chip").first().evaluate((el) => getComputedStyle(el).borderTopColor));
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/board");
+    await expect(page.locator("a.bc").first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `width ${width}`).toBe(true);
+    await page.screenshot({ path: `../../../tmp/cabinet-dev/board-${width}.png` });
+    await page.goto(`/board?q=${encodeURIComponent("E2E")}&project=digipaddock`);
+    await expect(tile).toBeVisible();
+    await page.screenshot({ path: `../../../tmp/cabinet-dev/board-${width}-search.png` });
+  }
+});

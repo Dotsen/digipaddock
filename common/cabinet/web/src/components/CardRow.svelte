@@ -1,6 +1,7 @@
 <script lang="ts">
-  // A card in a list (board column, review group): id, title, assignee, project, labels, servers; a card put off until a
-  // time says until when, in the person's time zone.
+  // A card in a list (board column, review group): id, title, assignee, project (its chip in the project's colour),
+  // labels, servers; a card put off until a time says until when, in the person's time zone, and is shaded as a whole —
+  // not in work, still readable.
   import { t } from "../lib/i18n.svelte";
   import { session } from "../lib/session.svelte";
   import { projects } from "../lib/stores/projects.svelte";
@@ -13,14 +14,14 @@
   let { card, status = false }: { card: CardCompact; status?: boolean | "phone" } = $props();
 </script>
 
-<a class="bc" href="/cards/{card.id}">
+<a class="bc" class:deferred={!!card.defer} href="/cards/{card.id}">
   <span class="t">{card.title}</span>
   <span class="row">
     <span class="id">{card.id}</span>
     {#if status}<span class="pill" class:phone={status === "phone"}><StatusPill status={card.status} /></span>{/if}
     {#if card.defer}<span class="chip defer" title={card.defer.reason}>{t("defer.badge", { when: dayTime(card.defer.until, session.me?.timezone) })}</span>{/if}
     {#if card.assignee}<Avatar name={card.assignee} kind={card.assignee === "@boss" ? "boss" : card.assignee.startsWith("@") ? "agent" : "owner"} size={20} />{/if}
-    <span class="chip">{projects.name(card.project)}</span>
+    <span class="chip project" style:--pc={projects.color(card.project) || null}>{projects.name(card.project)}</span>
     {#each card.servers as server (server)}<span class="chip text">{server}</span>{/each}
     {#each card.labels as label (label)}<span class="chip acc text">{label}</span>{/each}
   </span>
@@ -34,5 +35,14 @@
   .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
   .pill { display: inline-flex; }
   .defer { color: var(--muted); white-space: nowrap; }
+  .project { border-color: var(--pc, var(--line)); }
+  /* put off until a time: sunk into the page — hatched, a dashed edge, the title muted; the muted text keeps 4.5:1 at
+     this opacity */
+  .bc.deferred {
+    background: repeating-linear-gradient(-45deg, transparent 0 6px, var(--line-soft) 6px 8px), var(--bg);
+    border-style: dashed; opacity: .8;
+  }
+  .bc.deferred .t { color: var(--muted); }
+  .bc.deferred:hover, .bc.deferred:focus-visible { opacity: 1; }
   @media (min-width: 900px) { .pill.phone { display: none; } }
 </style>

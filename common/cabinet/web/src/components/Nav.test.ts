@@ -133,24 +133,32 @@ it("folds the side menu to icons with names in aria-label, remembered in this br
   expect(localStorage.getItem(SIDE_MENU_KEY)).toBeNull();
 });
 
-// a task is added from any page — the menu opens the new card's form
+// a task is added from any page — the menu's "+" opens the new card's form
 const noCards = () => vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } })));
 
-it("«Добавить задачу» in the side menu opens the new card's form; folded, it is an icon with its name", async () => {
+it("«+» beside the search in the side menu opens the new card's form; folded, the search and «+» are icons", async () => {
   noCards();
   signIn({ "*": ["*"] });
   const { container } = render(Nav);
   const side = within(container.querySelector<HTMLElement>("nav.side")!);
-  expect(side.getByRole("button", { name: "Добавить задачу" }).textContent).toContain("Добавить задачу");
-  await fireEvent.click(side.getByRole("button", { name: "Добавить задачу" }));
+  const plus = side.getByRole("button", { name: "Добавить задачу" });
+  expect([plus.textContent?.trim(), plus.getAttribute("title")]).toEqual(["", "Добавить задачу"]);
+  expect(plus.closest("form")?.querySelector("input")?.getAttribute("aria-label")).toBe("Найти задачу");
+  await fireEvent.click(plus);
   expect([newCardForm.open, newCardForm.project]).toEqual([true, ""]);
   newCardForm.close();
   sideMenu.toggle();
   await tick();
+  expect(side.queryByRole("searchbox")).toBeNull();
   const folded = side.getByRole("button", { name: "Добавить задачу" });
   expect([folded.textContent?.trim(), folded.getAttribute("title")]).toEqual(["", "Добавить задачу"]);
   await fireEvent.click(folded);
   expect(newCardForm.open).toBe(true);
+  // the search's icon unfolds the menu on its field
+  await fireEvent.click(side.getByRole("button", { name: "Найти задачу" }));
+  await tick();
+  expect(sideMenu.collapsed).toBe(false);
+  expect(document.activeElement).toBe(side.getByRole("searchbox", { name: "Найти задачу" }));
 });
 
 it("on the board the form opens on the board's project", async () => {
@@ -162,16 +170,43 @@ it("on the board the form opens on the board's project", async () => {
   expect([newCardForm.open, newCardForm.project]).toEqual([true, "shop"]);
 });
 
-it("on a phone «Добавить задачу» is the first entry of «Ещё», which it closes", async () => {
+it("on a phone the search and «+» are the first row of «Ещё», which they close", async () => {
   noCards();
   signIn({ "*": ["*"] });
   const { container } = render(Nav);
-  await fireEvent.click(within(container.querySelector<HTMLElement>("nav.tabbar")!).getByRole("button", { name: "Ещё" }));
-  const sheet = container.ownerDocument.querySelector<HTMLElement>(".more-sheet")!;
-  expect(sheet.firstElementChild?.textContent?.trim()).toBe("Добавить задачу");
+  const more = within(container.querySelector<HTMLElement>("nav.tabbar")!).getByRole("button", { name: "Ещё" });
+  await fireEvent.click(more);
+  let sheet = container.ownerDocument.querySelector<HTMLElement>(".more-sheet")!;
+  expect(within(sheet.firstElementChild as HTMLElement).getByRole("searchbox", { name: "Найти задачу" })).toBeTruthy();
   await fireEvent.click(within(sheet).getByRole("button", { name: "Добавить задачу" }));
   expect(container.ownerDocument.querySelector(".more-sheet")).toBeNull();
   expect(newCardForm.open).toBe(true);
+  newCardForm.close();
+  await fireEvent.click(more);
+  sheet = container.ownerDocument.querySelector<HTMLElement>(".more-sheet")!;
+  await fireEvent.input(within(sheet).getByRole("searchbox"), { target: { value: "бэкап" } });
+  await fireEvent.submit(within(sheet).getByRole("search"));
+  await vi.waitFor(() => expect(location.pathname + location.search).toBe("/board?q=%D0%B1%D1%8D%D0%BA%D0%B0%D0%BF"));
+  expect(container.ownerDocument.querySelector(".more-sheet")).toBeNull();
+});
+
+it("the menu's search opens the card a number names, words the board searched; the field is emptied", async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify([{ id: "KD-7", n: 7, title: "x", labels: [], servers: [] },
+                                                                { id: "KD-70", n: 70, title: "KD-7", labels: [], servers: [] }]),
+                                               { headers: { "Content-Type": "application/json" } }));
+  vi.stubGlobal("fetch", fetch);
+  signIn({ shop: ["cards.read"] });  // who only reads cards searches them too
+  const { container } = render(Nav);
+  const side = within(container.querySelector<HTMLElement>("nav.side")!);
+  const field = side.getByRole("searchbox", { name: "Найти задачу" }) as HTMLInputElement;
+  await fireEvent.input(field, { target: { value: "kd-7" } });
+  await fireEvent.submit(side.getByRole("search"));
+  await vi.waitFor(() => expect(location.pathname).toBe("/cards/KD-7"));
+  expect(field.value).toBe("");
+  await fireEvent.input(field, { target: { value: "nightly backup" } });
+  await fireEvent.submit(side.getByRole("search"));
+  await vi.waitFor(() => expect(location.pathname + location.search).toBe("/board?q=nightly%20backup"));
+  expect(fetch).toHaveBeenCalledTimes(1);  // words go to the board without a search of their own
 });
 
 it("who cannot create a card has no «Добавить задачу»", async () => {

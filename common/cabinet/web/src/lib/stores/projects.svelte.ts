@@ -3,6 +3,7 @@
 // screen shows the new name without a reload.
 import { apiGet } from "../api";
 import { onLiveEvent, onResync } from "../live.svelte";
+import { projectHues } from "../projectcolor";
 import type { Project } from "../types";
 
 class Projects {
@@ -12,6 +13,7 @@ class Projects {
   private pending: Promise<void> | null = null;
   private asked = 0; // each read of the list takes the next number
   private shown = 0; // the number of the read the list shows: an older answer arriving later is dropped
+  private hues = $derived(projectHues(this.list.map((p) => p.id)));
 
   /** The agents a message can mention: every project's route, and the coordinator. */
   get agents(): string[] {
@@ -21,6 +23,12 @@ class Projects {
   /** A project's name for the screens; its id while the list is not read yet (or for a project now gone). */
   name(id: string): string {
     return this.list.find((p) => p.id === id)?.name ?? id;
+  }
+
+  /** A project's colour (a CSS value) for its chips; "" while the list is not read yet or for a project now gone. */
+  color(id: string): string {
+    const hue = this.hues.get(id);
+    return hue === undefined ? "" : `var(--project-${hue})`;
   }
 
   private show(read: number, list: Project[], assignees: string[]) {

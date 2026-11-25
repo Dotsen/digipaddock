@@ -198,6 +198,7 @@
   "overview.team.queued": "queued: {n}",
   "overview.team.failed": "failures: {n}",
   "nav.more": "More",
+  "nav.find": "Find a task",
   "nav.add_card": "Add a task",
   "nav.servers": "Servers",
   "servers.empty": "The monitor has sent no servers yet",

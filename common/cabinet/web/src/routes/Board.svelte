@@ -1,8 +1,8 @@
 <script lang="ts">
   // The board: "Add" in its header (the new card's form, → Inbox; apart from the filters),
-  // project chips, search and "Filters" (status, agent, specialization, label — one menu at any width);
-  // columns by status on a desktop, one list by status on a phone. The query lives in the URL, so a
-  // filtered board is a link.
+  // project chips (each with its project's colour, the chosen one filled), search as you type and "Filters"
+  // (status, agent, specialization, label — one menu at any width); columns by status on a desktop, one list by
+  // status on a phone. The query lives in the URL, so a filtered board is a link.
   import { onMount, untrack } from "svelte";
   import CardRow from "../components/CardRow.svelte";
   import { statusKey } from "../components/StatusPill.svelte";
@@ -54,6 +54,15 @@
   const creatable = $derived(projects.list.filter((p) => session.can("cards.create", p.id)));
 
   let search = $state("");
+  // the search this page put in the address itself: a search from elsewhere (the menu's field, a link, back) is
+  // shown in the field, and what is being typed is not overwritten by its own echo
+  let sent = "";
+  const send = () => {
+    sent = search.trim();
+    setParam("q", sent);
+  };
+  // the board searches as one types, a quarter of a second after the last key (at least once a second)
+  const typed = coalesce(send, 250, 1000);
 
   function setParam(name: string, value: string) {
     const next = new URLSearchParams(query);
@@ -70,7 +79,10 @@
 
   $effect(() => {
     if (router.current.name !== "board") return;
-    search = q;
+    if (q !== sent) {
+      sent = q;
+      search = q;
+    }
     asked = { project, q };
     void data.run();
   });
@@ -88,6 +100,7 @@
           .catch(() => data.run()),
     );
     return () => {
+      typed.cancel();
       research.cancel();
       stop();
       release();
@@ -97,7 +110,8 @@
 
   function submitSearch(event: SubmitEvent) {
     event.preventDefault();
-    setParam("q", search.trim());
+    typed.cancel();
+    send();
   }
 
 </script>
@@ -111,15 +125,16 @@
 </div>
 
 <div class="filters" role="toolbar">
-  <button type="button" class="chip" class:on={!project} onclick={() => setParam("project", "")}>{t("board.all_projects")}</button>
+  <button type="button" class="chip" class:on={!project} aria-pressed={!project} onclick={() => setParam("project", "")}>{t("board.all_projects")}</button>
   {#each projects.list as p (p.id)}
-    <button type="button" class="chip" class:on={project === p.id} onclick={() => setParam("project", p.id)}>{p.name}</button>
+    <button type="button" class="chip" class:on={project === p.id} style:--pc={projects.color(p.id) || null}
+            aria-pressed={project === p.id} onclick={() => setParam("project", p.id)}>{p.name}</button>
   {/each}
 </div>
 
 <div class="tools">
   <form class="search" onsubmit={submitSearch}>
-    <input type="search" placeholder={t("board.search")} aria-label={t("board.search")} bind:value={search} />
+    <input type="search" placeholder={t("board.search")} aria-label={t("board.search")} bind:value={search} oninput={typed} />
   </form>
   <button
     type="button"
@@ -186,11 +201,16 @@
 {/if}
 
 <style>
-  .filters { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; }
-  .filters .chip { cursor: pointer; }
-  .filters .chip.on { color: var(--text); border-color: var(--accent); }
+  /* the projects: each chip edged in its project's colour (the cards' project chips wear it too), the chosen one
+     filled with the accent */
+  .filters { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; }
+  .filters .chip {
+    cursor: pointer; font-size: 16px; padding: 5px 14px; color: var(--text); border: 2px solid var(--pc, var(--line));
+  }
+  .filters .chip:hover { background: var(--surface-3); }
+  .filters .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--pc, var(--accent)); }
   .tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 10px; }
-  .search { flex: 1 1 220px; }
+  .search { flex: 0 1 260px; min-width: 0; }
   .select { display: grid; gap: 3px; font-size: 12px; color: var(--muted); flex: 0 1 150px; }
   /* the projects and the search in view; the five filters open on «Фильтры» at any width */
   .toggle { flex: none; display: inline-flex; align-items: center; gap: 6px; }

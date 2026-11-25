@@ -8,7 +8,7 @@ test("the side menu: the inbox first, the dashboard at /", async ({ page, isMobi
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Дашборд", level: 1 })).toBeVisible();
   await expect(page.locator("nav.side").getByRole("link")).toHaveText(
-    [/Входящие/, /Дашборд/, /BOSS/, /Доска/, /Агенты/, /Серверы/, /Инциденты/, /Лента/, /Настройки/],
+    [/Входящие/, /Дашборд/, /BOSS/, /Доска/, /Деплой/, /Серверы/, /Инциденты/, /Агенты/, /Лента/, /Настройки/],
   );
 });
 
@@ -80,7 +80,8 @@ test("the BOSS item opens the coordinator's page and is the one marked", async (
   await page.goto("/board");
   const nav = page.locator(isMobile ? "nav.tabbar" : "nav.side");
   const boss = nav.getByRole("link", { name: "BOSS" });
-  const agents = nav.getByRole("link", { name: "Агенты" });
+  // on a phone the agents are under «Ещё» for who reads the deploys (their tab is «Деплой»): «Ещё» is lit there
+  const agents = isMobile ? nav.getByRole("button", { name: "Ещё" }) : nav.getByRole("link", { name: "Агенты" });
   await boss.click();
   await page.waitForURL(/\/agents\/boss$/);
   await expect(boss).toHaveAttribute("aria-current", "page");
@@ -141,7 +142,7 @@ test("the mobile More sheet fits its entries above the tab bar", async ({ page }
     await sheet.evaluate(async el => { await Promise.all(el.getAnimations().map(a => a.finished)); });
     const box = (await sheet.boundingBox())!;
     const links = await sheet.getByRole("link").all();
-    // "Add task" is the sheet's first entry, the links follow it
+    // the search and "+" are the sheet's first row, the links follow it
     const first = (await sheet.getByRole("button", { name: "Добавить задачу" }).boundingBox())!;
     const last = (await links[links.length - 1].boundingBox())!;
     const bar = (await page.locator("nav.tabbar").boundingBox())!;

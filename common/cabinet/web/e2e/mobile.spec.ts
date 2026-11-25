@@ -39,11 +39,11 @@ test("«Ещё» opens the board, the servers, the feed and the settings and is 
   await expect(more).not.toHaveAttribute("aria-current", "page");
 
   await more.click();
-  await expect(sheet.getByRole("link")).toHaveText(["Доска", "Серверы", "Лента", "Настройки"]);
+  await expect(sheet.getByRole("link")).toHaveText(["Доска", "Серверы", "Агенты", "Лента", "Настройки"]);
   await page.keyboard.press("Escape");
   await expect(sheet).toHaveCount(0);
 
-  // a task is added from any page — "Add task" is the first entry of "More"
+  // a task is added from any page — "+" beside the search, the first row of "More"
   await more.click();
   await sheet.getByRole("button", { name: "Добавить задачу" }).click();
   await expect(sheet).toHaveCount(0);
@@ -151,9 +151,9 @@ test("the tab bar is there and the thread scrolls inside the card", async ({ pag
   await page.goto("/inbox");
   const tabbar = page.locator("nav.tabbar");
   await expect(tabbar).toBeVisible();
-  // the sections and "More", the incidents among them; the board, the servers, the feed
+  // the sections and "More", the deploys and the incidents among them; the board, the servers, the agents, the feed
   // and the settings are under "More"
-  await expect(tabbar.getByRole("link")).toHaveText([/Входящие/, /Дашборд/, /BOSS/, /Агенты/, /Инциденты/]);
+  await expect(tabbar.getByRole("link")).toHaveText([/Входящие/, /Дашборд/, /BOSS/, /Деплой/, /Инциденты/]);
   await expect(tabbar.getByRole("button", { name: "Ещё" })).toBeVisible();
 
   const { id } = await cardByTitle(page, "Card page in the cabinet");

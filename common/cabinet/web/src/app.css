@@ -31,6 +31,13 @@
   --au-boss-ink: #c9a6f5;
   --au-monitor: #1f3325;
   --au-monitor-ink: #6fcf8a;
+  /* a hue per project (lib/projectcolor.ts): the board's filter chip and a card's project chip; none is a status's */
+  --project-0: #6aa8f7;
+  --project-1: #b691f2;
+  --project-2: #4cc4cf;
+  --project-3: #ef82b8;
+  --project-4: #f09a62;
+  --project-5: #cdb38a;
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --radius: 12px;
@@ -67,6 +74,12 @@
   --au-boss-ink: #6a3fa8;
   --au-monitor: #e3f3e8;
   --au-monitor-ink: #1f7a3d;
+  --project-0: #2f6fd0;
+  --project-1: #7a4fc4;
+  --project-2: #13858f;
+  --project-3: #c23f85;
+  --project-4: #c0612a;
+  --project-5: #8a7046;
 }
 
 * { box-sizing: border-box; }

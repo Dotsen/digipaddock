@@ -198,6 +198,7 @@
   "overview.team.queued": "в очереди: {n}",
   "overview.team.failed": "сбоев: {n}",
   "nav.more": "Ещё",
+  "nav.find": "Найти задачу",
   "nav.add_card": "Добавить задачу",
   "nav.servers": "Серверы",
   "servers.empty": "Монитор ещё не прислал ни одного сервера",
