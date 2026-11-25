@@ -3,11 +3,12 @@
   // the commit it ran and when, the commit that runs there when the last run is another one, how far it is ahead of
   // prod (`ahead_of`) and how many commits of its branch wait to be deployed there. The columns are fixed: a status
   // or the owner's button never moves the rest. A row opens its details (the branch and its head, who started the
-  // run, its inputs and log, the cards waiting for it, the last launch from the cabinet). A project whose read
+  // run, its inputs and log, the cards waiting for it, the last launch from the cabinet) and lists the commits behind
+  // its counts — title, author, when, a link to Forgejo, the description on a tap. A project whose read
   // failed says since when there is no fresh data and why. The platform's own release has a panel of its own; the
   // journal of runs is folded under a button, twenty one-line runs at a time, with a project and environment filter.
   // The forge reader brings the runs and the counts every 45 s; the page reads itself every 30 s. The owner starts a
-  // manual environment (prod) from its row: the sheet names the commit that goes out and how many new commits it
+  // manual environment (prod) from its row: the sheet names the commit that goes out and the new commits it
   // brings, skip_tests where the workflow takes it, then the saved passkey's signature with no fingerprint or PIN —
   // no typed word; kd-review dispatches it with its own token, and the run comes with the reader's next read.
   import { onMount } from "svelte";
@@ -15,8 +16,8 @@
   import Sheet from "../components/Sheet.svelte";
   import { apiGet } from "../lib/api";
   import {
-    deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, PLATFORM, projectRows,
-    projectsOf, shortSha, statusClass, statusMark,
+    commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, PLATFORM,
+    projectRows, projectsOf, shortSha, statusClass, statusMark, type CommitGroup,
   } from "../lib/deploys";
   import { errorText, t, type Key } from "../lib/i18n.svelte";
   import { synced } from "../lib/synced.svelte";
@@ -155,9 +156,33 @@
   <span class="pill {statusClass(status)}"><span aria-hidden="true">{statusMark(status)}</span> {statusText(status)}</span>
 {/snippet}
 
+{#snippet commitList(group: CommitGroup, heading: boolean)}
+  <div class="commits">
+    {#if heading}<p class="chead">{t(group.key, group.params)}</p>{/if}
+    <ul class="clist" aria-label={t(group.key, group.params)}>
+      {#each group.commits as c (c.sha)}
+        <li>
+          {#if c.body}
+            <details><summary class="ctitle">{c.title}</summary><p class="cbody">{c.body}</p></details>
+          {:else}
+            <span class="ctitle">{c.title}</span>
+          {/if}
+          <span class="cmeta">
+            {#if c.url}<a href={c.url} target="_blank" rel="noopener noreferrer" title={t("deploys.commits.open")}><code
+              >{shortSha(c.sha)}</code></a>{:else}<code>{shortSha(c.sha)}</code>{/if}{#if c.author}{` · ${c.author}`}{/if}{#if
+              c.date}{` · ${when(c.date)}`}{/if}
+          </span>
+        </li>
+      {/each}
+    </ul>
+    {#if group.more > 0}<p class="cmore">{t("deploys.commits.more", { n: group.more })}</p>{/if}
+  </div>
+{/snippet}
+
 {#snippet details(row: DeployEnv)}
   {@const was = live(row)}
   <div class="details">
+    {#each commitGroups(row) as group (group.key)}{@render commitList(group, true)}{/each}
     <span class="muted">
       <code>{t("deploys.branch", { branch: row.branch })}</code>
       {#if row.head} · {t("deploys.head", { branch: row.branch, sha: shortSha(row.head) })}{/if}
@@ -307,6 +332,9 @@
             })
           : t("deploys.launch.nothing", { env: launching.env })}
       </p>
+      {#each commitGroups(launching).filter((g) => g.key === "deploys.commits.pending") as group (group.key)}
+        {@render commitList(group, false)}
+      {/each}
     {/if}
     {#if launching.skip_tests}
       <label class="check">
@@ -365,12 +393,23 @@
   .delta.acc { color: var(--accent); }
   .delta.warn { color: var(--warn); }
   .delta.muted { color: var(--muted); font-weight: 400; }
-  .act { grid-column: 4; padding-right: 16px; }
+  .act { grid-column: 4; align-self: stretch; display: flex; align-items: center; padding-right: 16px; }
+  .erow.open .act { background: var(--surface-2); }
   .act .btn { width: 100%; }
   .details {
     grid-column: 1 / -1; display: grid; gap: 3px; padding: 8px 16px 12px; font-size: 12.5px;
     background: var(--surface-2); overflow-wrap: anywhere;
   }
+  /* the commits behind a count: a title a line (the description under it on a tap), then the hash, author, time */
+  .commits { display: grid; gap: 4px; margin-bottom: 8px; }
+  .chead { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--text); }
+  .clist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .clist li { display: grid; gap: 2px; padding-left: 10px; border-left: 2px solid var(--line); min-width: 0; }
+  .ctitle { font-size: 13px; line-height: 1.35; color: var(--text); overflow-wrap: anywhere; }
+  summary.ctitle { cursor: pointer; }
+  .cbody { margin: 4px 0 2px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cmeta { font-size: 12px; color: var(--muted); }
+  .cmore { margin: 0; font-size: 12px; color: var(--muted); }
   :is(.pill, .mark).ok { color: var(--good); background: var(--good-bg); }
   :is(.pill, .mark).crit { color: var(--crit); background: var(--crit-bg); }
   :is(.pill, .mark).warn { color: var(--warn); background: var(--warn-bg); }

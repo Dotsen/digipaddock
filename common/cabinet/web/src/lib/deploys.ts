@@ -2,7 +2,7 @@
 // its commits; the owner's prod launch.
 import { apiPost } from "./api";
 import type { Key } from "./i18n.svelte";
-import type { DeployChallenge, DeployEnv, DeployRun } from "./types";
+import type { DeployChallenge, DeployCommit, DeployEnv, DeployRun } from "./types";
 import { assertPasskey } from "./webauthn";
 
 export const PLATFORM = "platform";
@@ -107,6 +107,30 @@ export function deltas(row: DeployEnv): Delta[] {
     out.push({ key: "deploys.pending", params: { n: row.pending }, tone: "warn" });
   } else if (row.pending === 0 && !row.ahead_of) {
     out.push({ key: "deploys.up_to_date", params: {}, tone: "muted" });
+  }
+  return out;
+}
+
+export interface CommitGroup {
+  key: Key;
+  params: Record<string, string | number>;
+  commits: DeployCommit[];
+  more: number; // commits the count has past the listed ones
+}
+
+/** The commits behind an environment's counts, as its open row lists them: what is not deployed there yet, and what
+ *  it runs that prod does not. A count without its list (a reader of before the lists) lists nothing. */
+export function commitGroups(row: DeployEnv): CommitGroup[] {
+  const out: CommitGroup[] = [];
+  const pending = row.pending_commits ?? [];
+  if (row.pending && pending.length) {
+    out.push({ key: "deploys.commits.pending", params: { env: row.env, n: row.pending }, commits: pending,
+               more: Math.max(0, row.pending - pending.length) });
+  }
+  const ahead = row.ahead_commits ?? [];
+  if (row.ahead && row.ahead_of && ahead.length) {
+    out.push({ key: "deploys.commits.ahead", params: { env: row.env, ref: row.ahead_of, n: row.ahead },
+               commits: ahead, more: Math.max(0, row.ahead - ahead.length) });
   }
   return out;
 }

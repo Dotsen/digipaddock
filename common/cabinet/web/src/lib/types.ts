@@ -1328,8 +1328,21 @@ export interface DeployEnv {
   deployed: DeployRun | null; // its newest successful run: what runs there
   head: string; // its branch's head as the reader last saw it, '' unknown
   pending: number | null; // commits of the branch not deployed there yet; null unknown
+  pending_commits: DeployCommit[]; // the newest of them (at most 20)
   ahead: number | null; // commits it runs that ahead_of (prod) does not; null unknown
+  ahead_commits: DeployCommit[]; // the newest of them (at most 20)
   ahead_of: string; // the environment it is measured against, '' none (prod itself)
+}
+
+/** A commit behind a count of «Деплой»: its title and description, its author, when it landed on the branch (UTC,
+ *  '' unknown) and its page in Forgejo ('' none). */
+export interface DeployCommit {
+  sha: string;
+  title: string;
+  body: string;
+  author: string;
+  date: string;
+  url: string;
 }
 
 /** A launch the owner signed in the cabinet: dispatched, or refused with kd-review's reason. */

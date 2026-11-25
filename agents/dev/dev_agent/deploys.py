@@ -3,8 +3,9 @@ once a minute. It reads the Forgejo Actions runs of every environment the projec
 (``repo.deploys`` of the release tree's ``host/projects.json``) with dev's read token and reports them to the
 cabinet (``deploy.report``) — the cabinet has no network and holds no Forgejo token. For the commits the cards'
 ``deploy`` waits name (``deploy.watch``) it asks Forgejo whether a finished run's commit holds them and reports that
-too (``includes``). Each environment also carries what the page compares (``measure``): its branch's head, how many
-commits of it are not deployed there yet, and how far its deployed commit is ahead of prod's.
+too (``includes``). Each environment also carries what the page compares (``measure``): its branch's head, the
+commits of it not deployed there yet, and the commits its deployed one has that prod's lacks — how many, and the
+newest of them with their titles, descriptions and authors.
 
 One project's failure (Forgejo refused, a broken answer) is that project's ``error`` in the report, its runs kept
 as the cabinet has them; the others are read as usual. Exit codes: 0 reported; 1 the cabinet did not take the
@@ -28,7 +29,9 @@ from kd.cabinet import client as cabinet_client  # noqa: E402
 PROJECTS = TREE / "host" / "projects.json"
 LIMIT = 20  # runs read per environment and tick: the table keeps the history, the journal pages through it
 SOURCE_RUNS = 100  # the cabinet's RUNS_MAX: one source over it and the cabinet refuses the whole report
-COUNTS_MAX = 20  # commit counts per tick (what waits for each environment, how far it is ahead of prod)
+COUNTS_MAX = 20  # commit ranges per tick (what waits for each environment, how far it is ahead of prod)
+COMMITS_SHOWN = 20  # commits listed per range, newest first; the count says how many there are in all
+BODY_MAX = 1000  # a commit's description past its title
 # a run carries its whole event payload (a push's commits): 20 of them pass forge.LIMIT on a busy repository
 RUNS_MAX = 8 * forge.LIMIT
 STATUSES = (
@@ -219,40 +222,68 @@ def _head(api, repo: str, branch: str) -> str:
     return sha if SHA_RE.fullmatch(sha) else ""
 
 
-def _count(api, repo: str, head: str, base: str, budget: List[int]) -> Optional[int]:
-    """Commits ``head`` has that ``base`` lacks; None — unknown (a commit missing, the budget spent, Forgejo
-    refused)."""
+def commit(item: dict) -> Optional[dict]:
+    """A commit of Forgejo's list as the page shows it: its title and description, its author (the Forgejo user, else
+    the git author's name), when it landed on the branch (the committer's time) and its page in Forgejo; None — no
+    hash."""
+    sha = str(item.get("sha") or "").lower()
+    if not SHA_RE.fullmatch(sha):
+        return None
+    data = item.get("commit") if isinstance(item.get("commit"), dict) else {}
+    message = str(data.get("message") or "").replace("\r\n", "\n").replace("\r", "\n")
+    title, _, body = message.strip().partition("\n")
+    user = item.get("author") if isinstance(item.get("author"), dict) else {}
+    author, committer = (data.get(k) if isinstance(data.get(k), dict) else {} for k in ("author", "committer"))
+    url = item.get("html_url")
+    return {
+        "sha": sha,
+        "title": " ".join(_clean(title, TEXT_MAX).split()),
+        "body": "".join(c if c in "\n\t" or ord(c) >= 32 else " " for c in body.strip())[:BODY_MAX],
+        "author": _clean(str(user.get("login") or author.get("name") or ""), TEXT_MAX // 2).strip(),
+        "date": utc(committer.get("date")) or utc(author.get("date")),
+        "url": url if isinstance(url, str) and url.startswith("https://") and len(url) <= URL_MAX else "",
+    }
+
+
+def _range(api, repo: str, head: str, base: str, budget: List[int], seen: dict) -> Tuple[Optional[int], List[dict]]:
+    """The commits ``head`` has that ``base`` lacks: how many (None — unknown: a commit missing, the budget spent,
+    Forgejo refused) and the newest COMMITS_SHOWN of them. ``seen`` — the ranges asked in this tick, asked once."""
     if not head or not base:
-        return None
+        return None, []
     if head == base:
-        return 0
-    if budget[0] <= 0:
-        return None
-    budget[0] -= 1
-    try:
-        return forge.commits_between(api, repo, head, base)
-    except forge.ForgeError:
-        return None
+        return 0, []
+    if (head, base) not in seen:
+        if budget[0] <= 0:
+            return None, []
+        budget[0] -= 1
+        try:
+            total, items = forge.commits_between(api, repo, head, base, COMMITS_SHOWN)
+            seen[head, base] = total, [c for c in map(commit, items) if c]
+        except forge.ForgeError:
+            seen[head, base] = None, []
+    return seen[head, base]
 
 
 def measure(api, source: dict, budget: List[int]) -> List[dict]:
     """The source's environments, each with ``head`` (its branch's head, '' unknown), ``pending`` (commits of the
     branch not deployed there yet) and, beside the reference, ``ahead`` (commits deployed there that the reference
-    has not) with ``ahead_of`` naming the reference; None — unknown. What an environment deployed is its newest
-    successful run among the runs read."""
+    has not) with ``ahead_of`` naming the reference; None — unknown. ``pending_commits`` and ``ahead_commits`` list
+    the newest of them. What an environment deployed is its newest successful run among the runs read."""
     deployed: Dict[str, str] = {}
     for run in sorted(source["runs"], key=lambda r: (r["created"], r["run"]), reverse=True):
         if run["status"] == "success" and run["sha"]:
             deployed.setdefault(run["env"], run["sha"])
-    ref, heads, out = reference(source["envs"]), {}, []
+    ref, heads, seen, out = reference(source["envs"]), {}, {}, []
     for env in source["envs"]:
         if env["branch"] not in heads:
             heads[env["branch"]] = _head(api, source["repo"], env["branch"])
         head, mine = heads[env["branch"]], deployed.get(env["env"], "")
-        item = {**env, "head": head, "pending": _count(api, source["repo"], head, mine, budget), "ahead": None,
-                "ahead_of": ""}
+        pending, waits = _range(api, source["repo"], head, mine, budget, seen)
+        item = {**env, "head": head, "pending": pending, "pending_commits": waits, "ahead": None,
+                "ahead_commits": [], "ahead_of": ""}
         if ref and env["env"] != ref:
-            item["ahead"] = _count(api, source["repo"], mine, deployed.get(ref, ""), budget)
+            item["ahead"], item["ahead_commits"] = _range(
+                api, source["repo"], mine, deployed.get(ref, ""), budget, seen)
             item["ahead_of"] = ref
         out.append(item)
     return out

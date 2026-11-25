@@ -91,8 +91,8 @@ def _run(run, workflow="deploy-test.yml", status="success", **over):
 
 
 class Api:
-    """Forgejo's answers by path; a branch it does not name is Forgejo's 404. ``totals``: (head, base) → the count
-    of commits head has that base lacks (forge.commits_between)."""
+    """Forgejo's answers by path; a branch it does not name is Forgejo's 404. ``totals``: (head, base) → the commits
+    head has that base lacks (forge.commits_between) — their count, or (count, the listed items)."""
 
     def __init__(self, answers, totals=None):
         self.answers, self.calls, self.totals = answers, [], dict(totals or {})
@@ -108,12 +108,13 @@ class Api:
             raise answer
         return answer
 
-    def total(self, path, params=None):
+    def listing(self, path, params=None, max_bytes=forge.LIMIT):
         self.calls.append((path, params))
         answer = self.totals.get((params["sha"], params["not"]), forge.ForgeError("Forgejo 500", 500))
         if isinstance(answer, Exception):
             raise answer
-        return answer
+        total, items = answer if isinstance(answer, tuple) else (answer, [])
+        return items[:params["limit"]], total
 
 
 class Client:
@@ -453,7 +454,8 @@ def test_each_environment_says_what_waits_and_how_far_it_is_ahead_of_prod():
     assert measured[2]["manual"] is True  # the passport's fields stay
     assert [p for p, _ in api.calls if "/branches/" in p] == [
         "/repos/o/alert/branches/master", "/repos/o/alert/branches/dev"]
-    assert budget == [17]  # three counts: test and stage against prod, prod's own pending
+    # test against prod and prod's own pending are one range (H past P): asked once
+    assert budget == [18]
 
 
 def test_a_count_past_the_budget_or_refused_is_unknown():
@@ -461,6 +463,52 @@ def test_a_count_past_the_budget_or_refused_is_unknown():
     api = Api(MASTER, totals={(H, T): forge.ForgeError("Forgejo 500", 500), (T, P): 4, (H, P): 5})
     measured = deploys.measure(api, _source(runs, ALERT[:1] + ALERT[2:]), [2])
     assert [(e["env"], e["pending"], e["ahead"]) for e in measured] == [("test", None, 4), ("prod", None, None)]
+
+
+def _fc(sha, message, login="dev", name="Dev", date="2026-11-24T21:10:59+03:00", url=None):
+    """A commit as Forgejo's commits list has it."""
+    return {"sha": sha, "html_url": f"https://forge.example.test/o/alert/commit/{sha}" if url is None else url,
+            "commit": {"message": message, "author": {"name": name, "date": "2026-11-20T10:00:00Z"},
+                       "committer": {"name": "Forgejo", "date": date}},
+            "author": {"login": login} if login else None, "files": [], "stats": None}
+
+
+def test_each_count_brings_its_commits():
+    """What waits for prod is a list the owner reads: each commit's title and description, its author, when it landed
+    on the branch (the committer's time, in UTC) and its page in Forgejo — newest first, as Forgejo lists them."""
+    runs = [_r(1, "test", "success", H, "2026-11-25T10:00:00Z"), _r(2, "prod", "success", P, "2026-11-25T08:00:00Z")]
+    listed = [_fc(H, "fix(status): a silent run still writes the status\n\nA loud skip notifies."),
+              _fc(X, "fix: one line", login="", name="Ada")]
+    api = Api(MASTER, totals={(H, P): (3, listed)})
+    test, prod = deploys.measure(api, _source(runs, ALERT[:1] + ALERT[2:]), [20])
+    assert prod["pending"] == 3 and prod["pending_commits"] == [
+        {"sha": H, "title": "fix(status): a silent run still writes the status", "body": "A loud skip notifies.",
+         "author": "dev", "date": "2026-11-24T18:10:59Z", "url": f"https://forge.example.test/o/alert/commit/{H}"},
+        {"sha": X, "title": "fix: one line", "body": "", "author": "Ada", "date": "2026-11-24T18:10:59Z",
+         "url": f"https://forge.example.test/o/alert/commit/{X}"},
+    ]
+    assert test["ahead"] == 3 and test["ahead_commits"] == prod["pending_commits"]
+    assert test["pending"] == 0 and test["pending_commits"] == [] and prod["ahead_commits"] == []
+    ranges = [p for p, params in api.calls if p.endswith("/commits")]
+    assert ranges == ["/repos/o/alert/commits"]  # one range, asked once
+    assert api.calls[-1][1]["limit"] == deploys.COMMITS_SHOWN
+
+
+def test_a_commit_is_cut_to_what_the_cabinet_takes():
+    long = "x" * (deploys.BODY_MAX + 50)
+    got = deploys.commit(_fc(H, "  title\twith\x07bell  \r\n\r\n" + long + "\r\nend", url="http://plain/x"))
+    assert got["title"] == "title with bell" and got["url"] == ""
+    assert len(got["body"]) == deploys.BODY_MAX and got["body"].startswith("xxx") and "\r" not in got["body"]
+    assert deploys.commit(_fc("not-a-sha", "x")) is None
+    assert deploys.commit({"sha": H})["title"] == ""  # a broken item is still a commit, with nothing to say
+
+
+def test_a_range_nobody_answered_has_no_commits():
+    runs = [_r(1, "test", "success", T, "2026-11-25T10:00:00Z"), _r(2, "prod", "success", P, "2026-11-25T08:00:00Z")]
+    api = Api(MASTER, totals={(T, P): forge.TooLarge("ответ Forgejo больше 1 МБ")})
+    test, prod = deploys.measure(api, _source(runs, ALERT[:1] + ALERT[2:]), [20])
+    assert (test["ahead"], test["ahead_commits"]) == (None, [])
+    assert (prod["pending"], prod["pending_commits"]) == (None, [])
 
 
 @pytest.mark.parametrize("envs, expected", [
@@ -480,12 +528,14 @@ def test_the_measured_environments_reach_the_cabinet(tmp_path):
             _run(1, commit_sha=H), _run(2, workflow="deploy-prod.yml", commit_sha=P)]},
         "/repos/o/keeta/actions/runs": {"workflow_runs": []},
         **MASTER,
-    }, totals={(H, P): 3})
+    }, totals={(H, P): (3, [_fc(H, "feat: a\n\nwhy")])})
     client = Client()
     assert deploys.main(api_factory=lambda: api, client=client, projects=_projects(tmp_path)) == 0
     alert, keeta = client.requests[0]["sources"]
     assert [(e["env"], e["pending"], e["ahead"], e["ahead_of"]) for e in alert["envs"]] == [
         ("test", 0, 3, "prod"), ("prod", 3, None, "")]
+    assert [c["title"] for c in alert["envs"][1]["pending_commits"]] == ["feat: a"]
+    cabinet_deploys._sources([alert, keeta])  # the cabinet takes the commits too
     assert [(e["env"], e["head"], e["pending"]) for e in keeta["envs"]] == [("prod", "", None)]
 
 

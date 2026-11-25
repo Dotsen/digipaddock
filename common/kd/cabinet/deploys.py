@@ -54,8 +54,11 @@ PLATFORM, RELEASE_ENV = "platform", "release"
 SOURCES_MAX, ENVS_MAX, RUNS_MAX = 32, 8, 100
 JOURNAL_DEFAULT, JOURNAL_MAX = 50, 200
 INPUTS_MAX, INPUT_MAX = 8, 200
-# the reader's measures of an environment, with their values when it sends none
-MEASURES = {"head": "", "pending": None, "ahead": None, "ahead_of": ""}
+# the reader's measures of an environment, with their values when it sends none: the commits behind each count are
+# its newest COMMITS_MAX
+MEASURES = {"head": "", "pending": None, "pending_commits": (), "ahead": None, "ahead_commits": (), "ahead_of": ""}
+COMMITS_MAX, BODY_MAX = 20, 1000
+COMMIT_KEYS = {"sha", "title", "body", "author", "date", "url"}
 NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
 REPO = re.compile(r"[A-Za-z0-9_.-]{1,64}/[A-Za-z0-9_.-]{1,100}")
 WORKFLOW = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.ya?ml")
@@ -116,18 +119,45 @@ def _count(value, name: str):
     return value
 
 
+def _url(value, name: str) -> str:
+    if not isinstance(value, str) or len(value) > URL_MAX or (value and not value.startswith("https://")):
+        raise _invalid(f"{name}: url is an https address")
+    return _text(value, name, URL_MAX)
+
+
+def _commits(where: str, value) -> List[dict]:
+    """The commits behind a count, as the reader lists them: a title of one line, a description that keeps its line
+    breaks, the author, when it landed (or '') and its page in Forgejo (or '')."""
+    if not isinstance(value, list) or len(value) > COMMITS_MAX:
+        raise _invalid(f"{where} is a list of at most {COMMITS_MAX} commits")
+    out = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != COMMIT_KEYS:
+            raise _invalid(f"{where}: a commit is {{{', '.join(sorted(COMMIT_KEYS))}}}")
+        sha, body = item["sha"], item["body"]
+        if not isinstance(sha, str) or not SHA40.fullmatch(sha):
+            raise _invalid(f"{where}: sha is a full commit hash")
+        if not isinstance(body, str) or len(body) > BODY_MAX or any(ord(c) < 32 and c not in "\n\t" for c in body):
+            raise _invalid(f"{where}: body is text of at most {BODY_MAX} characters")
+        out.append({"sha": sha, "title": _text(item["title"], f"{where}: title", TEXT["title"]), "body": body,
+                    "author": _text(item["author"], f"{where}: author", TEXT["actor"]),
+                    "date": _time(item["date"], f"{where}: date", empty=True), "url": _url(item["url"], where)})
+    return out
+
+
 def _envs(project: str, value) -> List[dict]:
     if not isinstance(value, list) or len(value) > ENVS_MAX:
         raise _invalid(f"{project}: envs is a list of at most {ENVS_MAX}")
     out, names, files = [], set(), set()
     for item in value:
         # confirm and skip_tests: a manual environment's inputs to the owner's button (a reader of before KD-9447
-        # sends neither); head, pending, ahead, ahead_of: the reader's measures (none from an older reader)
+        # sends neither); head, pending, ahead, ahead_of and the commits: the reader's measures (an older reader
+        # sends none or some)
         if not isinstance(item, dict) or not {"env", "workflow", "branch", "manual"} <= set(item) <= {
             "env", "workflow", "branch", "manual", "confirm", "skip_tests", *MEASURES,
         }:
             raise _invalid(f"{project}: an env is {{env, workflow, branch, manual[, confirm, skip_tests, head, "
-                           "pending, ahead, ahead_of]}}")
+                           "pending, pending_commits, ahead, ahead_commits, ahead_of]}}")
         env, workflow, branch, manual = (
             item["env"],
             item["workflow"],
@@ -168,7 +198,10 @@ def _envs(project: str, value) -> List[dict]:
             {"env": env, "workflow": workflow, "branch": branch, "manual": manual,
              "confirm": confirm if manual else "", "skip_tests": skip_tests and manual, "head": head,
              "pending": _count(item.get("pending"), f"{project}: {env}: pending"),
-             "ahead": _count(item.get("ahead"), f"{project}: {env}: ahead"), "ahead_of": ahead_of}
+             "pending_commits": _commits(f"{project}: {env}: pending_commits", item.get("pending_commits", [])),
+             "ahead": _count(item.get("ahead"), f"{project}: {env}: ahead"),
+             "ahead_commits": _commits(f"{project}: {env}: ahead_commits", item.get("ahead_commits", [])),
+             "ahead_of": ahead_of}
         )
     for item in out:
         if item["ahead_of"] and item["ahead_of"] not in names:

@@ -104,7 +104,6 @@ def authors() -> frozenset:
 STATUS_PREFIX = "devcheck/"  # a passport profile's status context (spec §9)
 TIMEOUT = 30
 LIMIT = 1024 * 1024
-TOTAL_BODY = 64 * 1024  # a one-item list asked only for its X-Total-Count header
 COMMENT_MAX = 4096
 PR_RE = re.compile(r"[1-9][0-9]{0,6}")
 # kd-forge status: a commit by its hash only — a branch name would read whatever it points at now
@@ -227,17 +226,22 @@ class Api:
             "Authorization": f"token {self._token}", "Accept": "text/plain"})
         return self._read(req, limit).decode("utf-8", "replace")
 
-    def total(self, path: str, params: Optional[dict] = None) -> int:
-        """The size of a list from its ``X-Total-Count`` header; ask for one item (``limit=1``), the body is not
-        read past a small cap."""
+    def listing(self, path: str, params: Optional[dict] = None, max_bytes: int = LIMIT) -> Tuple[List[dict], int]:
+        """One page of a list and the whole list's size, from its ``X-Total-Count`` header."""
         url = self.base + path + ("?" + urllib.parse.urlencode(params) if params else "")
         req = urllib.request.Request(url, method="GET", headers={
             "Authorization": f"token {self._token}", "Accept": "application/json"})
-        _, headers = self._fetch(req, TOTAL_BODY)
+        raw, headers = self._fetch(req, max_bytes)
+        if len(raw) > max_bytes:
+            raise TooLarge(f"ответ Forgejo больше {max_bytes // LIMIT} МБ")
         value = str(headers.get("X-Total-Count", "") if headers is not None else "")
         if not value.isdigit():
             raise ForgeError("Forgejo не дал X-Total-Count")
-        return int(value)
+        try:
+            data = json.loads(raw) if raw.strip() else []
+        except ValueError:
+            raise ForgeError("ответ Forgejo — не JSON") from None
+        return _list(data), int(value)
 
     def _read(self, req, limit: int) -> bytes:
         return self._fetch(req, limit)[0]
@@ -388,13 +392,15 @@ def _target(repo: repos.Repo, data: dict) -> str:
     return base
 
 
-def commits_between(api: Api, repo: str, head: str, base: str) -> int:
-    """How many commits ``head`` has that ``base`` lacks (``git rev-list --count base..head``): the commits list's
-    total, one item asked, no diff computed — a compare would build the whole range's diff for a number."""
+def commits_between(api: Api, repo: str, head: str, base: str, limit: int = 1) -> Tuple[int, List[dict]]:
+    """The commits ``head`` has that ``base`` lacks (``git rev-list base..head``): how many, and the first ``limit``
+    of them as Forgejo lists them, newest first — no diff, no files, no signature check computed."""
     if head == base:
-        return 0
-    return api.total(f"/repos/{repo}/commits", {"sha": head, "not": base, "limit": 1, "page": 1, "stat": "false",
-                                                "verification": "false", "files": "false"})
+        return 0, []
+    items, total = api.listing(f"/repos/{repo}/commits", {
+        "sha": head, "not": base, "limit": limit, "page": 1, "stat": "false", "verification": "false",
+        "files": "false"})
+    return total, items[:limit]
 
 
 def contains(api: Api, repo: str, head: str, base_sha: str) -> bool:

@@ -1,10 +1,10 @@
 // the «Deploys» page's journal address, filters and status colours.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, projectRows, projectsOf,
-  shortSha, statusClass, statusMark,
+  commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, projectRows,
+  projectsOf, shortSha, statusClass, statusMark,
 } from "./deploys";
-import type { DeployEnv, DeployRun } from "./types";
+import type { DeployCommit, DeployEnv, DeployRun } from "./types";
 
 const RUN: DeployRun = {
   project: "api", env: "prod", run: 1, number: 1, workflow: "deploy-prod.yml", status: "success", event: "push",
@@ -16,9 +16,14 @@ function env(project: string, name: string, e: string): DeployEnv {
   return {
     project, name, repo: `o/${project}`, env: e, workflow: `deploy-${e}.yml`, branch: "main", manual: false,
     read_at: "", ok_at: "", error: "", stale: false, run: null, waiting: [], confirm: "", skip_tests: false,
-    launch: false, launched: null, deployed: null, head: "", pending: null, ahead: null, ahead_of: "",
+    launch: false, launched: null, deployed: null, head: "", pending: null, pending_commits: [], ahead: null,
+    ahead_commits: [], ahead_of: "",
   };
 }
+
+const commit = (sha: string, title: string): DeployCommit => ({
+  sha: sha.repeat(40), title, body: "", author: "dev", date: "2026-11-24T18:10:59Z", url: "",
+});
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -113,6 +118,22 @@ describe("the deploys page", () => {
     expect(deltas({ ...base, ahead: 1, ahead_of: "prod", pending: 2 }).map((d) => d.key)).toEqual([
       "deploys.ahead", "deploys.pending"]);
     expect(deltas(base)).toEqual([]);  // nothing measured: nothing said
+  });
+
+  it("lists the commits behind each count, and how many more there are than the reader listed", () => {
+    const listed = [commit("a", "feat: a"), commit("b", "fix: b")];
+    const prod = { ...env("alert", "Alert", "prod"), pending: 25, pending_commits: listed };
+    expect(commitGroups(prod)).toEqual([
+      { key: "deploys.commits.pending", params: { env: "prod", n: 25 }, commits: listed, more: 23 },
+    ]);
+    const test = { ...env("alert", "Alert", "test"), ahead: 2, ahead_commits: listed, ahead_of: "prod", pending: 0 };
+    expect(commitGroups(test)).toEqual([
+      { key: "deploys.commits.ahead", params: { env: "test", ref: "prod", n: 2 }, commits: listed, more: 0 },
+    ]);
+    // a count without its list (a reader of before the lists) and nothing to list say nothing
+    expect(commitGroups({ ...prod, pending_commits: [] })).toEqual([]);
+    expect(commitGroups({ ...prod, pending: 0 })).toEqual([]);
+    expect(commitGroups({ ...env("alert", "Alert", "prod"), pending: 3 } as DeployEnv)).toEqual([]);
   });
 
   it("names what runs on the environment when its last run is not it", () => {

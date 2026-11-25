@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setLocale } from "../lib/i18n.svelte";
-import type { DeployEnv, DeployList, DeployRun } from "../lib/types";
+import type { DeployCommit, DeployEnv, DeployList, DeployRun } from "../lib/types";
 import Deploys from "./Deploys.svelte";
 
 function json(body: unknown) {
@@ -25,16 +25,23 @@ function env(e: string, over: Partial<DeployEnv> = {}): DeployEnv {
     project: "alert", name: "Alert app", repo: "o/alert", env: e, workflow: `deploy-${e}.yml`,
     branch: "master", manual: false, read_at: "", ok_at: "2026-11-25T10:00:00Z", error: "", stale: false, run: null,
     waiting: [], confirm: "", skip_tests: false, launch: false, launched: null, deployed: null, head: H, pending: null,
-    ahead: null, ahead_of: "", ...over,
+    pending_commits: [], ahead: null, ahead_commits: [], ahead_of: "", ...over,
   };
 }
+
+const WAITS: DeployCommit[] = [
+  { sha: H, title: "fix(status): тихий прогон пишет статус", body: "Громкий пропуск уведомляет.",
+    author: "dev", date: "2026-11-24T18:10:59Z", url: `https://forge.example.test/o/alert/commit/${H}` },
+  { sha: "c".repeat(40), title: "fix: одна строка", body: "", author: "Ada", date: "2026-11-24T17:00:00Z",
+    url: "" },
+];
 
 const LIST: DeployList = {
   envs: [
     env("test", { run: run("test", "success", H), deployed: run("test", "success", H), pending: 0, ahead: 3,
                   ahead_of: "prod" }),
     env("prod", { manual: true, launch: true, run: run("prod", "failure", "f".repeat(40)),
-                  deployed: run("prod", "success", P), pending: 3 }),
+                  deployed: run("prod", "success", P), pending: 3, pending_commits: WAITS }),
     { ...env("prod"), project: "arm", name: "Arm app", stale: true, ok_at: "",
       error: "ответ Forgejo больше 8 МБ" },
   ],
@@ -76,6 +83,23 @@ describe("Deploys", () => {
     expect(within(prod).getByText("ждут выката: 3")).toBeTruthy();
   });
 
+  it("opens a row on the commits that wait: title, author, when, a link and the description", async () => {
+    render(Deploys);
+    const alert = await panel("Alert app");
+    const prod = alert.getAllByRole("button").find((b) => b.querySelector(".ename")?.textContent === "prod")!;
+    await fireEvent.click(prod);
+    const list = alert.getByRole("list", { name: "Не выкачено на prod: 3" });
+    const items = within(list).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toContain("fix(status): тихий прогон пишет статус");
+    expect(items[0].textContent).toContain("dev");
+    expect(items[0].textContent).toContain("Громкий пропуск уведомляет.");
+    const link = within(items[0]).getByRole("link", { name: "26711f9" }) as HTMLAnchorElement;
+    expect(link.href).toBe(`https://forge.example.test/o/alert/commit/${H}`);
+    expect(within(items[1]).queryByRole("link")).toBeNull();  // no page in Forgejo: the hash alone
+    expect(within(list.parentElement as HTMLElement).getByText("…и ещё 1 постарше")).toBeTruthy();
+  });
+
   it("says in words why a project has no fresh data", async () => {
     render(Deploys);
     const arm = await panel("Arm app");
@@ -92,6 +116,7 @@ describe("Deploys", () => {
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText("Уйдёт голова ветки master — 26711f9.")).toBeTruthy();
     expect(within(sheet).getByText("Новых коммитов против того, что сейчас на prod (11efc6c): 3.")).toBeTruthy();
+    expect(within(sheet).getByText("fix(status): тихий прогон пишет статус")).toBeTruthy();
     expect(within(sheet).queryByRole("textbox")).toBeNull();
     const go = within(sheet).getByRole("button", { name: "Выкатить" }) as HTMLButtonElement;
     expect(go.disabled).toBe(false);

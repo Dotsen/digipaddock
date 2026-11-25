@@ -136,9 +136,15 @@ def test_each_environment_says_what_runs_there_and_what_waits(env):
     """The reader's measures (its branch's head, commits not deployed yet, the lead over prod) come back per
     environment; ``deployed`` is the newest successful run — what runs there even when the last run failed."""
     head, prod_sha = "b" * 40, "c" * 40
+    waits = [{"sha": head, "title": "fix(status): a silent run still writes the status",
+              "body": "A loud skip notifies.\n\n- one\n\t- two", "author": "dev", "date": "2026-10-14T08:00:00Z",
+              "url": f"https://forge.example.test/o/alert/commit/{head}"},
+             {"sha": "e" * 40, "title": "fix: x", "body": "", "author": "", "date": "", "url": ""}]
     envs = [
-        {**ENVS[0], "head": head, "pending": 0, "ahead": 3, "ahead_of": "prod"},
-        {**ENVS[1], "head": head, "pending": 3, "ahead": None, "ahead_of": ""},
+        {**ENVS[0], "head": head, "pending": 0, "pending_commits": [], "ahead": 3, "ahead_commits": waits,
+         "ahead_of": "prod"},
+        {**ENVS[1], "head": head, "pending": 3, "pending_commits": waits, "ahead": None, "ahead_commits": [],
+         "ahead_of": ""},
     ]
     _report(env, _source(envs=envs, runs=[
         _run(1, env="prod", sha=prod_sha, created="2026-10-14T09:00:00Z"),
@@ -152,12 +158,20 @@ def test_each_environment_says_what_runs_there_and_what_waits(env):
     assert rows["prod"]["run"]["status"] == "failure"
     assert (rows["prod"]["deployed"]["sha"], rows["prod"]["deployed"]["run"]) == (prod_sha, 1)
     assert rows["test"]["deployed"]["sha"] == head
+    # the commits behind each count: the owner reads what waits for prod
+    assert rows["prod"]["pending_commits"] == waits and rows["test"]["ahead_commits"] == waits
+    assert rows["prod"]["ahead_commits"] == [] and rows["test"]["pending_commits"] == []
 
 
 def test_a_reader_without_measures_is_taken_and_listed_unknown(env):
     _report(env, _source(runs=[_run(1, status="failure")]))
     row = _person(env, "owner", {"op": "deploy.list"})["envs"][0]
     assert (row["head"], row["pending"], row["ahead"], row["ahead_of"], row["deployed"]) == ("", None, None, "", None)
+    assert (row["pending_commits"], row["ahead_commits"]) == ([], [])
+
+
+COMMIT = {"sha": "a" * 40, "title": "feat: x", "body": "", "author": "dev", "date": "2026-10-14T08:00:00Z",
+          "url": "https://forge.example.test/o/alert/commit/" + "a" * 40}
 
 
 @pytest.mark.parametrize("extra", [
@@ -167,6 +181,15 @@ def test_a_reader_without_measures_is_taken_and_listed_unknown(env):
     {"ahead": "3"},
     {"ahead_of": "nowhere"},
     {"ahead_of": "test"},  # never the environment itself
+    {"pending_commits": None},
+    {"pending_commits": [COMMIT] * 21},
+    {"ahead_commits": [{**COMMIT, "sha": "HEAD"}]},
+    {"ahead_commits": [{**COMMIT, "extra": 1}]},
+    {"pending_commits": [{**COMMIT, "title": "a\nb"}]},  # a title is one line
+    {"pending_commits": [{**COMMIT, "body": "x" * 1001}]},
+    {"pending_commits": [{**COMMIT, "body": "bell\x07"}]},
+    {"pending_commits": [{**COMMIT, "date": "yesterday"}]},
+    {"pending_commits": [{**COMMIT, "url": "javascript:alert(1)"}]},
 ])
 def test_broken_measures_are_refused(env, extra):
     envs = [{**ENVS[0], **extra}, ENVS[1]]

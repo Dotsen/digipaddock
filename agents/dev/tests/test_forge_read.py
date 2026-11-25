@@ -236,22 +236,24 @@ def test_api_response_limit_and_transport_errors():
     assert e.value.status == 302
 
 
-def test_a_commit_count_comes_from_the_total_header():
-    """How far one commit is ahead of another: the commits list's X-Total-Count, one item asked, no diff computed."""
+def test_a_range_of_commits_comes_with_its_total():
+    """The commits one commit has that another lacks: the commits list's first page (no diff, no files, no signature
+    check) and its X-Total-Count — how many there are past the page."""
     seen = []
 
     def opener(req, timeout=None):
         seen.append(req.full_url)
-        resp = Resp(b"[{}]")
+        resp = Resp(json.dumps([{"sha": "c" * 40}, {"sha": "d" * 40}, "junk"]).encode())
         resp.headers = {"X-Total-Count": "3"}
         return resp
 
     api = forge.Api(TOKEN, opener=opener)
-    assert forge.commits_between(api, REPO, "a" * 40, "b" * 40) == 3
-    assert forge.commits_between(api, REPO, "a" * 40, "a" * 40) == 0 and len(seen) == 1
+    total, items = forge.commits_between(api, REPO, "a" * 40, "b" * 40, limit=2)
+    assert total == 3 and [i["sha"] for i in items] == ["c" * 40, "d" * 40]
+    assert forge.commits_between(api, REPO, "a" * 40, "a" * 40) == (0, []) and len(seen) == 1
     url = seen[0]
     assert url.startswith(forge.api_url() + f"/repos/{REPO}/commits?")
-    for part in (f"sha={'a' * 40}", f"not={'b' * 40}", "limit=1", "page=1", "stat=false", "files=false",
+    for part in (f"sha={'a' * 40}", f"not={'b' * 40}", "limit=2", "page=1", "stat=false", "files=false",
                  "verification=false"):
         assert part in url
 
@@ -259,6 +261,13 @@ def test_a_commit_count_comes_from_the_total_header():
         return Resp(b"[]")
     with pytest.raises(forge.ForgeError, match="X-Total-Count"):
         forge.commits_between(forge.Api(TOKEN, opener=headless), REPO, "a" * 40, "b" * 40)
+
+    def huge(req, timeout=None):
+        resp = Resp(b"[" + b" " * forge.LIMIT + b"]")
+        resp.headers = {"X-Total-Count": "1"}
+        return resp
+    with pytest.raises(forge.TooLarge):
+        forge.commits_between(forge.Api(TOKEN, opener=huge), REPO, "a" * 40, "b" * 40)
 
 
 def test_load_token_rejects_malformed(tmp_path):

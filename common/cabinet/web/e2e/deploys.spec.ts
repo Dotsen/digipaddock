@@ -15,16 +15,27 @@ const run = (project: string, env: string, status: string, sha: string, created 
 const env = (project: string, name: string, e: string, over: Record<string, unknown> = {}) => ({
   project, name, repo: `o/${project}`, env: e, workflow: `deploy-${e}.yml`, branch: "master", manual: false,
   read_at: "", ok_at: "2026-11-25T10:00:00Z", error: "", stale: false, run: null, waiting: [], confirm: "",
-  skip_tests: false, launch: false, launched: null, deployed: null, head: H, pending: null, ahead: null, ahead_of: "",
-  ...over,
+  skip_tests: false, launch: false, launched: null, deployed: null, head: H, pending: null, pending_commits: [],
+  ahead: null, ahead_commits: [], ahead_of: "", ...over,
 });
+const commit = (sha: string, title: string, body: string, author: string, date: string) => ({
+  sha, title, body, author, date, url: `https://forge.example.test/o/alert/commit/${sha}`,
+});
+const WAITS = [
+  commit(H, "fix(status): тихий прогон пишет статус, громкий пропуск уведомляет",
+         "Тихий режим больше не прячет запись статуса.\n\n- silent: пишет статус, без уведомления\n"
+         + "- громкий пропуск: уведомляет владельца", "dev", "2026-11-24T18:10:59Z"),
+  commit("8".repeat(40), "fix(api): retry the token once on 401", "", "dev", "2026-11-24T15:02:00Z"),
+  commit("7".repeat(40), "docs: deploy notes", "", "Ada", "2026-11-23T09:40:00Z"),
+];
 const LIST = {
   envs: [
     env("alert", "Alert app", "test", { run: run("alert", "test", "success", H), pending: 0, ahead: 3,
-                                                 ahead_of: "prod", waiting: [{ card: "KD-9450", sha: H }] }),
+                                                 ahead_commits: WAITS, ahead_of: "prod",
+                                                 waiting: [{ card: "KD-9450", sha: H }] }),
     env("alert", "Alert app", "stage", { branch: "dev", run: run("alert", "stage", "running", "9".repeat(40)),
                                                   ahead: 2, ahead_of: "prod" }),
-    env("alert", "Alert app", "prod", { manual: true, launch: true, pending: 3,
+    env("alert", "Alert app", "prod", { manual: true, launch: true, pending: 3, pending_commits: WAITS,
                                                  run: run("alert", "prod", "failure", "f".repeat(40)),
                                                  deployed: run("alert", "prod", "success", P, "2026-11-22T08:00:00Z") }),
     env("api", "Api app", "staging", { branch: "main", run: run("api", "staging", "success", H), pending: 0,
@@ -53,11 +64,23 @@ test("«Деплой»: every environment's status and counts fit narrow and wid
     expect(Math.abs(a.x - b.x), `buttons aligned at ${width}`).toBeLessThan(1);
     expect(Math.abs(a.width - b.width), `buttons of one width at ${width}`).toBeLessThan(1);
     await page.screenshot({ path: `../../../tmp/cabinet-dev/deploys-${width}.png`, fullPage: true });
+    // prod's row opens on the commits that wait: a title a line, the description on a tap, the hash links to Forgejo
+    await page.locator(".erow", { has: page.locator(".ename", { hasText: /^prod$/ }) }).first()
+      .locator(".ehead").click();
+    const waits = page.getByRole("list", { name: "Не выкачено на prod: 3" });
+    await expect(waits.getByRole("listitem")).toHaveCount(3);
+    await waits.getByText(/^fix\(status\)/).click();
+    await expect(waits.getByText(/Тихий режим больше не прячет/)).toBeVisible();
+    await expect(waits.getByRole("link", { name: "26711f9" })).toHaveAttribute(
+      "href", `https://forge.example.test/o/alert/commit/${H}`);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `open, ${width}`).toBe(true);
+    await page.screenshot({ path: `../../../tmp/cabinet-dev/deploys-${width}-open.png`, fullPage: true });
   }
   await page.getByRole("button", { name: "Выкатить" }).first().click();
   const sheet = page.getByRole("dialog");
   await expect(sheet).toContainText("Уйдёт голова ветки master — 26711f9.");
   await expect(sheet).toContainText("Новых коммитов против того, что сейчас на prod (11efc6c): 3.");
   await expect(sheet.getByRole("textbox")).toHaveCount(0);
+  await expect(sheet.getByRole("list", { name: "Не выкачено на prod: 3" }).getByRole("listitem")).toHaveCount(3);
   await page.screenshot({ path: "../../../tmp/cabinet-dev/deploys-launch.png" });
 });
