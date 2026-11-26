@@ -21,7 +21,7 @@ import hashlib
 import json
 from typing import Optional
 
-from kd.cabinet import briefs, problems, result
+from kd.cabinet import briefs, problems, result, store as store_mod
 
 CONTINUE = "[board] {id}: continue your work — your last turn recorded a next step; read kd-task view {id}"
 RESOLVED = "[board] {id}: what you waited for is resolved — read kd-task view {id} and continue"
@@ -120,10 +120,10 @@ def limit_reason(ctx, record, agent: str = "") -> Optional[str]:
 
 def _live(store, record, agent: str) -> str:
     """A command of the agent in the card's thread not yet run (queued or delivered), or ''; a stop is not one —
-    nothing merges into it."""
+    nothing merges into it — and neither is one joined to a turn that runs already (``store.JOINED_SQL``)."""
     row = store._conn.execute(
         "SELECT id FROM commands WHERE thread=? AND agent=? AND state IN ('queued','delivered') AND kind!='stop'"
-        " ORDER BY created LIMIT 1",
+        f" AND NOT {store_mod.JOINED_SQL} ORDER BY created LIMIT 1",
         (record.thread, agent),
     ).fetchone()
     return row[0] if row is not None else ""

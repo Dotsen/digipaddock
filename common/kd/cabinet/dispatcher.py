@@ -55,6 +55,7 @@ import uuid
 
 from kd import contours, naming
 from kd.cabinet import api, commands, context_limits, devchecks, egress, jobs, llm_api, operations, sessions_api
+from kd.cabinet import store as store_mod
 
 HOST_SOCKET = "/run/digipaddock-session-host/host.sock"
 BACKOFF = (2, 5, 15, 30, 60, 120, 300)
@@ -114,9 +115,19 @@ def _stamp(when: datetime) -> str:
     return when.strftime(_STAMP)
 
 
-def _age(command: dict, now: datetime) -> timedelta:
-    created = datetime.strptime(command["created"], _STAMP).replace(tzinfo=timezone.utc)
-    return now - created
+def _age(store, command: dict, now: datetime) -> timedelta:
+    """How long the command has waited to be sent. A word or answer held in the cabinet behind a turn of its
+    thread (``commands.MERGEABLE``) counts from that hold's end — the latest end of a command of the thread the
+    host had — not from its creation: before the hold it would have waited at the host's queue behind that turn."""
+    start = command["created"]
+    if command["kind"] in commands.MERGEABLE:
+        row = store._conn.execute(
+            "SELECT MAX(updated) FROM commands WHERE thread=? AND agent=? AND id!=? AND session!=''"
+            " AND state IN ('done','failed','cancelled') AND updated>?",
+            (command["thread"], command["agent"], command["id"], start),
+        ).fetchone()
+        start = max(start, row[0] or start)
+    return now - datetime.strptime(start, _STAMP).replace(tzinfo=timezone.utc)
 
 
 def _prepare(svc, command: dict, now: datetime) -> Optional[dict]:
@@ -125,12 +136,14 @@ def _prepare(svc, command: dict, now: datetime) -> Optional[dict]:
     command = store.command(command["id"])
     if command["state"] != "queued":
         return None  # the host reported its turn already, or a person cancelled it
+    if command["kind"] in commands.MERGEABLE and _carried(store, command["id"]):
+        return None  # a lead sent with it once is to be sent again: it goes in that one, as the first time
     reason = commands.stale_reason(store, command, svc.ctx.host_config().hosted,
                                    commands.grant_check(svc.ctx, now.timestamp()))
     if reason:
         store.command_state(command["id"], "cancelled", reason=reason)
         return {"_outcome": "cancelled"}
-    if _age(command, now) > MAX_AGE:
+    if _age(store, command, now) > MAX_AGE:
         store.command_state(command["id"], "failed", reason="delivery_expired", error=command["error"])
         return {"_outcome": "failed"}
     if command["card"] != store.thread_info(command["thread"])["card"]:  # a card's work in its thread only
@@ -179,7 +192,74 @@ def _prepare(svc, command: dict, now: datetime) -> Optional[dict]:
             request["egress"] = exit_name
         if gone:  # the card's country has no exit on this host now — the session goes without it
             sessions_api._status_line(svc.ctx, session, *_country_gone(gone))
+    if command["kind"] in commands.MERGEABLE:
+        joined = _companions(svc, command, now)
+        if joined:
+            together = sorted([command, *joined], key=lambda c: (c["created"], c["id"] != command["id"]))
+            request["text"] = commands.JOIN.join(c["text"] for c in together)
+            request["_merged"] = [c["id"] for c in joined]  # never sent: ``tick`` takes it off
     return request
+
+
+def _carried(store, command_id: str) -> bool:
+    """A queued lead carried this command the first time it was sent (``store.JOIN_KEY``)."""
+    for key, value in store._conn.execute(
+            "SELECT key, value FROM state WHERE substr(key, 1, ?)=?", (len(store_mod.JOIN_KEY), store_mod.JOIN_KEY)):
+        if command_id in json.loads(value).get("ids", ()):
+            lead = store._conn.execute("SELECT state FROM commands WHERE id=?", (key[len(store_mod.JOIN_KEY):],))
+            row = lead.fetchone()
+            if row is not None and row[0] == "queued":
+                return True
+    return False
+
+
+def _companions(svc, command: dict, now: datetime) -> list:
+    """The other wakes of the card's thread that wait in the cabinet for the same agent — due, or in their
+    window — go in this delivery, oldest first, within the host's one line (``commands.MERGEABLE``); each is
+    leased with it. One this tick leased too is taken as well: the tick finds it delivered and skips it. A stale
+    one is cancelled with its own reason, as it would be on its own. The set is fixed at the lead's first send:
+    a send again (its answer was lost; the host answers the id from its cache) carries the same ones still
+    queued, and a wake that came in between waits for the next turn."""
+    store = svc.ctx.store
+    saved = store.get_state(store_mod.JOIN_KEY + command["id"])
+    if saved is not None:
+        out = [c for c in (store.command(i) for i in saved["ids"]) if c["state"] == "queued"]
+    else:
+        out = _new_companions(svc, command, now)
+    if out:
+        with store.transaction():
+            for other in out:
+                store._conn.execute("UPDATE commands SET lease_until=? WHERE id=?",
+                                    (_stamp(now + timedelta(seconds=LEASE_S)), other["id"]))
+            if saved is None:
+                store._put_state(store_mod.JOIN_KEY + command["id"], {"ids": [c["id"] for c in out]})
+    return out
+
+
+def _new_companions(svc, command: dict, now: datetime) -> list:
+    store, hosted = svc.ctx.store, svc.ctx.host_config().hosted
+    grant = commands.grant_check(svc.ctx, now.timestamp())
+    kinds = commands.MERGEABLE
+    rows = store._conn.execute(
+        f"SELECT id FROM commands WHERE thread=? AND agent=? AND card=? AND state='queued' AND id!=?"
+        f" AND kind IN ({','.join('?' * len(kinds))}) AND next_try<=? ORDER BY created, rowid LIMIT ?",
+        (command["thread"], command["agent"], command["card"], command["id"], *kinds,
+         _stamp(now + timedelta(seconds=commands.BATCH_WINDOW_S)), BATCH),
+    ).fetchall()
+    out, size = [], len(command["text"])
+    for (other_id,) in rows:
+        other = store.command(other_id)
+        if _age(store, other, now) > MAX_AGE:
+            continue  # its own lease fails it as undelivered
+        reason = commands.stale_reason(store, other, hosted, grant)
+        if reason:
+            store.command_state(other_id, "cancelled", reason=reason)
+            continue
+        size += len(commands.JOIN) + len(other["text"])
+        if size > commands.TEXT_MAX:
+            break  # the rest waits for the next turn
+        out.append(other)
+    return out
 
 
 def _country_gone(country: str) -> tuple:
@@ -249,13 +329,18 @@ def _refusal(request: dict, exc: HostRefused) -> tuple:
     return "host_refused", None
 
 
-def _delivered(svc, command: dict, request: dict, answer: dict):
+def _delivered(svc, command: dict, request: dict, answer: dict, merged: tuple = ()):
     store = svc.ctx.store
     command = store.command(command["id"])
     if command["state"] == "queued":
         store.command_state(command["id"], "delivered", session=request["session"])
         if command["kind"] == "stop":
             store.command_state(command["id"], "done")
+    if store.command(command["id"])["state"] in ("delivered", "started"):
+        for other_id in merged:  # its text went in this turn: it ends with it (``store._merged_follow``)
+            if store.command(other_id)["state"] == "queued":
+                store.command_state(other_id, "delivered", session=request["session"],
+                                    reason=commands.MERGED + command["id"])
     if answer.get("state") == "queued":
         session = store.session(request["session"])
         if session["state"] not in ("starting", "working", "idle", "queued"):
@@ -288,7 +373,7 @@ def _stale_delivered(svc, now: datetime) -> list:
     grant = commands.grant_check(svc.ctx, now.timestamp())
     out = []
     for command in store.commands(states=("delivered",), limit=200):
-        if command["kind"] != "stop":
+        if command["kind"] != "stop" and not command["reason"].startswith(commands.MERGED):  # its turn's decides
             reason = commands.stale_reason(store, command, hosted, grant)
             if reason:
                 out.append((command, reason))
@@ -588,7 +673,8 @@ async def tick(svc, *, host, now: Optional[datetime] = None) -> dict:
     await _probes(svc, host, now)
     await _egress_sweep(svc, host, now)
     leased = await svc.locked(
-        lambda: svc.ctx.store.lease_commands(_stamp(now), _stamp(now + timedelta(seconds=LEASE_S)), BATCH)
+        lambda: svc.ctx.store.lease_commands(_stamp(now), _stamp(now + timedelta(seconds=LEASE_S)), BATCH,
+                                             held=commands.MERGEABLE)
     )
     for command in leased:
         request = await svc.locked(lambda: _prepare(svc, command, now))
@@ -597,6 +683,7 @@ async def tick(svc, *, host, now: Optional[datetime] = None) -> dict:
         if "_outcome" in request:
             out[request["_outcome"]] += 1
             continue
+        merged = tuple(request.pop("_merged", ()))
         try:
             while True:
                 try:
@@ -616,7 +703,7 @@ async def tick(svc, *, host, now: Optional[datetime] = None) -> dict:
             await svc.locked(lambda: _fail(svc, command, reason, f"{exc.kind}: {exc}", line, request["session"]))
             out["failed"] += 1
             continue
-        await svc.locked(lambda: _delivered(svc, command, request, answer))
+        await svc.locked(lambda: _delivered(svc, command, request, answer, merged))
         out["delivered"] += 1
     return out
 

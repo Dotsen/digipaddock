@@ -141,6 +141,26 @@ def _move(s, wait: Mapping, state: str) -> None:
                  {"command": wait["command"], "kind": wait["kind"], "ref": wait["ref"]}, thread)
 
 
+def follow(store, card: str, kind: str, ref: str, to_kind: str, to_ref: str) -> List[str]:
+    """The card's open or pending waits on ``kind``/``ref`` go on as waits on ``to_kind``/``to_ref``: the cabinet
+    carried the chain on by itself (KD-9460) — a rollout's help answered with the helper's plan card, a check whose
+    ordered publish opened the owner's decision. Another card's waits on the same source are not touched. Nothing
+    settles here; the commands whose waits moved, each with a ``wait.followed`` event in the card's thread."""
+    rows = store._conn.execute(
+        "SELECT * FROM waits WHERE card=? AND kind=? AND ref=? AND state IN ('pending','open') ORDER BY created, id",
+        (card, kind, ref)).fetchall()
+    moved = []
+    for wait in rows:
+        store._conn.execute("UPDATE waits SET kind=?, ref=?, updated=? WHERE id=?",
+                            (to_kind, to_ref, store._clock(), wait["id"]))
+        thread = store.card(wait["card"]).thread
+        store._event("system", "wait.followed", wait["card"],
+                     {"command": wait["command"], "kind": kind, "ref": ref, "to_kind": to_kind, "to_ref": to_ref},
+                     thread)
+        moved.append(wait["command"])
+    return moved
+
+
 def activate(ctx, command: str) -> None:
     """The outcome applied: its waits count from now, each as its source says right now."""
     s = ctx.store

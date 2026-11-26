@@ -17,6 +17,8 @@ import hashlib
 import json
 from typing import List, Mapping, Optional
 
+from kd.cabinet import store as store_mod
+
 ANALYST = "@analyst"
 BRIEF_SPEC = "spec:task-brief"
 BRIEF_READY = "brief-ready"
@@ -137,6 +139,8 @@ def _preparing(store, record) -> Optional[dict]:
         return {"state": "waiting_user", "questions": int(asked), "error": ""}
     last = store.commands(thread=record.thread, agent=_AGENT, limit=1)
     command = last[0]["state"] if last else ""
+    if command == "delivered" and last[0]["reason"].startswith(store_mod.MERGED):
+        command = "started"  # joined to a turn that runs already (KD-9460): at work, not queued
     sessions = store.sessions(thread=record.thread, agent=_AGENT)
     session = sessions[0]["state"] if sessions else ""
     if command in ("queued", "delivered"):

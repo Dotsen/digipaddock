@@ -9,7 +9,7 @@ EXEC=/opt/digipaddock/agents/dev/bin/forge_exec.py
 # KD-194: the agent's forge channel runs the executor as the forge user; its grants file names exactly this program.
 CAP=/opt/digipaddock/common/bin/kd-cap
 TMP_DIR=/srv/digipaddock-agents/dev/work/tmp
-USAGE="usage: kd-forge prs <project> | pr <project> <N> | comments <project> <N> | comment <project> <N> --file <path> | publish <project> <N> | check <project> <N> [--profiles a,b] | status <project> <sha>"
+USAGE="usage: kd-forge prs <project> | pr <project> <N> | comments <project> <N> | comment <project> <N> --file <path> | publish <project> <N> | check <project> <N> [--profiles a,b] [--publish] | status <project> <sha>"
 case "${1:-}" in
   -h|--help)
     echo "$USAGE"

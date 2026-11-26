@@ -44,6 +44,9 @@
     kd-work assist reply <id> --state done --evidence "<what you found>" --limit "<what exactly you checked>"
     kd-work assist reply <id> --state failed --reason <why> --evidence "<what stopped you>"
                                  answer it once; the result is posted on the lead's card
+    kd-work assist reply <id> --state done --card KD-<m> --evidence "<…>" --limit "<…>"
+                                 server_change whose plan on your card KD-<m> waits for the owner: the
+                                 lead's wait follows KD-<m> — its Done wakes the lead, nothing before
 
 Runs as the base user, which owns the activity journal and the directive store: another caller
 re-executes itself through the caller's base capability channel, ``kd-cap run base`` with
@@ -98,7 +101,7 @@ USAGE = (
     "[--council <id>]... [--deploy <project>:<env>[@<sha>]]... [--any] "
     "[--until <moment with its time zone>] | "
     'assist request KD-<n> --kind <kind> --to @<role> --step "<what>" [--ac N] --key <key> | assist show <id> | '
-    'assist reply <id> --state done|failed [--reason <why>] --evidence "<text>" [--limit "<text>"] | '
+    'assist reply <id> --state done|failed [--reason <why>] [--card KD-<m>] --evidence "<text>" [--limit "<text>"] | '
     "council KD-<n> [--round N] [--cursor C] | "
     'council-reply KD-<n> --finding <id>=fixed|rejected... [--later <id>=KD-<m>]... [--note "<id>: <reason>; …"]'
 )
@@ -408,12 +411,12 @@ def assist(argv, *, env, client, out) -> int:
                   f'--state failed --reason {HELP_REASONS} --evidence "…"\n')
         return 0
     if argv[:1] == ["reply"] and len(argv) >= 2 and _ASSIST.fullmatch(argv[1]):
-        flags = _flags(argv[2:], ("--state", "--reason", "--evidence", "--limit"))
-        if not {"--state", "--evidence"} <= set(flags):
+        flags = _flags(argv[2:], ("--state", "--reason", "--evidence", "--limit", "--card"))
+        if not {"--state", "--evidence"} <= set(flags) or not _CARD.fullmatch(flags.get("--card", "KD-1")):
             raise Refused(USAGE)
         request = {"op": "assist.reply", "agent": agent, "id": argv[1], "state": flags["--state"],
                    "evidence": flags["--evidence"]}
-        for flag, name in (("--reason", "reason"), ("--limit", "limit")):
+        for flag, name in (("--reason", "reason"), ("--limit", "limit"), ("--card", "card")):
             if flag in flags:
                 request[name] = flags[flag]
         reply = _cabinet(client, request)
@@ -421,7 +424,17 @@ def assist(argv, *, env, client, out) -> int:
         if reply.get("late"):
             out.write(f"late assist {row['id']}: kept as evidence, the request was cancelled\n")
         else:
-            out.write(f"{'unchanged' if reply.get('unchanged') else 'ok'} assist {row['id']} {row['state']}\n")
+            # a rollout's plan card: the lead's wait follows it, its Done wakes the lead (KD-9460); a lead that
+            # has not ended its turn on the help yet waits on the card when it does
+            follows = ""
+            if "--card" in flags and reply.get("unchanged"):  # the answer given before: nothing moved now
+                follows = f" — {flags['--card']} named"
+            elif "--card" in flags and reply.get("followed"):
+                follows = f" — @{row['lead']} waits for {flags['--card']}"
+            elif "--card" in flags:
+                follows = (f" — {flags['--card']} named; @{row['lead']} does not wait on this help yet: its wait on it "
+                           f"will be on {flags['--card']}")
+            out.write(f"{'unchanged' if reply.get('unchanged') else 'ok'} assist {row['id']} {row['state']}{follows}\n")
         return 0
     raise Refused(USAGE)
 

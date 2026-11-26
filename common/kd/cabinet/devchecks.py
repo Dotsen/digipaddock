@@ -41,7 +41,10 @@ LOG = re.compile(r"devcheck/[0-9a-f]{32}\.log")
 PROFILE_STATES = ("success", "failure", "error")
 CANCELS = ("card_left", "superseded", "root")
 REQUEST_FIELDS = frozenset({"op", "card", "agent", "project", "repo", "pr", "head", "base_sha", "target", "profiles",
-                            "contour", "timeout_s", "set"})
+                            "contour", "timeout_s", "set", "publish"})
+# ``kd-forge check --publish``: the PR row the executor read with the request, published here once the check is
+# green (``_publish_ordered``); kept in the cabinet's state under this prefix and the check's id until its end
+ORDER = "devcheck.publish:"
 ACTIVE_SQL = "(state='running' OR (state='pending' AND phase='delivered'))"
 # a check that ended with nobody to act on it says so quietly; a contour in maintenance is the owner's at once
 _QUIET = ("passed", "superseded", "cancelled")
@@ -161,9 +164,38 @@ def _stop(ctx, op: Mapping, why: str) -> None:
         _flag(ctx.store, op, why)
 
 
+def _order(req: Mapping, fields: Mapping) -> Optional[dict]:
+    """The publish ordered with the check: the PR at the head this check is about, its checks among the profiles
+    it runs (``prs_api.validate`` for the rest)."""
+    if req.get("publish") is None:
+        return None
+    row = prs_api.validate(req["publish"])
+    same = (row["repo"], row["project"], row["number"], row["head"], row["card"], row["target"]) == (
+        fields["repo"], fields["project"], fields["pr"], fields["head"], fields["card"], fields["target"])
+    if not same or row["state"] != "open":
+        raise _invalid("publish is the open PR at the head, target and card this check is about")
+    if not row["checks"] or not set(row["checks"]) <= set(fields["profiles"]):
+        raise _invalid("publish names the required checks, and this check runs each of them")
+    return row
+
+
+def _keep_order(s, op: Mapping, agent: str, row: Optional[dict]) -> bool:
+    """A publish ordered on a check that has not ended: kept for its green end, one per card the check is on (a
+    newer order of the card replaces its older one)."""
+    if row is None or op["state"] not in operations.ACTIVE:
+        return False
+    kept = s.get_state(ORDER + op["id"]) or {}
+    s._put_state(ORDER + op["id"], {**kept, row["card"]: {"agent": agent, "row": row,
+                                                          "before": prs_api.current(s, row)}})
+    return True
+
+
 def request(ctx, req: Mapping) -> dict:
-    """One check (see the module): ``{"operation": view, "created": bool}``."""
+    """One check (see the module): ``{"operation": view, "created": bool, "publish": bool}`` — ``publish``: a
+    publish ordered with it is kept for its green end (a check that passed already orders nothing: the caller
+    publishes itself)."""
     fields = _fields(req)
+    order = _order(req, fields)
     agent = fields["agent"]
     if agent not in ctx.agent_names() or f"@{agent}" == worker_board.COORDINATOR:
         raise _refused(f"@{agent} is not an agent that checks its PRs")
@@ -191,7 +223,8 @@ def request(ctx, req: Mapping) -> dict:
         joined = [op for op in family if op["state"] in operations.ACTIVE or op["state"] == "succeeded"]
         if joined:
             _link(s, joined[-1], record.id, requester)
-            return {"operation": operations.view(joined[-1]), "created": False}
+            return {"operation": operations.view(joined[-1]), "created": False,
+                    "publish": _keep_order(s, joined[-1], agent, order)}
         if len(family) >= ATTEMPTS:
             raise _refused(f"{len(family)} attempts of this check ended red: fix the code and push a new head")
         key = base if not family else f"{base}:{len(family) + 1}"
@@ -211,7 +244,7 @@ def request(ctx, req: Mapping) -> dict:
         op = operations.row(s, operation_id)
         operations._event(s, requester, "operation.queued", op, key=key, contour=contour.name, pr=fields["pr"],
                           head=fields["head"])
-        return {"operation": operations.view(op), "created": True}
+        return {"operation": operations.view(op), "created": True, "publish": _keep_order(s, op, agent, order)}
 
 
 # --- the dispatcher's part --------------------------------------------------------------------
@@ -370,6 +403,15 @@ def finish(ctx, op: Mapping, cls: str, result: Mapping) -> dict:
     with s.transaction():
         done = operations._set(s, op["id"], state=state, phase="", error="" if cls == "passed" else cls,
                                result={"class": cls, **result})
+        ordered = s.get_state(ORDER + op["id"])
+        if ordered is not None:
+            s._conn.execute("DELETE FROM state WHERE key=?", (ORDER + op["id"],))
+            # before the check's own event: a wait it carried on is not settled by it. A check flagged to stop
+            # (superseded by a newer head, the card left) that still reports green publishes nothing: its head
+            # is not the one in work any more
+            if cls == "passed" and not done["params"].get("cancel"):
+                for card in sorted(ordered):
+                    _publish_ordered(ctx, done, ordered[card])
         operations._event(s, HOST, f"operation.{state}", done, reason=cls)
         maintenance = result.get("maintenance") or ""
         if maintenance:
@@ -391,6 +433,29 @@ def finish(ctx, op: Mapping, cls: str, result: Mapping) -> dict:
             "operation": done["id"][:12], "tail": _fence(result.get("error_short") or ""),
             "reason": reason})
         return done
+
+
+def _publish_ordered(ctx, op: Mapping, ordered: Mapping) -> None:
+    """The check passed and its lead ordered the publish (``kd-forge check --publish``): the PR goes to the owner
+    here, with no turn of the lead, and the lead's wait on this check goes on as the wait for what comes next —
+    the owner's decision on the head, or the round of the card's code council that reads it. Whatever this write
+    cannot carry on (``prs_api.publish_ordered`` says None, a refusal, a decision signed already, a council that
+    waits for the lead's answers) leaves the wait as it is: the check's end wakes the lead as before (KD-9460)."""
+    from kd.cabinet import waits  # at call time: it loads the API this module registers on
+
+    s = ctx.store
+    try:
+        with s.transaction():  # a savepoint: a refused publish leaves nothing of its own behind
+            answer = prs_api.publish_ordered(ctx, ordered["row"], ordered["agent"], ordered.get("before"))
+    except api.ApiError:
+        return
+    if answer is None:
+        return
+    decision, council, card = answer.get("decision"), answer.get("council"), answer["pr"]["card"]
+    if council is not None and council["state"] == "running":
+        waits.follow(s, card, "operation", op["id"], "council", council["id"])
+    elif decision is not None and decision["state"] == "open":
+        waits.follow(s, card, "operation", op["id"], "decision", decision["id"])
 
 
 def on_card_changed(ctx, event: Mapping) -> None:

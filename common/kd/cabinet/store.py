@@ -86,6 +86,12 @@ CREATE_KEYS = frozenset(
 )
 TITLE_MAX = 120
 PUSH_ATTEMPTS = 5  # a notification the gateway refused this many times is given up
+MERGED = "merged:"  # a command delivered in another one's turn: reason "merged:<that one's id>" (commands.MERGEABLE)
+# such a command is in its lead's turn — running, not waiting: no query of what is "not run yet" counts it
+JOINED_SQL = "(state='delivered' AND substr(reason, 1, 7)='merged:')"
+# the wakes a queued lead carried the first time it was sent, under its id: a send again carries the same ones
+# (the host answers a command id it has from its cache, whatever the text); gone when the lead leaves the queue
+JOIN_KEY = "dispatch.join:"
 SERVER_LABEL = "server:"  # the old board's server label is a card_servers row here
 SPACE_OF = {kind: space for space, kind in schema.AGENT_SPACES.items()}  # an agent thread's kind → its space
 # The coordinator's "Monitor" is its work log (the board watch's attention ticks): no unread replies and no
@@ -1494,7 +1500,8 @@ class Store:
                 raise Conflict(f"command key {spec['key']} is in use with other content")
             return known
         row = self._conn.execute(
-            "SELECT id FROM commands WHERE agent=? AND thread=? AND text=? AND state IN ('queued','delivered')",
+            f"SELECT id FROM commands WHERE agent=? AND thread=? AND text=? AND state IN ('queued','delivered')"
+            f" AND NOT {JOINED_SQL}",
             (spec["agent"], thread["id"], spec["text"]),
         ).fetchone()
         if row is not None:
@@ -1567,15 +1574,21 @@ class Store:
         row = self._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return None if row is None else row[0]
 
-    def lease_commands(self, now: str, until: str, limit: int) -> List[dict]:
-        """Queued commands that are due and not leased, oldest first, leased to the caller until ``until``."""
+    def lease_commands(self, now: str, until: str, limit: int, held: tuple = ()) -> List[dict]:
+        """Queued commands that are due and not leased, oldest first, leased to the caller until ``until``; one of
+        the ``held`` kinds waits while its agent has a command of the same thread at the host (delivered or
+        started): it joins the next turn there (``commands.MERGEABLE``)."""
+        hold = ""
+        if held:
+            hold = (f" AND NOT (c.kind IN ({','.join('?' * len(held))}) AND EXISTS (SELECT 1 FROM commands l"
+                    " WHERE l.thread=c.thread AND l.agent=c.agent AND l.state IN ('delivered','started')))")
         with self._tx():
             ids = [
                 r[0]
                 for r in self._conn.execute(
-                    "SELECT id FROM commands WHERE state='queued' AND next_try<=? AND lease_until<?"
-                    " ORDER BY created, rowid LIMIT ?",
-                    (now, now, limit),
+                    "SELECT c.id FROM commands c WHERE c.state='queued' AND c.next_try<=? AND c.lease_until<?"
+                    + hold + " ORDER BY c.created, c.rowid LIMIT ?",
+                    (now, now, *held, limit),
                 ).fetchall()
             ]
             for command_id in ids:
@@ -1600,7 +1613,8 @@ class Store:
             before = self.command(command_id)
             if state not in self._COMMAND_MOVES.get(before["state"], ()):
                 raise Invalid(f"command {command_id}: {before['state']} -> {state} is not a move")
-            if before["state"] == "delivered" and state == "done" and before["kind"] != "stop":
+            if (before["state"] == "delivered" and state == "done" and before["kind"] != "stop"
+                    and not before["reason"].startswith(MERGED)):
                 raise Invalid(f"command {command_id}: only a stop is done without a run")
             columns = {"state": state, "updated": self._clock(), "error": error, "reason": reason}
             if session is not None:
@@ -1610,11 +1624,29 @@ class Store:
                 columns["next_try"] = next_try or self._clock()
             sets = ", ".join(f"{k}=?" for k in columns)
             self._conn.execute(f"UPDATE commands SET {sets} WHERE id=?", (*columns.values(), command_id))
+            if before["state"] == "queued" and state != "queued":
+                self._conn.execute("DELETE FROM state WHERE key=?", (JOIN_KEY + command_id,))
             after = self.command(command_id)
             kind = _COMMAND_EVENTS.get((before["state"], state))
             if kind:
                 self._command_event(after, kind, actor, error=error, reason=reason)
+            if before["state"] in ("delivered", "started") and state != "started":
+                self._merged_follow(after, actor)
             return after
+
+    def _merged_follow(self, command: Mapping, actor: str) -> None:
+        """The commands delivered in ``command``'s turn (reason ``MERGED<id>``) follow it: done with its done turn,
+        back to the queue otherwise — the turn never ran, or not to its end — so none is lost and none runs twice."""
+        mark = MERGED + command["id"]
+        rows = self._conn.execute(
+            "SELECT id FROM commands WHERE thread=? AND agent=? AND state='delivered' AND reason=?",
+            (command["thread"], command["agent"], mark),
+        ).fetchall()
+        for (merged_id,) in rows:
+            if command["state"] == "done":
+                self.command_state(merged_id, "done", reason=mark, actor=actor)
+            else:
+                self.command_state(merged_id, "queued", actor=actor)
 
     def session_for(self, thread: int, agent: str) -> dict:
         """The agent's session in the thread, made ``new`` on first use."""

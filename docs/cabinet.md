@@ -272,7 +272,7 @@ gather by themselves: the brief's at the analyst's hand-in, the code's when the 
 
 ### A pull request under its council
 
-- **The gathering.** `kd-forge publish` of an open pull request on a card whose council names critics for the code
+- **The gathering.** `kd-forge publish` (or the green end of `kd-forge check … --publish`) of an open pull request on a card whose council names critics for the code
   starts round 1 over the published head — when the pull request changes at least `min_lines` lines of code
   (additions and deletions; tests, `docs/`, `*.md` and message catalogs do not count). A smaller one gathers nobody
   and its decision says “council review: not required”. Each pull request of a card has its own council. A head whose
@@ -298,7 +298,8 @@ gather by themselves: the brief's at the analyst's hand-in, the code's when the 
   (`head_missing`).
 - **The round's end.** With nothing above `minor` and no question the council is `clean`. Otherwise it waits for
   its writer — the agent that holds the card, never the coordinator or a person; the card itself is not touched. A developer whose turn waits for the
-  council (`kd-work finish … --outcome wait_dependency --council <id>`, the line `kd-forge publish` prints) is
+  council (`kd-work finish … --outcome wait_dependency --council <id>`, the line `kd-forge publish` prints, or the
+  wait on a check whose green end published the head — `kd-forge check … --publish`) is
   woken by that wait's end: one continuation, within the continuations' limits; otherwise — and where the pipeline
   only observes — by the council's command. It answers every finding with `kd-work council-reply`; only a
   `critical` or a `major` one without an answer holds the hand-in. A new head published is the next round; a round a new head interrupts is cancelled and

@@ -25,18 +25,24 @@ def protection(rule=None, permission="read"):
             ("GET", f"/repos/{REPO}/collaborators/digipaddock-dev/permission"): {"permission": permission}}
 
 
-def merge_opener(reviews, *, pr=None, statuses=None, behind=0, files=None, rule=None, moved=None):
+def merge_opener(reviews, *, pr=None, statuses=None, behind=0, files=None, rule=None, moved=None, undraft=True):
     """Forgejo for a merge: the protection is in order, the reviews are ``reviews``; after the POST the same GET of the
     PR returns merged. ``pr`` — PR fields over pr_payload(); ``statuses`` — context → state of the head's combined
     status; ``behind`` — how many commits of the target branch the head lacks (compare); ``files`` — the PR's files;
-    ``moved`` — the PR's fields at the second read (retargeted during the checks)."""
+    ``moved`` — the PR's fields at the second read (retargeted during the checks); ``undraft`` — a title edit takes the
+    draft off (else it answers and changes nothing)."""
     seen, posted, reads = [], {"done": False}, {"n": 0}
+    pr = dict(pr or {})
     def opener(req, timeout=None):
         method, url = req.get_method(), req.full_url
         seen.append((method, url, req.data, dict(req.header_items())))
         if method == "POST" and url.endswith("/pulls/12/merge"):
             posted["done"] = True
             return Resp(b"{}")
+        if method == "PATCH" and url.endswith("/pulls/12"):  # the draft's WIP: off — the PR reads so after it
+            if undraft:
+                pr.update(json.loads(req.data), draft=False)
+            return Resp(json.dumps({**pr_payload(), **pr}).encode())
         if method == "GET" and "/pulls/12/reviews" in url:
             return Resp(json.dumps(reviews).encode())
         if method == "GET" and "/pulls/12/files" in url:
@@ -933,12 +939,54 @@ def test_merge_refuses_a_target_outside_the_passport():
     assert not _posted(op)
 
 
-@pytest.mark.parametrize("pr", [{"draft": True}, {"title": "WIP: KD-12: x"}, {"title": "[wip] KD-12: x"}])
-def test_merge_refuses_a_draft(pr):
-    op = merge_opener([APPROVED], pr=pr)
+DRAFTS = [{"draft": True, "title": "WIP: KD-12: x"}, {"title": "WIP: KD-12: x"}, {"title": "[wip] KD-12: x"}]
+
+
+def _patched(op):
+    return [json.loads(c[2]) for c in op.seen if c[0] == "PATCH"]
+
+
+@pytest.mark.parametrize("pr", DRAFTS + [{"draft": True}])
+def test_merge_refuses_a_draft_the_owner_did_not_approve(pr):
+    op = merge_opener([], pr=pr)
     with pytest.raises(forge.ForgeError, match="черновик"):
         _merge(R, op)
-    assert not _posted(op)
+    assert not _posted(op) and not _patched(op)
+
+
+@pytest.mark.parametrize("pr", DRAFTS)
+def test_merge_takes_the_wip_off_a_draft_the_owner_approved(pr):
+    # KD-9460: a PR whose publish a check ordered reaches the owner as a draft — his approval on this head and the
+    # green required checks are what kd-forge publish waited for to take the WIP off: kd-merge takes it off itself
+    op = merge_opener([APPROVED], pr=pr, statuses={"devcheck/unit": "success"}, rule=CHECKED_RULE)
+    merged_sha, title, state = _merge(UNIT, op)
+    assert state == "merged" and title == "KD-12: x"
+    assert _patched(op) == [{"title": "KD-12: x"}]
+    patch = next(i for i, c in enumerate(op.seen) if c[0] == "PATCH")
+    assert patch < next(i for i, c in enumerate(op.seen) if c[0] == "POST")
+    assert op.seen[patch][3]["Authorization"] == "token " + "t" * 20  # the merge account's api
+
+
+def test_merge_leaves_a_draft_whose_required_checks_are_not_green():
+    op = merge_opener([APPROVED], pr={"title": "WIP: KD-12: x"}, statuses={"devcheck/unit": "pending"},
+                      rule=CHECKED_RULE)
+    with pytest.raises(forge.ForgeError, match="обязательные проверки не зелёные"):
+        _merge(UNIT, op)
+    assert not _posted(op) and not _patched(op)
+
+
+def test_a_draft_with_no_wip_in_its_title_is_refused():
+    op = merge_opener([APPROVED], pr={"draft": True})  # nothing kd-merge could take off
+    with pytest.raises(forge.ForgeError, match="черновик"):
+        _merge(R, op)
+    assert not _posted(op) and not _patched(op)
+
+
+def test_a_draft_forgejo_keeps_after_the_title_edit_is_refused():
+    op = merge_opener([APPROVED], pr={"title": "WIP: KD-12: x"}, undraft=False)  # the edit answers, nothing changes
+    with pytest.raises(forge.ForgeError, match="черновик"):
+        _merge(R, op)
+    assert len(_patched(op)) == 1 and not _posted(op)
 
 
 @pytest.mark.parametrize("statuses, named", [

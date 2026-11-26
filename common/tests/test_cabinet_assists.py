@@ -584,3 +584,164 @@ def test_server_change_is_asked_of_the_sysadmin_only(cab):
     assert (found["assist"]["kind"], found["assist"]["state"]) == ("server_change", "requested")
     failing("refused", request, cab, record, kind="server_change", to="analyst", key="k2")
     failing("refused", request, cab, record, kind="server_change", to="dev", key="k3")  # its own role
+
+
+# --- a rollout asked as help: the wait follows the helper's plan card (KD-9460) ---------------------------------
+def plan_card(cab, **over):
+    """The card the sysadmin opens for a rollout (``kd-task create``: its own, in Inbox)."""
+    return card(cab, **{"assignee": "@sysadmin", "status": "Inbox", "project": "admin", "created_by": "@sysadmin",
+                        **over})
+
+
+def waiting_on_rollout(cab):
+    """The lead waits for a server_change; BOSS gave it to the sysadmin, who took it and opened its own card."""
+    enforce(cab)
+    record = card(cab)
+    command, session = begin(cab, record)
+    row = request(cab, record, kind="server_change", step="выкат на staging: лист в заметках карточки",
+                  key="rollout-staging")["assist"]
+    lead_finish(cab, record, assists=[row["id"]])
+    end(cab, command, session)
+    assign(cab, row["id"])
+    show(cab, row["id"])  # accepted
+    plan = plan_card(cab)
+    return record, row, command, plan
+
+
+def plan_reply(cab, row, plan, **over):
+    return reply(cab, row["id"], evidence=f"план на {plan.id}", limit="план предложен, ничего не выполнено",
+                 card=plan.id, **over)
+
+
+def test_a_rollout_wait_does_not_wake_the_lead_when_the_sysadmin_takes_it_or_opens_its_card(cab):
+    record, row, command, plan = waiting_on_rollout(cab)
+    assert continuations_of(cab, record) == []  # accepted: no wake
+    out = plan_reply(cab, row, plan)
+    assert out["assist"]["state"] == "done"
+    assert continuations_of(cab, record) == []  # a plan awaiting the owner's signature is no outcome yet
+    [wait] = waits.of_command(cab.store, command)
+    assert (wait["kind"], wait["ref"], wait["state"], wait["blocking"]) == ("card", plan.id, "open", 1)
+    lead = cab.store.card(record.id)
+    assert lead.status == "Blocked" and plan.id in lead.dependencies  # what the lead did by hand before
+    assert outcomes.next_state(cab.ctx, lead) == "waiting"
+    kinds = [r[0] for r in cab.store._conn.execute("SELECT kind FROM events WHERE card=?", (record.id,))]
+    assert "wait.followed" in kinds and "wait.resolved" not in kinds
+    # the answer itself is in the lead's thread, as every help's is
+    assert cab.store._conn.execute("SELECT COUNT(*) FROM messages WHERE thread=? AND kind='assist'",
+                                   (record.thread,)).fetchone()[0] == 1
+
+
+def test_a_rollout_wait_wakes_the_lead_once_when_the_plan_card_is_done(cab):
+    record, row, command, plan = waiting_on_rollout(cab)
+    plan_reply(cab, row, plan)
+    cab.store.edit_card(plan.id, None, {"status": "Done"}, actor="user:owner")
+    [cont] = continuations_of(cab, record)
+    assert cont["key"] == f"wait:{command}" and cont["text"] == continuations.RESOLVED.format(id=record.id)
+
+
+def test_a_rollout_whose_plan_card_is_cancelled_asks_boss_to_route_it(cab):
+    """nothing is lost: a plan card closed without the work is a wait that needs routing, as any dependency's."""
+    record, row, command, plan = waiting_on_rollout(cab)
+    plan_reply(cab, row, plan)
+    cab.store.edit_card(plan.id, None, {"status": "Cancelled", "outcome": "cancelled"}, actor="user:owner")
+    assert continuations_of(cab, record) == []
+    assert "wait_needs_routing" in problem_kinds(cab, record)
+
+
+def test_a_rollout_refused_or_run_at_once_wakes_the_lead(cab):
+    record, row, command, plan = waiting_on_rollout(cab)
+    reply(cab, row["id"], state="failed", reason="capability_missing", evidence="нет инструмента в каталоге")
+    [cont] = continuations_of(cab, record)
+    assert cont["text"] == continuations.ENDED.format(id=record.id, state="rejected")
+    other, again, command2, _ = waiting_on_rollout(cab)
+    reply(cab, again["id"], evidence="KD-9: каждый шаг показал ok")  # a test stand: done in the helper's turn
+    [cont] = continuations_of(cab, other)
+    assert cont["text"] == continuations.RESOLVED.format(id=other.id)
+
+
+def test_a_plan_card_answer_before_the_lead_ends_its_turn_follows_on_activate(cab):
+    enforce(cab)
+    record = card(cab)
+    command, session = begin(cab, record)
+    row = request(cab, record, kind="server_change", step="выкат на staging", key="rollout-staging")["assist"]
+    lead_finish(cab, record, assists=[row["id"]])
+    assign(cab, row["id"])
+    plan = plan_card(cab)
+    plan_reply(cab, row, plan)
+    end(cab, command, session)
+    [wait] = waits.of_command(cab.store, command)
+    assert (wait["kind"], wait["ref"], wait["state"]) == ("card", plan.id, "open")
+    assert continuations_of(cab, record) == []
+
+
+def _answered_before_the_lead_finished(cab):
+    """The sysadmin answers with its plan card while the lead's turn still runs: no wait of the lead yet."""
+    enforce(cab)
+    record = card(cab)
+    command, session = begin(cab, record)
+    row = request(cab, record, kind="server_change", step="выкат на staging", key="rollout-staging")["assist"]
+    assign(cab, row["id"])
+    plan = plan_card(cab)
+    out = plan_reply(cab, row, plan)
+    assert out["followed"] is False  # nothing moved: the lead had no wait on the help
+    return record, row, command, session, plan
+
+
+def test_a_finish_on_a_help_answered_with_a_plan_card_waits_for_that_card(cab):
+    record, row, command, session, plan = _answered_before_the_lead_finished(cab)
+    lead_finish(cab, record, assists=[row["id"]])
+    end(cab, command, session)
+    [wait] = waits.of_command(cab.store, command)
+    assert (wait["kind"], wait["ref"], wait["state"]) == ("card", plan.id, "open")
+    assert continuations_of(cab, record) == []
+    cab.store.edit_card(plan.id, None, {"status": "Done"}, actor="user:owner")
+    [cont] = continuations_of(cab, record)
+    assert cont["text"] == continuations.RESOLVED.format(id=record.id)
+
+
+def test_a_finish_on_a_help_whose_plan_card_is_done_resolves_at_once(cab):
+    record, row, command, session, plan = _answered_before_the_lead_finished(cab)
+    cab.store.edit_card(plan.id, None, {"status": "Done"}, actor="user:owner")
+    lead_finish(cab, record, assists=[row["id"]])
+    end(cab, command, session)
+    [cont] = continuations_of(cab, record)
+    assert cont["text"] == continuations.RESOLVED.format(id=record.id)
+
+
+def test_a_reply_says_whether_the_leads_wait_moved(cab):
+    record, row, command, plan = waiting_on_rollout(cab)
+    assert plan_reply(cab, row, plan)["followed"] is True
+
+
+def test_a_card_the_helper_opened_before_the_help_is_not_its_plan(cab):
+    enforce(cab)
+    old = plan_card(cab)  # a long-lived card of the sysadmin's
+    cab.now = "2026-10-14T11:00:00Z"
+    record = card(cab)
+    command, session = begin(cab, record)
+    row = request(cab, record, kind="server_change", step="выкат на staging", key="rollout-staging")["assist"]
+    lead_finish(cab, record, assists=[row["id"]])
+    end(cab, command, session)
+    assign(cab, row["id"])
+    failing("refused", plan_reply, cab, row, old)
+    assert waits.of_command(cab.store, command)[0]["kind"] == "assist"
+
+
+def test_a_plan_card_is_named_only_by_a_server_change_done_on_an_open_card(cab):
+    record, row, command, plan = waiting_on_rollout(cab)
+    failing("invalid", plan_reply, cab, row, plan, state="failed", reason="refused")
+    failing("invalid", reply, cab, row["id"], card="KD-x")
+    failing("not_found", reply, cab, row["id"], card="KD-99999")
+    failing("refused", reply, cab, row["id"], card=record.id)  # the lead's own card
+    closed = plan_card(cab, status="Done")
+    failing("refused", reply, cab, row["id"], card=closed.id)
+    # a mistyped number: a card that is not the helper's own plan of this help
+    foreign = card(cab, assignee="@analyst", status="In Progress", project="admin")
+    assert "you opened for this help" in failing("refused", reply, cab, row["id"], card=foreign.id)
+    not_made = card(cab, assignee="@sysadmin", status="Inbox", project="admin")  # the owner's card, given to it
+    failing("refused", reply, cab, row["id"], card=not_made.id)
+    assert cab.store.card(record.id).status == "In Progress"  # the lead is not blocked on any of them
+    read_record, read_row = asked(cab)  # a read kind opens no card
+    assign(cab, read_row["id"])
+    failing("refused", plan_reply, cab, read_row, plan)
+    assert assists.row(cab.store, row["id"])["state"] == "accepted"  # nothing of the refused answers stayed

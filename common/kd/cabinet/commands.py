@@ -7,9 +7,12 @@ the intent it carries land together; kd-board sync leaves these agents alone. Th
 carries a card title or a person's words: the agent reads the card itself.
 """
 
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, Optional
 
 from kd.cabinet import briefs, store as store_mod
+
+STAMP = "%Y-%m-%dT%H:%M:%SZ"
 
 OWN_EVENTS = ("command.", "run.", "session.", "job.", "turn.", "wait.", "problem.", "pipeline.")
 CARD_GONE, CARD_DONE, REASSIGNED, NOT_HOSTED = "card_gone", "card_done", "reassigned", "not_hosted"
@@ -22,6 +25,18 @@ IN_COUNCIL = "in_council"  # «propose the start» of a brief its council still 
 COUNCIL_MOVED = "council_moved"  # the writer's wake of a round its council no longer waits for it in
 _WORKING = ("To Do", "In Progress", "Blocked")
 _ENDS_AT_DONE = ("assigned", "message", "continue", "urgent")
+# Wakes of one card that come together reach its agent as one turn (KD-9460). A person's word or answer
+# (``MERGEABLE``) waits in the cabinet while the agent has a command of that card's thread at the host — it would
+# only wait there behind that turn — and the owner's answer on a decision waits ``BATCH_WINDOW_S`` while the agent
+# has another decision open on the card (several PRs approved one after another). The one the dispatcher sends then carries the others of the thread that wait
+# (``JOIN``-ed, within the host's one line); each of those is delivered with reason ``MERGED<id>`` of the one sent,
+# ends done with its turn and goes back to the queue when that turn does not run (``store.command_state``).
+MERGEABLE = ("message", "answer")
+BATCH_WINDOW_S = 120
+BATCHED_EVENTS = ("decision.approved", "decision.rejected")
+MERGED = store_mod.MERGED
+JOIN = " | "
+TEXT_MAX = 2000  # the session host's one line (kd.session_host.protocol.TEXT_MAX)
 
 
 def derive(event: Mapping) -> list:
@@ -57,7 +72,7 @@ def install(store, hosted: Callable[[str], bool], pipeline: Optional[Callable] =
         for spec in derive(event):
             if hosted(spec["agent"]):
                 thread = event.get("thread") or s.card(spec["card"]).thread
-                specs.append({**spec, "thread": thread})
+                specs.append({**spec, "thread": thread, **_batched(s, event, spec)})
         if pipeline is None:
             for spec in specs:
                 s._enqueue_in_tx(spec)
@@ -65,6 +80,23 @@ def install(store, hosted: Callable[[str], bool], pipeline: Optional[Callable] =
             pipeline(s, event, specs, s._enqueue_in_tx)
 
     store.on_event = hook
+
+
+def _batched(store, event: Mapping, spec: Mapping) -> dict:
+    """The owner's answer on a decision waits ``BATCH_WINDOW_S`` only while the same agent has another decision
+    still open on the card: his next answer inside the window joins its turn. The last answer (and the only one of
+    a card with one decision) goes at once and takes the waiting ones with it — nothing is slowed for a turn it
+    could not save."""
+    if event.get("kind") not in BATCHED_EVENTS or spec.get("kind") not in MERGEABLE:
+        return {}
+    more = store._conn.execute(
+        "SELECT 1 FROM decisions WHERE card=? AND state='open' AND requested_by=? LIMIT 1",
+        (spec["card"], f"agent:{spec['agent']}"),
+    ).fetchone()
+    if more is None:
+        return {}
+    now = datetime.strptime(store._clock(), STAMP).replace(tzinfo=timezone.utc)
+    return {"next_try": (now + timedelta(seconds=BATCH_WINDOW_S)).strftime(STAMP)}
 
 
 def stale_reason(store, command: Mapping, hosted: Callable[[str], bool],

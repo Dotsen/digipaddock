@@ -503,6 +503,24 @@ def test_assist_reply_forms_and_late(env):
     assert rc == 0 and out == f"late assist {AID}: kept as evidence, the request was cancelled\n"
 
 
+def test_assist_reply_names_the_plan_card_of_a_rollout(env):
+    # server_change on an environment the owner signs: the lead's wait follows the sysadmin's card (KD-9460)
+    client = _Recorder({"assist": {**ROW, "state": "done"}, "unchanged": False, "late": False, "followed": True})
+    rc, out, _ = _main(env, "assist", "reply", AID, "--state", "done", "--card", "KD-9", "--evidence", "план на KD-9",
+                       "--limit", "план предложен", client=client, extra_env={"KD_AGENT": "sysadmin"})
+    assert rc == 0 and out == f"ok assist {AID} done — @dev waits for KD-9\n"
+    assert client.requests[0]["card"] == "KD-9"
+    # the lead had not ended its turn on the help: nothing moved yet — the line says what did happen
+    client = _Recorder({"assist": {**ROW, "state": "done"}, "unchanged": False, "late": False, "followed": False})
+    rc, out, _ = _main(env, "assist", "reply", AID, "--state", "done", "--card", "KD-9", "--evidence", "план на KD-9",
+                       "--limit", "план предложен", client=client, extra_env={"KD_AGENT": "sysadmin"})
+    assert rc == 0 and out == (f"ok assist {AID} done — KD-9 named; @dev does not wait on this help yet: "
+                               "its wait on it will be on KD-9\n")
+    rc, _, _ = _main(env, "assist", "reply", AID, "--state", "done", "--card", "9", "--evidence", "e",
+                     client=_Recorder())
+    assert rc == 2
+
+
 def test_assist_refusal_from_the_cabinet_is_exit_2(env):
     from kd.cabinet import client as cabinet_client
 

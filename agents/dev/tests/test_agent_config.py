@@ -245,6 +245,11 @@ def test_claude_md_runs_the_checks_before_the_owner_sees_the_pr():
     # the core keeps the ending of the turn on the check's wait; the refusals and outcomes are in the playbook
     assert "never wait in the turn" in CLAUDE and "playbooks/pr-checks.md" in CLAUDE
     assert "kd-host-read tail -n 200 devcheck/<id>.log" in PLAYBOOKS["pr-checks.md"]
+    # KD-9460: the publish is ordered with the check — a green check reaches the owner with no turn of dev
+    assert "`kd-forge check <project> <N> --publish` and the turn ends on its wait" in CLAUDE
+    for phrase in ("публикация заказана", "публикация не заказана", "run `kd-forge publish` then",
+                   "`kd-merge` takes the draft's `WIP:` off itself"):
+        assert phrase in PLAYBOOKS["pr-checks.md"], phrase
     template = (AGENT / "playbooks" / "pr-template.md").read_text(encoding="utf-8")
     assert "devcheck/<profile>" in template and "kd-forge check" in template
 

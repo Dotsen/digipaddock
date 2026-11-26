@@ -190,11 +190,17 @@ def _assist_waits(store, record, agent: str, named: List[str]) -> List[dict]:
 
     if not named:
         named = [a["id"] for a in assists.open_for(store, record.id, agent)]
-    for assist_id in named:
+    specs = []
+    for assist_id in sorted(set(named)):
         found = assists.row(store, assist_id)
         if found is None or found["card"] != record.id or found["lead"] != agent:
             raise _invalid(f"help {assist_id} is not yours on {record.id}")
-    return [{"kind": "assist", "ref": a, "blocking": 1} for a in sorted(set(named))]
+        # a rollout answered with the helper's plan card while the turn ran: the wait is on that card, as the
+        # answer would have carried it had the turn ended first (``assists._follow``, KD-9460)
+        plan = assists.plan_of(store, found)
+        specs.append({"kind": "card", "ref": plan, "blocking": 1} if plan else
+                     {"kind": "assist", "ref": assist_id, "blocking": 1})
+    return specs
 
 
 def _contour_waits(ctx, named: List[str]) -> List[dict]:

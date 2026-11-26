@@ -263,6 +263,43 @@ def _publish(ctx, principal, request):
     return {"pr": row, **decided}
 
 
+def current(store_, pr: Mapping) -> Optional[list]:
+    """``[head, state]`` of the PR as the cabinet keeps it now, None for one it never saw."""
+    found = store_.pr(pr["repo"], pr["number"], diff=False)
+    return None if found is None else [found["head"], found["state"]]
+
+
+def publish_ordered(ctx, row: Mapping, agent: str, before: Optional[list] = None) -> Optional[dict]:
+    """``pr.publish`` of the row the forge executor read with ``kd-forge check --publish``, now that its check is
+    green (inside the check's end): ``{pr, decision, council}`` — or None where the publish needs more than this
+    write, and the lead publishes itself as before: the card left the lead's work, a chain plan's stage, a head a
+    signature of another one may carry to (kd-review answers that outside the write), findings of the card's code
+    council the lead has not answered yet (Workflow 5: it answers each before the next round)."""
+    from kd import council
+    from kd.cabinet import council_rounds, councils, stages  # at call time: they load the API
+
+    pr = validate(row)
+    s = ctx.store
+    if current(s, pr) != (list(before) if before is not None else None):
+        return None  # the PR moved in the cabinet since the order (another head published, closed, merged)
+    try:
+        card = s.card(pr["card"])
+    except store.NotFound:
+        return None
+    if pr["state"] != "open" or card.assignee != f"@{agent}" or card.status != "In Progress":
+        return None
+    if stages.is_chain(s, card.id) and stages.open_children(s, card.id):
+        return None
+    if any(council.unanswered(councils.findings_of(councils.runs(s, found["id"], found["round"])))
+           for found in council_rounds._owing(s, card, agent, "code")):
+        return None
+    payload = payload_of(pr)
+    mine = decisions_of(ctx, card.id, pr["repo"], pr["number"])
+    if not _kept(mine, payload) and carry_from(mine, payload) is not None:
+        return None
+    return _publish(ctx, None, {"pr": pr})
+
+
 def _decide(ctx, card_id: str, pr: Mapping, held: Mapping) -> dict:
     """A head no signature covers: the card's council of the code reads it, or its decision opens."""
     from kd.cabinet import council_rounds, councils  # at call time: they load the jobs, which load the API

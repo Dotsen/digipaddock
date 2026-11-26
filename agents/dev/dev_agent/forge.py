@@ -471,10 +471,12 @@ def _cut(text: str, limit: int = DIFF_MAX) -> Tuple[str, bool]:
     return data[: data.rfind(b"\n") + 1].decode("utf-8", "replace"), True
 
 
-def _fit(row: dict) -> dict:
-    """The publish within the cabinet's one socket line: JSON escapes can grow a diff past it — cut it further."""
+def _fit(row: dict, envelope=None) -> dict:
+    """The publish within the cabinet's one socket line: JSON escapes can grow a diff past it — cut it further.
+    ``envelope`` is the request that carries the row (``pr.publish`` by default; a check's order — KD-9460)."""
+    envelope = envelope or (lambda r: {"op": "pr.publish", "pr": r})
     while True:
-        total = len(cabinet_client.encode({"op": "pr.publish", "pr": row}))
+        total = len(cabinet_client.encode(envelope(row)))
         if total <= cabinet_server.MAX_REQUEST:
             return row
         encoded = len(json.dumps(row["diff"], ensure_ascii=False).encode("utf-8"))
@@ -489,11 +491,14 @@ def _authors() -> str:
     return ", ".join(sorted(authors()))
 
 
-def publish(api: Api, repo: repos.Repo, n: int) -> Tuple[dict, Optional[str]]:
+def publish(api: Api, repo: repos.Repo, n: int, ordered: bool = False,
+            envelope=None) -> Tuple[dict, Optional[str]]:
     """The PR as the cabinet keeps it (``pr.publish``): the card from the title, the head, the files, the
     diff (cut at a line), the cage and whether kd-merge may release the project. its target from the passport,
     what a merge into it sets off, and the required checks — green on the head, or no publish. Returns the row and, for
-    an open draft, its title without WIP: — set in Forgejo (``undraft``) only once the cabinet took the row."""
+    an open draft, its title without WIP: — set in Forgejo (``undraft``) only once the cabinet took the row.
+    ``ordered``: the row a check orders (``check --publish``) — the required checks are named, not read: the cabinet
+    publishes it only on that check's green end, and the draft's WIP: is kd-merge's to take off (KD-9460)."""
     data = pr(api, repo.repo, n)
     raw = _safe(_str(data.get("title"))).replace("\n", " ")
     if _login(data) not in authors():
@@ -507,7 +512,7 @@ def publish(api: Api, repo: repos.Repo, n: int) -> Tuple[dict, Optional[str]]:
     if not SHA40_RE.fullmatch(head):
         raise ForgeError(f"PR #{n}: Forgejo не дал head sha")
     state = "merged" if data.get("merged") is True else ("open" if data.get("state") == "open" else "closed")
-    checks = required_green(api, repo, head) if state == "open" else []
+    checks = [] if state != "open" else repos.required(repo) if ordered else required_green(api, repo, head)
     files, more = _pr_files(api, repo.repo, n)
     diff, cut = _cut(api.get_text(f"/repos/{repo.repo}/pulls/{n}.diff", DIFF_MAX))
     again = pr(api, repo.repo, n)
@@ -518,7 +523,7 @@ def publish(api: Api, repo: repos.Repo, n: int) -> Tuple[dict, Optional[str]]:
                  "title": title[:TITLE_MAX], "url": _str(data.get("html_url"))[:URL_MAX], "head": head, "state": state,
                  "files": files, "cage": pr_cage.cage_files([f["path"] for f in files]), "diff": diff,
                  "truncated": cut or more, "release": repo.release is not None, "target": target,
-                 "effect": repos.effect(repo, target), "checks": checks}), (
+                 "effect": repos.effect(repo, target), "checks": checks}, envelope), (
         title if state == "open" and title != raw else None)
 
 
@@ -608,18 +613,58 @@ def fmt_check(answer: dict, request: dict) -> str:
     op = _dict(answer.get("operation"))
     op_id, state = _str(op.get("id")), _str(op.get("state"))
     wait = f'; жди её: kd-work finish {request["card"]} --outcome wait_dependency --operation {op_id} --note "…"'
+    said = ""
+    if "publish" in request:  # check --publish: whether the cabinet kept the order (KD-9460)
+        said = ("; публикация заказана: на зелёной проверке PR уйдёт владельцу сам" if answer.get("publish") is True
+                else "; публикация не заказана — после зелёной проверки kd-forge publish")
     if answer.get("created") is True:
         return (f"проверка {op_id[:12]} в очереди контура {request['contour']}: профили "
-                f"{', '.join(request['profiles'])}{wait}")
+                f"{', '.join(request['profiles'])}{said}{wait}")
     if state == "succeeded":
         return f"проверка {op_id[:12]} уже пройдена на {request['head'][:7]} — повторять нечего"
-    return f"проверка {op_id[:12]} уже идёт на {request['head'][:7]}{wait}"
+    return f"проверка {op_id[:12]} уже идёт на {request['head'][:7]}{said}{wait}"
+
+
+def _order(api: Api, repo: repos.Repo, n: int, request: dict) -> dict:
+    """check --publish: the PR row the cabinet publishes on the check's green end — the head the check is about,
+    the required checks among its profiles (KD-9460)."""
+    left = [name for name in repos.required(repo) if name not in request["profiles"]]
+    if left or not repos.required(repo):
+        raise ForgeError(f"--publish: проверка без обязательных профилей {', '.join(left) or '—'} — зелёная, она не "
+                         f"отправила бы PR владельцу")
+    row, _ = publish(api, repo, n, ordered=True, envelope=lambda r: {**request, "publish": r})
+    if (row["head"], row["state"], row["target"]) != (request["head"], "open", request["target"]):
+        raise ForgeError(f"PR #{n} сдвинулся, пока читались проверка и публикация — запусти check ещё раз")
+    return row
+
+
+def _publish_now(api: Api, repo: repos.Repo, n: int, *, cabinet, forge_dir, opener, out) -> None:
+    """kd-forge publish: the row to the cabinet, the draft's WIP: off once it took it, what the answer says."""
+    row, retitle = publish(api, repo, n)
+    try:
+        answer = cabinet_client.publish_pr(row, client=cabinet)
+    except cabinet_client.CabinetError as exc:
+        raise ForgeError(f"кабинет не принял PR #{n}: {exc}") from None
+    if retitle is not None:
+        undraft(Api(load_token(merge_login(), forge_dir), opener=opener), repo, n, retitle)
+    if row["state"] != "open":
+        print(f"PR #{n}: {row['state']}", file=out)
+        return
+    print(f"PR #{n} в кабинете: {cabinet_config.card_link(row['card'], '')}", file=out)
+    if (answer or {}).get("stage"):  # a chain plan with open stages: the head is recorded, no more
+        print(f"этап: PR плана обновлён (голова {row['head'][:12]}); совет и решение владельца — после "
+              "последнего этапа", file=out)
+    for line in council_lines(row["card"], n, (answer or {}).get("council")):
+        print(line, file=out)
+    for line in carry_lines(repo.project, row, answer or {}):
+        print(line, file=out)
 
 
 def _check_cmd(a, repo, n, profiles, *, opener, forge_dir, repos_path, journal_path, environ, agents_path,
                contours_path, cabinet, out, err) -> int:
-    """kd-forge check <project> <N> [--profiles a,b]: the request goes to the cabinet, which queues it on
-    the contour's lane; the agent waits for its operation."""
+    """kd-forge check <project> <N> [--profiles a,b] [--publish]: the request goes to the cabinet, which queues it
+    on the contour's lane; the agent waits for its operation. ``--publish`` orders the PR's publish with it: the
+    cabinet publishes on the green end — a check that passed already is published here, as ``kd-forge publish``."""
     log = {"claimed_agent": a.agent, "cmd": "check", "project": a.project, "pr": n}
     try:
         agent = channel_agent(os.environ if environ is None else environ, agents_path)
@@ -627,16 +672,21 @@ def _check_cmd(a, repo, n, profiles, *, opener, forge_dir, repos_path, journal_p
             found = contour_file.load(contours_path)
         except contour_file.ContourError as exc:
             raise ForgeError(f"контуры дерева выкатки не прочитаны: {exc}") from None
-        request = check(Api(load_token(dev_login(), forge_dir), opener=opener), repo, n, profiles, agent, found, repos_path)
+        api = Api(load_token(dev_login(), forge_dir), opener=opener)
+        request = check(api, repo, n, profiles, agent, found, repos_path)
+        if a.publish:
+            request["publish"] = _order(api, repo, n, request)
         try:
             answer = cabinet_client.devcheck_request(request, client=cabinet)
         except cabinet_client.CabinetError as exc:
             raise ForgeError(f"кабинет не принял проверку: {exc}") from None
+        print(fmt_check(answer, request), file=out)
+        if a.publish and _str(_dict(answer.get("operation")).get("state")) == "succeeded":
+            _publish_now(api, repo, n, cabinet=cabinet, forge_dir=forge_dir, opener=opener, out=out)
     except ForgeError as exc:
         print(f"⛔ {exc}", file=err)
         _best_effort(err, "журнал forge.jsonl", journal, journal_path, **log, ok=False, result=str(exc)[:300])
         return 1
-    print(fmt_check(answer, request), file=out)
     _best_effort(err, "журнал forge.jsonl", journal, journal_path, **log, ok=True,
                  result=_str(_dict(answer.get("operation")).get("id")))
     return 0
@@ -906,7 +956,7 @@ def merge_pr(api_read: Api, api_merge: Api, repo: repos.Repo, n: int, sha: str,
 
 
 def _merge_checked(api_read: Api, api_merge: Api, passport: repos.Repo, n: int, sha: str, data: dict, title: str,
-                   release: bool = False):
+                   release: bool = False, undrafted: bool = False):
     repo = passport.repo
     head = _str(_dict(data.get("head")).get("sha")).lower()
     if _login(data) not in authors():
@@ -924,7 +974,17 @@ def _merge_checked(api_read: Api, api_merge: Api, passport: repos.Repo, n: int, 
         raise ForgeError("PR закрыт без merge")
     target = _target(passport, data)
     if data.get("draft") is True or pr_cage.WIP_RE.match(title):
-        raise ForgeError("PR — черновик (WIP): после зелёных обязательных проверок его снимает kd-forge publish")
+        # KD-9460: the publish a check ordered (kd-forge check --publish) reaches the owner with the PR still a draft —
+        # the owner's approval on this head and the green required checks are what kd-forge publish waited for to
+        # take the WIP: off: kd-merge takes it off itself (its account edits titles), reads the PR again and goes on
+        bare = pr_cage.WIP_RE.sub("", title)
+        if undrafted or bare == title or not owner_approved(api_read, repo, n, sha, target):
+            raise ForgeError("PR — черновик (WIP): после зелёных обязательных проверок его снимает kd-forge publish "
+                             "(или kd-merge — после одобрения владельца на этом коммите)")
+        required_green(api_read, passport, sha)
+        undraft(api_merge, passport, n, bare)
+        data = pr(api_read, repo, n)
+        return _merge_checked(api_read, api_merge, passport, n, sha, data, _str(data.get("title")), release, True)
     if data.get("mergeable") is not True:
         raise ForgeError("PR не mergeable (конфликт или проверка ещё идёт) — обнови ветку")
     problems = protection_problems(api_merge, api_read, repo, target, required_contexts(passport))
@@ -1169,6 +1229,7 @@ def main(argv=None, *, opener=None, forge_dir=FORGE_DIR, repos_path=REPOS, journ
     p.add_argument("sha", nargs="?")
     p.add_argument("--release", action="store_true")
     p.add_argument("--profiles")
+    p.add_argument("--publish", action="store_true")
     try:
         with contextlib.redirect_stderr(err):  # parse errors — one line into the same err
             a = p.parse_args(argv)
@@ -1183,6 +1244,9 @@ def main(argv=None, *, opener=None, forge_dir=FORGE_DIR, repos_path=REPOS, journ
             return 2
     if a.cmd != "merge" and (a.sha is not None or a.release):
         print("⛔ sha и --release — только у kd-merge", file=err)
+        return 2
+    if a.publish and a.cmd != "check":
+        print("⛔ --publish — только у kd-forge check", file=err)
         return 2
     profiles = None
     if a.profiles is not None:
@@ -1242,24 +1306,7 @@ def main(argv=None, *, opener=None, forge_dir=FORGE_DIR, repos_path=REPOS, journ
         elif a.cmd == "status":
             print(fmt_statuses(a.number, statuses(api, repo.repo, a.number)), file=out)
         elif a.cmd == "publish":
-            row, retitle = publish(api, repo, n)
-            try:
-                answer = cabinet_client.publish_pr(row, client=cabinet)
-            except cabinet_client.CabinetError as exc:
-                raise ForgeError(f"кабинет не принял PR #{n}: {exc}") from None
-            if retitle is not None:
-                undraft(Api(load_token(merge_login(), forge_dir), opener=opener), repo, n, retitle)
-            if row["state"] == "open":
-                print(f"PR #{n} в кабинете: {cabinet_config.card_link(row['card'], '')}", file=out)
-                if (answer or {}).get("stage"):  # a chain plan with open stages: the head is recorded, no more
-                    print(f"этап: PR плана обновлён (голова {row['head'][:12]}); совет и решение владельца — после "
-                          "последнего этапа", file=out)
-                for line in council_lines(row["card"], n, (answer or {}).get("council")):
-                    print(line, file=out)
-                for line in carry_lines(a.project, row, answer or {}):
-                    print(line, file=out)
-            else:
-                print(f"PR #{n}: {row['state']}", file=out)
+            _publish_now(api, repo, n, cabinet=cabinet, forge_dir=forge_dir, opener=opener, out=out)
         else:
             comment(api, repo.repo, n, text)
             print(f"комментарий к PR #{n} отправлен", file=out)

@@ -25,10 +25,10 @@ import re
 import secrets
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Mapping, Optional
 
 from kd import boss_board, worker_board
-from kd.cabinet import api, briefs, continuations, schema
+from kd.cabinet import api, briefs, continuations, schema, store as store_mod
 
 CATALOG = Path(__file__).resolve().parents[3] / "common" / "coordination" / "assist.json"
 OPEN = ("requested", "assigned", "accepted")
@@ -256,12 +256,16 @@ def _reply(ctx, principal, request):
         raise _invalid("--reason goes with --state failed")
     evidence = _line(request.get("evidence"), "--evidence", EVIDENCE_MAX)
     limit = _line(request.get("limit", ""), "--limit", LIMIT_MAX, empty=state == "failed")
+    plan_id = request.get("card", "") or ""
+    if plan_id and (state != "done" or not isinstance(plan_id, str) or not api.CARD.fullmatch(plan_id)):
+        raise _invalid("--card KD-<m> goes with --state done: the card you opened for this help")
     api._agent_rate_limit(ctx, agent, "assist")
     s = ctx.store
     with s.transaction():
         found = _find(s, request)
         if found["helper"] != agent:
             raise _refused("this help request is not assigned to you")
+        plan = _plan_card(s, found, plan_id, agent) if plan_id else None
         # an answer after the request was withdrawn or expired is kept once, as evidence; it resumes nothing
         late = found["state"] == "cancelled" or (found["state"] == "failed" and found["reason"] == "expired")
         if late and found["evidence"]:
@@ -274,7 +278,7 @@ def _reply(ctx, principal, request):
                 return {"assist": found, "unchanged": True, "late": False}
             raise _refused(f"help {found['id'][:8]} is answered already")
         payload = {"assist": found["id"], "state": state, "reason": reason, "limit": limit, "source": "reported",
-                   "late": late}
+                   "late": late, **({"card": plan.id} if plan is not None else {})}
         s._add_message(found["thread"], f"agent:{agent}", "assist", evidence, payload, "", via="assist")
         if late:
             _set(s, found["id"], evidence=evidence, proof_limit=limit)
@@ -283,10 +287,66 @@ def _reply(ctx, principal, request):
             return {"assist": found, "unchanged": False, "late": True}
         _set(s, found["id"], state=state, reason=reason, evidence=evidence, proof_limit=limit)
         found = row(s, found["id"])
-        event(s, found, state, f"agent:{agent}", reason=reason)
+        # before the done event: the lead's wait is the plan card's from here on. A lead that has not ended its
+        # turn on the help yet waits on the card when it does (``plan_of``, ``outcomes._assist_waits``)
+        followed = _follow(ctx, found, plan) if plan is not None else False
+        event(s, found, state, f"agent:{agent}", reason=reason, **({"card": plan.id} if plan is not None else {}))
         if state == "failed":
             _failed_problem(ctx, found)
-        return {"assist": found, "unchanged": False, "late": False}
+        return {"assist": found, "unchanged": False, "late": False, "followed": followed}
+
+
+def plan_of(store, found: Mapping) -> str:
+    """The plan card a done ``server_change`` help was answered with (``--card``), or ''."""
+    if found["state"] != "done" or found["kind"] != "server_change":
+        return ""
+    for (payload,) in store._conn.execute(
+            "SELECT payload FROM events WHERE kind='assist.done' AND card=? ORDER BY seq DESC", (found["card"],)):
+        data = json.loads(payload)
+        if data.get("assist") == found["id"]:
+            return data.get("card") or ""
+    return ""
+
+
+def _plan_card(store, found: dict, plan_id: str, agent: str):
+    """The card a ``server_change`` helper opened for the help: its own card — created by it after the help was
+    asked and still held by it — another card than the lead's, still open. A mistyped number is refused: it would
+    move the lead's wait onto a card that has nothing to do with the rollout."""
+    if found["kind"] != "server_change":
+        raise _refused(f"help {found['id'][:8]} is a read ({found['kind']}): no card of yours goes with it")
+    try:
+        plan = store.card(plan_id)
+    except store_mod.NotFound:
+        raise api.ApiError("not_found", f"{plan_id} not found")
+    mine = plan.created_by == f"@{agent}" and plan.assignee == f"@{agent}" and plan.created >= found["created"]
+    if plan.id == found["card"] or plan.terminal or not mine:
+        raise _refused(f"--card names the open card you opened for this help (kd-task create after it was asked, "
+                       f"held by @{agent}), not {plan.id} ({plan.status}, {plan.assignee or 'nobody'})")
+    return plan
+
+
+def _follow(ctx, found: dict, plan) -> bool:
+    """A rollout whose plan waits for the owner's signature has no outcome yet: the lead's wait on the help goes
+    on as a wait on the helper's card (its Done wakes the lead once, a cancel asks BOSS to route it), and the
+    lead's card is Blocked on that card — what the lead did by hand on such an answer before (KD-9460). A lead
+    that does not wait on this help reads the answer itself; its card is left as it is."""
+    from kd.cabinet import waits  # at call time: it loads the API this module registers on
+
+    s = ctx.store
+    if not waits.follow(s, found["card"], "assist", found["id"], "card", plan.id):
+        return False
+    record = s.card(found["card"])
+    deps = list(record.dependencies) + ([] if plan.id in record.dependencies else [plan.id])
+    change = {"dep": deps, **({"status": "Blocked"} if record.status != "Blocked" else {})}
+    try:
+        with s.transaction():  # a savepoint: a refused edit leaves nothing of its own behind
+            edit = worker_board.plan("edit", change, agent=found["lead"],
+                                     card=boss_board.card_from(record.to_dict()), targets=ctx.targets(), specs=None)
+            api._apply(ctx, edit, f"agent:{found['lead']}",
+                       {"reason": f"help {found['id'][:8]}: waits for {plan.id}"})
+    except (worker_board.Refused, boss_board.Refused, api.ApiError):
+        pass  # the wait holds the card already (``outcomes.next_state``); the status is only the board's view
+    return True
 
 
 def _failed_problem(ctx, found: dict) -> None:

@@ -962,7 +962,9 @@ def test_a_rollout_on_a_test_environment_is_answered_with_its_results():
                    '`kd-task edit KD-<m> --status Done --final-summary "<what each step and check showed>"`',
                    "what each step showed", "word for word", "the one card you work outside your thread"):
         assert phrase in board, phrase
-    assert 'any other environment: answer `kd-work assist reply <id> --state done --evidence "план на KD-<m>"' in board
+    assert ('any other environment: answer `kd-work assist reply <id> --state done --card KD-<m> --evidence '
+            '"план на KD-<m>"') in board
+    assert "the lead sleeps until KD-<m> is Done" in board  # the wait follows the plan card (KD-9460)
     workflow = _dev_playbook("merge-and-release.md")
     for phrase in ("The answer carries the results", "runs without the owner", "no line to the owner",
                    "a one-time link the sheet asked for is in the answer"):
