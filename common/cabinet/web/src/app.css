@@ -40,7 +40,46 @@
   --project-5: #cdb38a;
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-  --radius: 12px;
+  /* The one scale every screen takes its sizes from (docs/cabinet-design.md). A size off it is a new token here,
+     never a number in a component: src/design.test.ts counts the numbers left and lets them only go down. */
+  /* type */
+  --fs-tiny: 10px;    /* a caret, a tab bar's label, a chart's tick */
+  --fs-xs: 11px;      /* a panel's overline */
+  --fs-sm: 12px;      /* a chip, an id, meta, a section's header */
+  --fs-md: 13px;      /* secondary text, a hint, a small button, a field's label */
+  --fs-ui: 14px;      /* a button, a tab, a menu entry, a title in a list */
+  --fs-body: 15px;    /* text */
+  --fs-lead: 16px;    /* a panel's title, the board's project chips */
+  --fs-title: 17px;   /* a sheet's or a section's heading */
+  --fs-heading: 20px; /* a card's title, a document's first heading */
+  --fs-page: 22px;    /* a page's title */
+  --fs-display: 30px; /* a big number */
+  /* space: gaps, paddings and margins on a 2px grid */
+  --sp-2: 2px;
+  --sp-4: 4px;
+  --sp-6: 6px;
+  --sp-8: 8px;
+  --sp-10: 10px;
+  --sp-12: 12px;
+  --sp-14: 14px;
+  --sp-16: 16px;
+  --sp-20: 20px;
+  --sp-24: 24px;
+  --sp-32: 32px;
+  --sp-40: 40px;
+  /* corners */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+  --radius: var(--r-lg);
+  /* what lies over the page: a dialog's scrim, a picture's, a popup's shadow, a floating chip's */
+  --scrim: rgb(0 0 0 / .55);
+  --scrim-deep: rgb(0 0 0 / .85);
+  --shadow-pop: 0 8px 24px rgb(0 0 0 / .35);
+  --shadow-float: 0 2px 8px rgb(0 0 0 / .25);
   --nav-h: 60px;
   --side-w: 232px;
   --side-w-folded: 64px;
@@ -89,7 +128,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--fs-body);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -108,64 +147,64 @@ code, pre, .mono { font-family: var(--font-mono); font-size: .92em; }
 /* shell */
 .app { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100%; }
 .main {
-  padding: env(safe-area-inset-top, 0px) 16px calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 16px);
+  padding: env(safe-area-inset-top, 0px) var(--sp-16) calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + var(--sp-16));
   /* a page's column starts at the menu and reads to 1200 px: centred at 900 it left a card narrow */
   max-width: 1200px; width: 100%; min-width: 0; margin: 0;
 }
-.main.bare { padding-bottom: 32px; margin: 0 auto; } /* no menu beside it: the sign-in screen stays in the middle */
+.main.bare { padding-bottom: var(--sp-32); margin: 0 auto; } /* no menu beside it: the sign-in screen stays in the middle */
 .main.wide { max-width: none; } /* the board: its columns take the whole screen */
 /* the coordinator's chat: the screen's height above the tab bar, the field stays in view with the keyboard */
 .main.chat-shell {
   height: calc(100dvh - var(--nav-h) - env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column;
-  padding-bottom: 8px; overflow-y: auto;
+  padding-bottom: var(--sp-8); overflow-y: auto;
 }
 .chat-shell > .offline, .chat-shell > .banner { flex: none; }
 @media (min-width: 900px) {
   .app.nav { grid-template-columns: var(--side-w) minmax(0, 1fr); }
   .app.nav.folded { grid-template-columns: var(--side-w-folded) minmax(0, 1fr); } /* a strip of icons */
-  .main { padding-bottom: 32px; }
-  .main.dashboard-shell { height: 100dvh; display: flex; flex-direction: column; padding: 0 24px 16px; }
-  .main.chat-shell { height: 100dvh; padding-bottom: 16px; }
+  .main { padding-bottom: var(--sp-32); }
+  .main.dashboard-shell { height: 100dvh; display: flex; flex-direction: column; padding: 0 var(--sp-24) var(--sp-16); }
+  .main.chat-shell { height: 100dvh; padding-bottom: var(--sp-16); }
   .dashboard-shell > .offline, .dashboard-shell > .banner { flex: none; }
 }
 .offline {
-  margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+  margin: var(--sp-10) 0 0; padding: var(--sp-8) var(--sp-12); border-radius: var(--r-md); font-size: var(--fs-md);
   background: var(--warn-bg); color: var(--warn);
 }
 .banner {
-  margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+  margin: var(--sp-10) 0 0; padding: var(--sp-8) var(--sp-12); border-radius: var(--r-md); font-size: var(--fs-md);
   border: 1px solid var(--line); color: var(--muted);
 }
-.banner a { color: var(--accent); margin-left: 6px; }
+.banner a { color: var(--accent); margin-left: var(--sp-6); }
 
 /* generic */
 .topbar {
-  display: flex; align-items: center; gap: 10px; padding: 14px 0 10px;
+  display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-14) 0 var(--sp-10);
   position: sticky; top: env(safe-area-inset-top, 0px); background: var(--bg); z-index: 10;
 }
-.topbar h1 { font-size: 22px; margin: 0; font-weight: 700; text-wrap: balance; }
+.topbar h1 { font-size: var(--fs-page); margin: 0; font-weight: 700; text-wrap: balance; }
 .topbar .spacer { flex: 1; }
 .iconbtn {
-  background: none; border: 1px solid var(--line); border-radius: 8px; width: 36px; height: 36px;
+  background: none; border: 1px solid var(--line); border-radius: var(--r-md); width: 36px; height: 36px;
   display: grid; place-items: center; color: var(--muted);
 }
 .iconbtn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .btn {
-  border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px;
-  padding: 9px 14px; font-weight: 500; font-size: 14px; color: var(--text);
+  border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--r-md);
+  padding: var(--sp-10) var(--sp-16); font-weight: 500; font-size: var(--fs-ui); color: var(--text);
 }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 .btn.danger { color: var(--crit); }
 .btn.wide { width: 100%; }
-.btn.small { padding: 5px 10px; font-size: 13px; }
+.btn.small { padding: var(--sp-6) var(--sp-10); font-size: var(--fs-md); }
 .btn.ghost { background: none; }
 a.btn { display: inline-block; text-decoration: none; }
 .btn:disabled { opacity: .55; }
 .btn:focus-visible, .iconbtn:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
 textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chip {
-  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; font-weight: 500; background: var(--surface-2); color: var(--muted);
+  display: inline-flex; align-items: center; gap: var(--sp-4); padding: var(--sp-2) var(--sp-8); border-radius: var(--r-pill);
+  font-size: var(--fs-sm); font-weight: 500; background: var(--surface-2); color: var(--muted);
   border: 1px solid var(--line); white-space: nowrap;
 }
 /* a chip of free text (a label, a server): one line while it fits, broken anywhere when it does not */
@@ -174,61 +213,61 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
 .chip.good { color: var(--good); } .chip.warn { color: var(--warn); } .chip.crit { color: var(--crit); }
 .chip.acc { color: var(--accent); } .chip.info { color: var(--info); } .chip.boss { color: var(--au-boss-ink); }
 .note {
-  font-size: 13px; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px;
-  padding: 8px 10px; margin: 6px 0 10px;
+  font-size: var(--fs-md); color: var(--muted); border: 1px dashed var(--line); border-radius: var(--r-md);
+  padding: var(--sp-8) var(--sp-10); margin: var(--sp-6) 0 var(--sp-10);
 }
 .section-h {
-  display: flex; align-items: baseline; gap: 8px; margin: 18px 0 8px; font-size: 12px;
+  display: flex; align-items: baseline; gap: var(--sp-8); margin: var(--sp-16) 0 var(--sp-8); font-size: var(--fs-sm);
   text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600;
 }
 .section-h .n { color: var(--text); }
-.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
-.stack { display: flex; flex-direction: column; gap: 12px; }
-.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.empty { color: var(--muted); text-align: center; padding: 40px 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--sp-14); }
+.stack { display: flex; flex-direction: column; gap: var(--sp-12); }
+.row { display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: center; }
+.empty { color: var(--muted); text-align: center; padding: var(--sp-40) 0; }
 
 /* forms */
-.field { display: grid; gap: 5px; }
-.field > span { font-size: 13px; color: var(--muted); }
+.field { display: grid; gap: var(--sp-4); }
+.field > span { font-size: var(--fs-md); color: var(--muted); }
 .input, input[type="text"], input[type="password"], input[type="search"], input[type="email"],
 input[type="number"], select, textarea {
-  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-10) var(--sp-12);
   color: var(--text); font: inherit; width: 100%; min-width: 0;
 }
 textarea { resize: vertical; min-height: 90px; }
-.error-text { color: var(--crit); font-size: 13px; }
-.ok-text { color: var(--good); font-size: 13px; }
-.segmented { display: flex; gap: 2px; background: var(--surface-2); border-radius: 10px; padding: 3px; }
+.error-text { color: var(--crit); font-size: var(--fs-md); }
+.ok-text { color: var(--good); font-size: var(--fs-md); }
+.segmented { display: flex; gap: var(--sp-2); background: var(--surface-2); border-radius: var(--r-lg); padding: var(--sp-4); }
 .segmented button {
-  flex: 1; background: none; border: 0; border-radius: 8px; padding: 7px 10px; color: var(--muted); font-size: 14px;
+  flex: 1; background: none; border: 0; border-radius: var(--r-md); padding: var(--sp-6) var(--sp-10); color: var(--muted); font-size: var(--fs-ui);
 }
 .segmented button.on { background: var(--surface-3); color: var(--text); }
 
 /* tabs */
 /* the line is an inset shadow, not a border: a button hanging 1px over a border made the strip scroll vertically */
-.tabs { display: flex; gap: 2px; box-shadow: inset 0 -1px 0 var(--line); margin: 4px 0 0; overflow-x: auto; flex: none; }
+.tabs { display: flex; gap: var(--sp-2); box-shadow: inset 0 -1px 0 var(--line); margin: var(--sp-4) 0 0; overflow-x: auto; flex: none; }
 .tabs button {
-  background: none; border: 0; padding: 10px 12px; color: var(--muted); font-weight: 500;
+  background: none; border: 0; padding: var(--sp-10) var(--sp-12); color: var(--muted); font-weight: 500;
   border-bottom: 2px solid transparent; white-space: nowrap;
 }
 .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
 
 /* bottom sheet / dialog */
 .veil {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-end;
+  position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: flex-end;
   justify-content: center; z-index: 50;
 }
 .sheet {
   width: 100%; max-width: 480px; max-height: 90dvh; overflow-y: auto; background: var(--surface);
-  border: 1px solid var(--line); border-radius: 16px 16px 0 0;
-  padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 12px;
+  border: 1px solid var(--line); border-radius: var(--r-xl) var(--r-xl) 0 0;
+  padding: var(--sp-16) var(--sp-16) calc(var(--sp-16) + env(safe-area-inset-bottom, 0px)); display: grid; gap: var(--sp-12);
 }
-.sheet h2 { margin: 0; font-size: 17px; }
-.sheet .actions { display: flex; gap: 8px; }
+.sheet h2 { margin: 0; font-size: var(--fs-title); }
+.sheet .actions { display: flex; gap: var(--sp-8); }
 .sheet .actions .btn { flex: 1; }
 @media (min-width: 900px) {
   .veil { align-items: center; }
-  .sheet { border-radius: 16px; }
+  .sheet { border-radius: var(--r-xl); }
 }
 @media (prefers-reduced-motion: no-preference) {
   .sheet { animation: up .18s ease-out; }

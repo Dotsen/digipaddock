@@ -371,13 +371,13 @@
 {/if}
 
 <style>
-  .projects { display: grid; gap: 14px; margin-top: 4px; }
+  .projects { display: grid; gap: var(--sp-14); margin-top: var(--sp-4); }
   .project {
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
   }
-  .project h2 { margin: 0; padding: 14px 16px 10px; font-size: 17px; font-weight: 650; line-height: 1.3; }
+  .project h2 { margin: 0; padding: var(--sp-14) var(--sp-16) var(--sp-10); font-size: var(--fs-title); font-weight: 650; line-height: 1.3; }
   .readfail {
-    margin: 0 16px 10px; padding: 8px 10px; border-radius: 8px; font-size: 13px; line-height: 1.4;
+    margin: 0 var(--sp-16) var(--sp-10); padding: var(--sp-8) var(--sp-10); border-radius: var(--r-md); font-size: var(--fs-md); line-height: 1.4;
     color: var(--warn); background: var(--warn-bg); overflow-wrap: anywhere;
   }
   .readfail .why { color: var(--text); }
@@ -391,20 +391,20 @@
   .erow.dim .ehead { opacity: .75; }
   .ehead {
     grid-column: 1 / 4; display: grid; grid-template-columns: subgrid; align-items: center; min-height: 48px;
-    padding: 8px 0 8px 16px; background: none; border: 0; color: inherit; font: inherit; text-align: left;
+    padding: var(--sp-8) 0 var(--sp-8) var(--sp-16); background: none; border: 0; color: inherit; font: inherit; text-align: left;
     cursor: pointer;
   }
   .ehead:hover, .erow.open .ehead { background: var(--surface-2); }
   .ehead.static { cursor: default; }
   .ehead.static:hover { background: none; }
-  .ename { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; padding-right: 8px; }
+  .ename { font-size: var(--fs-ui); font-weight: 600; overflow-wrap: anywhere; padding-right: var(--sp-8); }
   .pill {
-    justify-self: start; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px;
-    border-radius: 999px; font-size: 12.5px; font-weight: 500; white-space: nowrap;
+    justify-self: start; display: inline-flex; align-items: center; gap: 5px; padding: 3px var(--sp-10);
+    border-radius: var(--r-pill); font-size: 12.5px; font-weight: 500; white-space: nowrap;
   }
   .what {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; padding-right: 12px;
-    font-size: 13px; overflow-wrap: anywhere;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2) var(--sp-12); min-width: 0; padding-right: var(--sp-12);
+    font-size: var(--fs-md); overflow-wrap: anywhere;
   }
   .delta { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
   .delta.acc { color: var(--accent); }
@@ -414,25 +414,25 @@
   .delta.ok { color: var(--good); }
   /* everything deployed: the whole row is green, hovering or open it stays so */
   .erow.settled, .erow.settled .ehead:hover, .erow.settled.open .ehead { background: var(--good-bg); }
-  .act { grid-column: 4; align-self: stretch; display: flex; align-items: center; padding-right: 16px; }
+  .act { grid-column: 4; align-self: stretch; display: flex; align-items: center; padding-right: var(--sp-16); }
   .erow.open .act { background: var(--surface-2); }
   .act .btn { width: 100%; }
   .details {
-    grid-column: 1 / -1; display: grid; gap: 3px; padding: 8px 16px 12px; font-size: 12.5px;
+    grid-column: 1 / -1; display: grid; gap: 3px; padding: var(--sp-8) var(--sp-16) var(--sp-12); font-size: 12.5px;
     background: var(--surface-2); overflow-wrap: anywhere;
   }
   /* the commits behind a count: a title a line (the description under it on a tap), then the hash, author, time */
-  .commits { display: grid; gap: 4px; margin-bottom: 8px; }
+  .commits { display: grid; gap: var(--sp-4); margin-bottom: var(--sp-8); }
   .chead { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--text); }
-  .clist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-  .clist li { display: grid; gap: 2px; padding-left: 10px; border-left: 2px solid var(--line); min-width: 0; }
-  .ctitle { font-size: 13px; line-height: 1.35; color: var(--text); overflow-wrap: anywhere; }
+  .clist { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); }
+  .clist li { display: grid; gap: var(--sp-2); padding-left: var(--sp-10); border-left: 2px solid var(--line); min-width: 0; }
+  .ctitle { font-size: var(--fs-md); line-height: 1.35; color: var(--text); overflow-wrap: anywhere; }
   summary.ctitle { cursor: pointer; }
-  .cbody { margin: 4px 0 2px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
-  .cmeta { font-size: 12px; color: var(--muted); }
-  .cmore { margin: 0; font-size: 12px; color: var(--muted); }
-  .cmark { font-weight: 700; margin-right: 4px; }
-  .cfail { font-size: 12px; overflow-wrap: anywhere; }
+  .cbody { margin: var(--sp-4) 0 var(--sp-2); font-size: 12.5px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cmeta { font-size: var(--fs-sm); color: var(--muted); }
+  .cmore { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
+  .cmark { font-weight: 700; margin-right: var(--sp-4); }
+  .cfail { font-size: var(--fs-sm); overflow-wrap: anywhere; }
   :is(.cmark, .cfail).ok { color: var(--good); }
   :is(.cmark, .cfail).crit { color: var(--crit); }
   :is(.cmark, .cfail).warn { color: var(--warn); }
@@ -441,22 +441,22 @@
   :is(.pill, .mark).warn { color: var(--warn); background: var(--warn-bg); }
   :is(.pill, .mark).off { color: var(--muted); background: var(--surface-2); }
   .err { color: var(--crit); }
-  .journal { margin-top: 14px; }
-  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .journal { margin-top: var(--sp-14); }
+  .filters { display: flex; flex-wrap: wrap; gap: var(--sp-8); margin: var(--sp-8) 0; }
   .runs { list-style: none; margin: 0; padding: 0; }
   .runs li {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 4px 0; font-size: 12px;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2) var(--sp-8); padding: var(--sp-4) 0; font-size: var(--fs-sm);
     border-bottom: 1px solid var(--line); overflow-wrap: anywhere;
   }
-  .runs li b { font-size: 13px; }
+  .runs li b { font-size: var(--fs-md); }
   .mark { display: inline-flex; justify-content: center; min-width: 22px; border-radius: var(--radius); }
-  .check { display: flex; gap: 8px; align-items: center; }
-  .actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .check { display: flex; gap: var(--sp-8); align-items: center; }
+  .actions { display: flex; gap: var(--sp-8); justify-content: flex-end; }
   /* a phone: the environment and its status on one line, what it runs under the status, the button full width */
   @media (max-width: 599px) {
     .envs, .envs.launchable { grid-template-columns: 5.5rem minmax(0, 1fr); }
-    .ehead { grid-column: 1 / -1; row-gap: 4px; padding-right: 16px; }
+    .ehead { grid-column: 1 / -1; row-gap: var(--sp-4); padding-right: var(--sp-16); }
     .what { grid-column: 2; padding-right: 0; }
-    .act { grid-column: 1 / -1; padding: 0 16px 12px; }
+    .act { grid-column: 1 / -1; padding: 0 var(--sp-16) var(--sp-12); }
   }
 </style>

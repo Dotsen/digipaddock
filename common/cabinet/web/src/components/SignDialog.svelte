@@ -167,9 +167,9 @@
 </div>
 
 <style>
-  .what { background: var(--bg); border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--muted); display: grid; gap: 4px; justify-items: start; min-width: 0; overflow-wrap: anywhere; }
+  .what { background: var(--bg); border-radius: var(--r-md); padding: var(--sp-10) var(--sp-12); font-size: var(--fs-md); color: var(--muted); display: grid; gap: var(--sp-4); justify-items: start; min-width: 0; overflow-wrap: anywhere; }
   .what b { color: var(--text); font-weight: 500; }
-  .prompt { margin: 0; font-size: 14px; }
+  .prompt { margin: 0; font-size: var(--fs-ui); }
   .row input { flex: 1; }
-  .link { background: none; border: 0; color: var(--accent); font-size: 13px; justify-self: center; }
+  .link { background: none; border: 0; color: var(--accent); font-size: var(--fs-md); justify-self: center; }
 </style>

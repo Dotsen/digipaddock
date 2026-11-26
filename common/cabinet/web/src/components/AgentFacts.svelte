@@ -69,12 +69,12 @@
 {/if}
 
 <style>
-  p { margin: 0; font-size: 13px; }
-  .line { display: flex; flex-wrap: wrap; gap: 2px 12px; }
-  .item { display: flex; flex-wrap: wrap; gap: 2px 6px; align-items: baseline; min-width: 0; }
+  p { margin: 0; font-size: var(--fs-md); }
+  .line { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-12); }
+  .item { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-6); align-items: baseline; min-width: 0; }
   .item a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
-  .tag { font-size: 12px; font-weight: 600; color: var(--accent); }
+  .tag { font-size: var(--fs-sm); font-weight: 600; color: var(--accent); }
   .tag.bad { color: var(--crit); }
   .text { overflow-wrap: anywhere; min-width: 0; }
-  .limit { font-size: 13px; }
+  .limit { font-size: var(--fs-md); }
 </style>

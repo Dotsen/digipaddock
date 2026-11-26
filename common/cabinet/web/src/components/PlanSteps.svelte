@@ -48,17 +48,17 @@
 
 <style>
   .steps { list-style: none; margin: 0; padding: 0; }
-  .step { border-top: 1px solid var(--line); padding: 10px 14px; display: grid; gap: 4px; }
+  .step { border-top: 1px solid var(--line); padding: var(--sp-10) var(--sp-14); display: grid; gap: var(--sp-4); }
   .step.prod { background: var(--crit-bg); }
-  .st { display: flex; gap: 8px; align-items: baseline; font-weight: 600; }
+  .st { display: flex; gap: var(--sp-8); align-items: baseline; font-weight: 600; }
   .n { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-  .risk { margin-left: auto; font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .risk { margin-left: auto; font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; }
   .risk.low { color: var(--good); } .risk.medium { color: var(--warn); } .risk.high { color: var(--crit); }
-  .srv { display: flex; gap: 6px; flex-wrap: wrap; }
-  .x { color: var(--muted); font-size: 13px; max-width: 62ch; }
+  .srv { display: flex; gap: var(--sp-6); flex-wrap: wrap; }
+  .x { color: var(--muted); font-size: var(--fs-md); max-width: 62ch; }
   .x b { color: var(--text); font-weight: 500; }
-  .cmd { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
-  .cmd summary { cursor: pointer; font-family: var(--font-ui); font-size: 12px; color: var(--accent); }
-  .cmd .label { font-family: var(--font-ui); font-size: 12px; color: var(--warn); }
-  .cmd pre { margin: 6px 0 0; padding: 8px 10px; background: var(--bg); border-radius: 6px; overflow-x: auto; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cmd { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--muted); }
+  .cmd summary { cursor: pointer; font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--accent); }
+  .cmd .label { font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--warn); }
+  .cmd pre { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); background: var(--bg); border-radius: var(--r-sm); overflow-x: auto; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

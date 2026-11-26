@@ -154,10 +154,10 @@
 </div>
 
 <style>
-  .council { display: grid; gap: 10px; min-width: 0; }
-  .kind { margin: 0; padding: 10px 12px 12px; border: 1px solid var(--line-soft); border-radius: 10px; display: grid; gap: 8px; min-width: 0; }
-  .kind legend { padding: 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-  .numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-  .small { font-size: 12px; }
+  .council { display: grid; gap: var(--sp-10); min-width: 0; }
+  .kind { margin: 0; padding: var(--sp-10) var(--sp-12) var(--sp-12); border: 1px solid var(--line-soft); border-radius: 10px; display: grid; gap: var(--sp-8); min-width: 0; }
+  .kind legend { padding: 0 var(--sp-6); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-8); }
+  .small { font-size: var(--fs-sm); }
   p.small { margin: 0; }
 </style>

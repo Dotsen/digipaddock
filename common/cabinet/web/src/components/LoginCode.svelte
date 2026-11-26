@@ -48,7 +48,7 @@
 
 <style>
   .code { border-color: var(--accent); }
-  .value { font-family: var(--font-mono); font-size: 22px; letter-spacing: .06em; user-select: all; }
+  .value { font-family: var(--font-mono); font-size: var(--fs-page); letter-spacing: .06em; user-select: all; }
   .value.over { text-decoration: line-through; opacity: .5; user-select: none; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row { display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; }
 </style>

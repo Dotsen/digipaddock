@@ -42,14 +42,14 @@
 {:else}<p class="empty">{t("trust.empty")}</p>{/if}
 
 <style>
-  .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-  .rows li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+  .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+  .rows li { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-10); align-items: baseline; padding: var(--sp-6) 0; border-bottom: 1px solid var(--line-soft); font-size: var(--fs-md); }
   .rows a { color: var(--accent); text-decoration: none; }
   .nw { white-space: nowrap; }
   .state { color: var(--muted); }
   .applied .state { color: var(--good); }
   .error .state, .rejected .state { color: var(--crit); }
   .open .state, .pending .state, .queued .state { color: var(--warn); }
-  h3 { font-size: 13px; margin: 10px 0 4px; }
-  .empty { margin: 0; padding: 8px 0; font-size: 13px; }
+  h3 { font-size: var(--fs-md); margin: var(--sp-10) 0 var(--sp-4); }
+  .empty { margin: 0; padding: var(--sp-8) 0; font-size: var(--fs-md); }
 </style>

@@ -264,42 +264,42 @@
 {/if}
 
 <style>
-  .back { color: var(--muted); text-decoration: none; font-size: 20px; }
+  .back { color: var(--muted); text-decoration: none; font-size: var(--fs-heading); }
   @media (min-width: 900px) { .back { display: none; } } /* «Назад» there */
-  .facts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-  .state-facts { display: grid; gap: 6px; margin-bottom: 10px; }
+  .facts { display: flex; flex-wrap: wrap; gap: var(--sp-6); margin-bottom: var(--sp-6); }
+  .state-facts { display: grid; gap: var(--sp-6); margin-bottom: var(--sp-10); }
   .state.working, .state.free { color: var(--good); background: var(--good-bg); }
   .state.waiting_you { color: var(--accent); }
   .state.queued { color: var(--warn); }
   .state.error, .state.unavailable { color: var(--crit); background: var(--crit-bg); }
-  .progress { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-  .progress li { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 10px; padding: 8px 12px; display: grid; gap: 4px; font-size: 14px; }
-  .meta { font-size: 12px; color: var(--muted); }
+  .progress { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); }
+  .progress li { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 10px; padding: var(--sp-8) var(--sp-12); display: grid; gap: var(--sp-4); font-size: var(--fs-ui); }
+  .meta { font-size: var(--fs-sm); color: var(--muted); }
   .meta a { color: var(--accent); text-decoration: none; }
-  .list { display: flex; flex-direction: column; gap: 6px; }
-  .small { padding: 8px 0; }
+  .list { display: flex; flex-direction: column; gap: var(--sp-6); }
+  .small { padding: var(--sp-8) 0; }
   .chat { display: flex; flex-direction: column; height: min(60dvh, 560px); }
   /* the coordinator's chat takes the screen; one scroller (the thread), the field stays in view */
-  .calm { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-  .chat-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 0 6px; border-bottom: 1px solid var(--line-soft); }
+  .calm { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-8); }
+  .chat-head { flex: none; display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-10) 0 var(--sp-6); border-bottom: 1px solid var(--line-soft); }
   .chat-head .who { flex: 1; min-width: 0; display: grid; }
-  .chat-head h1 { margin: 0; font-size: 17px; }
-  .line { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-head h1 { margin: 0; font-size: var(--fs-title); }
+  .line { font-size: var(--fs-md); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .line.busy { color: var(--accent); }
   .line.attention { color: var(--warn); }
   .line.bad { color: var(--crit); }
   .more { position: relative; }
   .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; display: grid; min-width: 220px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.3); overflow: hidden; }
-  .menu button { background: none; border: 0; text-align: left; padding: 10px 14px; color: var(--text); cursor: pointer; }
+  .menu button { background: none; border: 0; text-align: left; padding: var(--sp-10) var(--sp-14); color: var(--text); cursor: pointer; }
   .menu button:hover { background: var(--surface-2); }
-  .needs { flex: none; color: var(--accent); text-decoration: none; font-size: 14px; padding: 6px 10px; border: 1px solid var(--accent); border-radius: 8px; }
-  .panel { flex: none; max-height: 40dvh; overflow-y: auto; display: grid; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
-  .task { display: grid; gap: 2px; }
+  .needs { flex: none; color: var(--accent); text-decoration: none; font-size: var(--fs-ui); padding: var(--sp-6) var(--sp-10); border: 1px solid var(--accent); border-radius: var(--r-md); }
+  .panel { flex: none; max-height: 40dvh; overflow-y: auto; display: grid; gap: var(--sp-8); padding: var(--sp-8) 0; border-bottom: 1px solid var(--line-soft); }
+  .task { display: grid; gap: var(--sp-2); }
   .task a { color: var(--accent); text-decoration: none; }
-  .why, .hint { font-size: 12px; color: var(--muted); margin: 0; }
+  .why, .hint { font-size: var(--fs-sm); color: var(--muted); margin: 0; }
   .chat.full { flex: 1; min-height: 0; height: auto; }
-  .tabs { display: flex; gap: 4px; margin: 12px 0 6px; border-bottom: 1px solid var(--line-soft); }
-  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 12px; color: var(--muted); cursor: pointer; font-size: 15px; display: inline-flex; gap: 6px; align-items: center; }
+  .tabs { display: flex; gap: var(--sp-4); margin: var(--sp-12) 0 var(--sp-6); border-bottom: 1px solid var(--line-soft); }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: var(--sp-6) var(--sp-12); color: var(--muted); cursor: pointer; font-size: var(--fs-body); display: inline-flex; gap: var(--sp-6); align-items: center; }
   .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
   .calm .tabs { flex: none; margin: 0; }
 </style>

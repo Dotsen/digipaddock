@@ -425,31 +425,31 @@
   .dec.q { border-left-color: var(--info); }
   .dec.done { border-left-color: var(--good); }
   .dec.highlight { box-shadow: 0 0 0 2px var(--accent); }
-  .head { padding: 12px 14px 8px; display: flex; flex-direction: column; gap: 6px; }
-  .ttl { font-weight: 700; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .sub { color: var(--muted); font-size: 13px; }
-  .warn { margin: 0 14px 10px; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 13px; }
-  .body { padding: 0 14px 10px; margin: 0; font-size: 14px; }
+  .head { padding: var(--sp-12) var(--sp-14) var(--sp-8); display: flex; flex-direction: column; gap: var(--sp-6); }
+  .ttl { font-weight: 700; font-size: var(--fs-body); display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; }
+  .sub { color: var(--muted); font-size: var(--fs-md); }
+  .warn { margin: 0 var(--sp-14) var(--sp-10); padding: var(--sp-8) var(--sp-10); border-radius: var(--r-md); background: var(--warn-bg); color: var(--warn); font-size: var(--fs-md); }
+  .body { padding: 0 var(--sp-14) var(--sp-10); margin: 0; font-size: var(--fs-ui); }
   .body b { font-weight: 600; }
-  .grid { display: grid; gap: 6px; }
+  .grid { display: grid; gap: var(--sp-6); }
   .grid p { margin: 0; }
-  .command { margin: 0; padding: 8px 10px; background: var(--bg); border-radius: 6px; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .command { margin: 0; padding: var(--sp-8) var(--sp-10); background: var(--bg); border-radius: var(--r-sm); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
   .risk.low { color: var(--good); } .risk.medium { color: var(--warn); } .risk.high { color: var(--crit); }
-  .ac { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .ac { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-4); }
   .titles { padding-left: 34px; }
-  .chosen { flex-basis: 100%; margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--text); font-weight: 400; }
-  .chosen .title { font-weight: 600; margin-right: 6px; }
+  .chosen { flex-basis: 100%; margin: 0; padding-left: var(--sp-20); display: grid; gap: var(--sp-4); color: var(--text); font-weight: 400; }
+  .chosen .title { font-weight: 600; margin-right: var(--sp-6); }
   .chosen .comment { list-style: none; margin-left: -20px; white-space: pre-wrap; }
-  .qa { padding: 0 14px 12px; display: flex; gap: 8px; align-items: flex-end; }
+  .qa { padding: 0 var(--sp-14) var(--sp-12); display: flex; gap: var(--sp-8); align-items: flex-end; }
   .qa textarea { flex: 1; min-width: 0; resize: vertical; min-height: 64px; }
   .qa.question { flex-wrap: wrap; }
   .qa.question textarea { flex-basis: 100%; }
   .remarks { flex-direction: column; align-items: stretch; }
-  .remarks .hint { margin: 0; font-size: 13px; }
+  .remarks .hint { margin: 0; font-size: var(--fs-md); }
   .remarks button { align-self: flex-start; }
-  .act { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; background: var(--surface-2); }
-  .result { border-top: 1px solid var(--line); padding: 10px 14px; background: var(--surface-2); color: var(--good); font-size: 13px; font-weight: 500; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
-  .tick { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
+  .act { border-top: 1px solid var(--line); padding: var(--sp-10) var(--sp-14); display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: center; background: var(--surface-2); }
+  .result { border-top: 1px solid var(--line); padding: var(--sp-10) var(--sp-14); background: var(--surface-2); color: var(--good); font-size: var(--fs-md); font-weight: 500; display: flex; gap: var(--sp-10); flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  .tick { display: inline-flex; gap: var(--sp-6); align-items: center; font-size: var(--fs-md); cursor: pointer; }
   .apply { flex-basis: 100%; font-weight: 400; color: var(--muted); }
   .apply.applied { color: var(--good); }
   .apply.error { color: var(--crit); }

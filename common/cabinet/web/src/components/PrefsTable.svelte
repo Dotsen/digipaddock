@@ -52,9 +52,9 @@
 
 <style>
   .wrap { overflow-x: auto; }
-  .prefs { border-collapse: collapse; width: 100%; font-size: 14px; }
-  .prefs th, .prefs td { padding: 8px 6px; border-bottom: 1px solid var(--line-soft); }
-  .prefs thead th { font-size: 12px; color: var(--muted); font-weight: 500; text-align: center; }
+  .prefs { border-collapse: collapse; width: 100%; font-size: var(--fs-ui); }
+  .prefs th, .prefs td { padding: var(--sp-8) var(--sp-6); border-bottom: 1px solid var(--line-soft); }
+  .prefs thead th { font-size: var(--fs-sm); color: var(--muted); font-weight: 500; text-align: center; }
   .prefs tbody th { text-align: left; font-weight: 400; }
   .prefs td { text-align: center; width: 84px; }
   .prefs input { width: 18px; height: 18px; accent-color: var(--accent); }

@@ -107,8 +107,8 @@
 {/if}
 
 <style>
-  .history { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 14px; }
-  .history li { display: flex; gap: 8px; flex-wrap: wrap; }
+  .history { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); font-size: var(--fs-ui); }
+  .history li { display: flex; gap: var(--sp-8); flex-wrap: wrap; }
   .history b { font-weight: 600; }
-  .more { margin-top: 12px; }
+  .more { margin-top: var(--sp-12); }
 </style>

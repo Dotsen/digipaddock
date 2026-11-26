@@ -223,20 +223,20 @@
 </Sheet>
 
 <style>
-  .new { display: grid; gap: 12px; min-width: 0; }
+  .new { display: grid; gap: var(--sp-12); min-width: 0; }
   .new input[type="text"], .new textarea, .new select { width: 100%; min-width: 0; }
   .made { color: var(--good); }
   .made a { color: var(--accent); }
-  .more summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  .extra { display: grid; gap: 12px; padding-top: 12px; }
-  .props { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; align-items: center; font-size: 14px; }
-  .props :global(dt) { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-  .props :global(dd) { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-  .items { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-  .items li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+  .more summary { cursor: pointer; color: var(--muted); font-size: var(--fs-md); }
+  .extra { display: grid; gap: var(--sp-12); padding-top: var(--sp-12); }
+  .props { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-6) var(--sp-14); margin: 0; align-items: center; font-size: var(--fs-ui); }
+  .props :global(dt) { margin: 0; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .props :global(dd) { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: var(--sp-6); align-items: center; }
+  .items { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-4); }
+  .items li { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); min-width: 0; }
   .items li span { min-width: 0; overflow-wrap: anywhere; }
   .error { color: var(--crit); }
-  .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
   .actions .btn { flex: 0 0 auto; }
   @media (max-width: 899px) { .hint { display: none; } }
 </style>

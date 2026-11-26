@@ -55,10 +55,10 @@
 </div>
 
 <style>
-  .checklist { display: grid; gap: 6px; }
-  .item { display: flex; gap: 10px; align-items: flex-start; padding: 6px 2px; cursor: pointer; }
-  .item input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+  .checklist { display: grid; gap: var(--sp-6); }
+  .item { display: flex; gap: var(--sp-10); align-items: flex-start; padding: var(--sp-6) var(--sp-2); cursor: pointer; }
+  .item input { width: 18px; height: 18px; margin: var(--sp-2) 0 0; flex: none; accent-color: var(--accent); }
   .item.done :global(.md) { color: var(--muted); }
-  .between { color: var(--muted); font-size: 14px; padding-left: 28px; }
+  .between { color: var(--muted); font-size: var(--fs-ui); padding-left: 28px; }
   .add input { background: transparent; border-style: dashed; }
 </style>

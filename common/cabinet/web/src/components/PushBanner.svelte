@@ -57,6 +57,6 @@
 {/if}
 
 <style>
-  .pushbar { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 13px; }
+  .pushbar { flex: none; display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; padding: var(--sp-8) var(--sp-10); border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: var(--fs-md); }
   .text { flex: 1; min-width: 180px; color: var(--muted); }
 </style>

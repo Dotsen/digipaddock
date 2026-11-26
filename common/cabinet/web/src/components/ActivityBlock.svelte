@@ -47,14 +47,14 @@
 </section>
 
 <style>
-  .activity { padding: 8px 12px; border: 1px solid var(--line-soft); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 13px; overflow-wrap: anywhere; }
+  .activity { padding: var(--sp-8) var(--sp-12); border: 1px solid var(--line-soft); border-left: 3px solid var(--accent); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font-size: var(--fs-md); overflow-wrap: anywhere; }
   .activity.memory { border-left-color: var(--info); }
   .activity.failed { border-left-color: var(--warn); }
-  .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 3px; }
+  .head { display: flex; gap: var(--sp-8); align-items: baseline; flex-wrap: wrap; margin-bottom: var(--sp-4); }
   strong, b { font-weight: 500; }
   .mark, .actor { color: var(--muted); }
-  time { margin-left: auto; color: var(--muted); font-size: 12px; }
-  .items { display: flex; gap: 4px 16px; flex-wrap: wrap; }
-  .limit { margin-top: 3px; color: var(--muted); font-size: 12px; }
-  summary { color: var(--muted); font-size: 12px; cursor: pointer; margin-top: 3px; }
+  time { margin-left: auto; color: var(--muted); font-size: var(--fs-sm); }
+  .items { display: flex; gap: var(--sp-4) var(--sp-16); flex-wrap: wrap; }
+  .limit { margin-top: var(--sp-4); color: var(--muted); font-size: var(--fs-sm); }
+  summary { color: var(--muted); font-size: var(--fs-sm); cursor: pointer; margin-top: var(--sp-4); }
 </style>

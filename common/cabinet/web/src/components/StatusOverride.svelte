@@ -99,18 +99,18 @@
 
 <style>
   .status-dialog { margin: auto auto 0; max-height: calc(100dvh - 16px); color: var(--text); padding: 0; }
-  .status-dialog::backdrop { background: rgb(0 0 0 / .55); }
-  .dialog-content { min-width: 0; padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 12px; }
-  .transition { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+  .status-dialog::backdrop { background: var(--scrim); }
+  .dialog-content { min-width: 0; padding: var(--sp-16) var(--sp-16) calc(var(--sp-16) + env(safe-area-inset-bottom, 0px)); display: grid; gap: var(--sp-12); }
+  .transition { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); font-size: var(--fs-ui); color: var(--muted); }
   .transition b { color: var(--text); }
-  .hint { margin: 0; font-size: 13px; color: var(--muted); }
-  .reasons { display: flex; flex-wrap: wrap; gap: 8px; }
-  .reason { position: relative; display: inline-flex; align-items: center; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 14px; }
+  .hint { margin: 0; font-size: var(--fs-md); color: var(--muted); }
+  .reasons { display: flex; flex-wrap: wrap; gap: var(--sp-8); }
+  .reason { position: relative; display: inline-flex; align-items: center; min-height: 36px; padding: var(--sp-6) var(--sp-12); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: var(--fs-ui); }
   .reason.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   .reason:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .reason input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
-  .field { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); }
+  .field { width: 100%; box-sizing: border-box; font: inherit; padding: var(--sp-8) var(--sp-10); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); }
   textarea.field { resize: vertical; }
-  .row { display: flex; gap: 8px; }
+  .row { display: flex; gap: var(--sp-8); }
   @media (min-width: 900px) { .status-dialog { margin: auto; max-height: calc(100dvh - 32px); } }
 </style>

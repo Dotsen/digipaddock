@@ -23,7 +23,7 @@
 {/if}
 
 <style>
-  .fresh { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; margin: 0; font-size: 12px; }
+  .fresh { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-6); align-items: baseline; margin: 0; font-size: var(--fs-sm); }
   .failed { color: var(--crit); }
   .stale { color: var(--warn); }
   .link { border: 0; padding: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }

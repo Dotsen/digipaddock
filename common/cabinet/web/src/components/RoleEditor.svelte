@@ -58,11 +58,11 @@
 </fieldset>
 
 <style>
-  .role { border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; margin: 0; }
-  legend { padding: 0 6px; font-weight: 600; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; }
-  .perm { display: flex; gap: 6px; align-items: center; font-size: 13px; }
-  .perm code { font-family: var(--font-mono); font-size: 12px; }
+  .role { border: 1px solid var(--line-soft); border-radius: 10px; padding: var(--sp-10) var(--sp-12); display: grid; gap: var(--sp-8); margin: 0; }
+  legend { padding: 0 var(--sp-6); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--sp-4) var(--sp-12); }
+  .perm { display: flex; gap: var(--sp-6); align-items: center; font-size: var(--fs-md); }
+  .perm code { font-family: var(--font-mono); font-size: var(--fs-sm); }
   .perm.all { font-weight: 500; }
   input { accent-color: var(--accent); }
 </style>

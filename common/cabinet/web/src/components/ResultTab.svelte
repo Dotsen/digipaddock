@@ -133,21 +133,21 @@
 </div>
 
 <style>
-  .result { display: grid; gap: 18px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
-  h2 .count { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 6px; }
-  .links, .checks, .reviews { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .result { display: grid; gap: var(--sp-16); }
+  h2 { font-size: var(--fs-md); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 var(--sp-8); font-weight: 600; }
+  h2 .count { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: var(--sp-6); }
+  .links, .checks, .reviews { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-6); }
   .links a { color: var(--accent); overflow-wrap: anywhere; }
   .checks li { overflow-wrap: anywhere; }
   .checks li.done span { color: var(--good); }
-  .reviews li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  .reviews li { display: grid; gap: var(--sp-4); padding: var(--sp-10) var(--sp-12); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
   .reviews li.returned .outcome { color: var(--warn, var(--crit)); }
   .reviews li.accepted .outcome { color: var(--good); }
   .release .state { font-weight: 600; }
   .release.degraded .state, .release.refused .state { color: var(--crit); }
   .release.healthy .state { color: var(--good); }
-  .release .ops { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+  .release .ops { list-style: none; margin: var(--sp-6) 0 0; padding: 0; display: grid; gap: var(--sp-4); font-size: var(--fs-md); }
   .release .ops li.failed { color: var(--crit); }
-  .note { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+  .note { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-ui); }
   details summary { cursor: pointer; font-weight: 600; }
 </style>

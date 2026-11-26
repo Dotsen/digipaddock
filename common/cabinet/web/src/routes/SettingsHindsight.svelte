@@ -162,19 +162,19 @@
 {/if}
 
 <style>
-  .sections { gap: 14px; padding-bottom: 20px; }
+  .sections { gap: var(--sp-14); padding-bottom: var(--sp-20); }
   h2, h3, h4, p { margin: 0; }
-  h2 { font-size: 17px; } h3 { font-size: 15px; overflow-wrap: anywhere; } h4 { font-size: 13px; }
-  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  h2 { font-size: var(--fs-title); } h3 { font-size: var(--fs-body); overflow-wrap: anywhere; } h4 { font-size: var(--fs-md); }
+  .row { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; }
   .between { justify-content: space-between; }
-  .small { font-size: 12px; }
+  .small { font-size: var(--fs-sm); }
   .wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 10px 8px; border-bottom: 1px solid var(--line-soft); text-align: left; }
-  th { color: var(--muted); } code { font-size: 12px; overflow-wrap: anywhere; }
-  .bank { border-top: 1px solid var(--line-soft); padding-top: 14px; }
-  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 0; }
-  dt { color: var(--muted); font-size: 12px; } dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
+  th, td { padding: var(--sp-10) var(--sp-8); border-bottom: 1px solid var(--line-soft); text-align: left; }
+  th { color: var(--muted); } code { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .bank { border-top: 1px solid var(--line-soft); padding-top: var(--sp-14); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--sp-12); margin: 0; }
+  dt { color: var(--muted); font-size: var(--fs-sm); } dd { margin: var(--sp-4) 0 0; overflow-wrap: anywhere; }
   .problem { color: var(--crit); font-weight: 600; }
-  summary { cursor: pointer; padding: 8px 0; }
+  summary { cursor: pointer; padding: var(--sp-8) 0; }
 </style>

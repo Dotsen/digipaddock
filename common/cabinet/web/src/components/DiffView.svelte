@@ -116,23 +116,23 @@
 </div>
 
 <style>
-  .diff { display: grid; gap: 10px; min-width: 0; }
-  .file { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; }
-  header { padding: 6px 10px; background: var(--surface-2); font-size: 12.5px; overflow-wrap: anywhere; }
+  .diff { display: grid; gap: var(--sp-10); min-width: 0; }
+  .file { border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; min-width: 0; }
+  header { padding: var(--sp-6) var(--sp-10); background: var(--surface-2); font-size: var(--fs-sm); overflow-wrap: anywhere; }
   .scroll { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
-  td { padding: 0 6px; vertical-align: top; }
+  table { border-collapse: collapse; width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-sm); }
+  td { padding: 0 var(--sp-6); vertical-align: top; }
   .n { color: var(--muted); text-align: right; user-select: none; width: 1%; white-space: nowrap; }
   .code { white-space: pre; }
   .sign { display: inline-block; width: 1.2em; color: var(--muted); }
   tr.add { background: color-mix(in srgb, var(--good) 12%, transparent); }
   tr.del { background: color-mix(in srgb, var(--crit) 12%, transparent); }
-  .hunk td { color: var(--muted); background: var(--bg); padding: 2px 6px; }
+  .hunk td { color: var(--muted); background: var(--bg); padding: var(--sp-2) var(--sp-6); }
   td.act { width: 1%; }
-  .plus { border: 0; background: none; color: var(--accent); font-weight: 700; padding: 0 4px; cursor: pointer; }
-  .remark td { padding: 6px; background: var(--surface); font-family: inherit; }
-  .remark .body { white-space: pre-wrap; font-family: system-ui, sans-serif; font-size: 13px; }
+  .plus { border: 0; background: none; color: var(--accent); font-weight: 700; padding: 0 var(--sp-4); cursor: pointer; }
+  .remark td { padding: var(--sp-6); background: var(--surface); font-family: inherit; }
+  .remark .body { white-space: pre-wrap; font-family: system-ui, sans-serif; font-size: var(--fs-md); }
   .remark textarea { width: 100%; min-height: 48px; resize: vertical; font-family: system-ui, sans-serif; }
-  .row { display: flex; gap: 6px; margin-top: 4px; }
-  .note { margin: 0; font-size: 13px; padding: 4px 10px; }
+  .row { display: flex; gap: var(--sp-6); margin-top: var(--sp-4); }
+  .note { margin: 0; font-size: var(--fs-md); padding: var(--sp-4) var(--sp-10); }
 </style>

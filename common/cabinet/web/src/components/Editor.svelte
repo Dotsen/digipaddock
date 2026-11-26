@@ -128,10 +128,10 @@
 {/if}
 
 <style>
-  .editor, .view { display: grid; gap: 10px; justify-items: start; }
+  .editor, .view { display: grid; gap: var(--sp-10); justify-items: start; }
   .editor textarea, .preview, .conflict { width: 100%; }
-  .preview { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-height: 90px; }
-  .conflict { display: grid; gap: 8px; padding: 10px; border-radius: 8px; background: var(--warn-bg); }
+  .preview { background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-10) var(--sp-12); min-height: 90px; }
+  .conflict { display: grid; gap: var(--sp-8); padding: var(--sp-10); border-radius: var(--r-md); background: var(--warn-bg); }
   .note { margin: 0; color: var(--warn); font-weight: 500; }
   .view p { margin: 0; }
 </style>

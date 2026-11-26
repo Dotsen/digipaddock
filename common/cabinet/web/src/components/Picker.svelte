@@ -169,22 +169,22 @@
 </div>
 
 <style>
-  .picker { position: relative; display: grid; gap: 6px; min-width: 0; }
+  .picker { position: relative; display: grid; gap: var(--sp-6); min-width: 0; }
   .picker input { width: 100%; min-width: 0; }
-  .chosen { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-  .drop { background: none; border: 0; padding: 0 0 0 4px; color: var(--muted); font: inherit; cursor: pointer; }
+  .chosen { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--sp-6); min-width: 0; }
+  .drop { background: none; border: 0; padding: 0 0 0 var(--sp-4); color: var(--muted); font: inherit; cursor: pointer; }
   .drop:hover { color: var(--text); }
   .panel {
     position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30; max-height: 240px; overflow-y: auto;
-    display: grid; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--line);
+    display: grid; gap: var(--sp-2); padding: var(--sp-6); background: var(--surface); border: 1px solid var(--line);
     border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
   }
   .row {
-    display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px;
-    padding: 7px 10px; font-size: 14px; color: var(--muted); cursor: pointer; overflow-wrap: anywhere;
+    display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: var(--r-sm);
+    padding: 7px var(--sp-10); font-size: var(--fs-ui); color: var(--muted); cursor: pointer; overflow-wrap: anywhere;
   }
   .row:hover, .row.at { background: var(--surface-2); color: var(--text); }
   .row.on { color: var(--text); font-weight: 600; }
   .row.on::before { content: "✓ "; color: var(--accent); }
-  .aside { padding: 7px 10px; font-size: 12px; color: var(--muted); } /* not the app's framed .note */
+  .aside { padding: 7px var(--sp-10); font-size: var(--fs-sm); color: var(--muted); } /* not the app's framed .note */
 </style>

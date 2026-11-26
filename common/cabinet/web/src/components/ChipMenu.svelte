@@ -83,15 +83,15 @@
   .menu { position: relative; display: inline-flex; }
   .pick { cursor: pointer; color: var(--text); }
   .pick.open { border-color: var(--accent); }
-  .caret { font-size: 10px; color: var(--muted); }
+  .caret { font-size: var(--fs-tiny); color: var(--muted); }
   .panel {
     position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 160px;
-    display: grid; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--line);
-    border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+    display: grid; gap: var(--sp-2); padding: var(--sp-6); background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-pop);
   }
   .row {
-    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; white-space: nowrap;
-    background: none; border: 0; border-radius: 6px; padding: 7px 10px; font-size: 14px; color: var(--muted);
+    display: flex; align-items: center; gap: var(--sp-8); width: 100%; text-align: left; white-space: nowrap;
+    background: none; border: 0; border-radius: var(--r-sm); padding: var(--sp-8) var(--sp-10); font-size: var(--fs-ui); color: var(--muted);
     cursor: pointer;
   }
   .row:hover, .row:focus-visible { background: var(--surface-2); color: var(--text); }

@@ -125,14 +125,14 @@
 </div>
 
 <style>
-  .body { padding: 0 14px 10px; margin: 0; font-size: 14px; min-width: 0; }
-  .grid { display: grid; gap: 6px; }
+  .body { padding: 0 var(--sp-14) var(--sp-10); margin: 0; font-size: var(--fs-ui); min-width: 0; }
+  .grid { display: grid; gap: var(--sp-6); }
   .grid p { margin: 0; }
-  .files { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
-  .files li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+  .files { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-4); font-size: var(--fs-md); }
+  .files li { display: flex; gap: var(--sp-8); align-items: baseline; flex-wrap: wrap; min-width: 0; }
   .files code { overflow-wrap: anywhere; }
-  .status { font-size: 12px; min-width: 5.5em; }
-  .count { font-size: 12px; white-space: nowrap; }
+  .status { font-size: var(--fs-sm); min-width: 5.5em; }
+  .count { font-size: var(--fs-sm); white-space: nowrap; }
   .review { color: inherit; text-decoration: underline dotted; }
   .plus { color: var(--good); }
   .minus { color: var(--crit); }

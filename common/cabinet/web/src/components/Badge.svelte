@@ -11,6 +11,6 @@
 <style>
   .badge {
     min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--crit);
-    color: #1c1c1c; font-size: 11px; font-weight: 700; display: inline-grid; place-items: center;
+    color: #1c1c1c; font-size: var(--fs-xs); font-weight: 700; display: inline-grid; place-items: center;
   }
 </style>

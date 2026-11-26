@@ -809,22 +809,22 @@
 {/if}
 
 <style>
-  .thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 14px 2px 10px; overscroll-behavior: contain; }
+  .thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-12); padding: var(--sp-14) var(--sp-2) var(--sp-10); overscroll-behavior: contain; }
   /* a long thread scrolls; its blocks keep their height (a decision card clips with overflow: hidden, so
      as a flex item it would shrink to nothing) */
   .thread > :global(*) { flex: none; }
-  .tools { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font-size: 13px; margin-left: 40px; }
-  .tools summary { padding: 7px 10px; color: var(--muted); cursor: pointer; }
-  .tool { display: grid; grid-template-columns: auto auto auto 1fr; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); align-items: center; }
+  .tools { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg); font-size: var(--fs-md); margin-left: var(--sp-40); }
+  .tools summary { padding: var(--sp-8) var(--sp-10); color: var(--muted); cursor: pointer; }
+  .tool { display: grid; grid-template-columns: auto auto auto 1fr; gap: var(--sp-8); padding: var(--sp-6) var(--sp-10); border-top: 1px solid var(--line); align-items: center; }
   .tool .name { color: var(--muted); }
-  .tool pre { grid-column: 1 / -1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; }
+  .tool pre { grid-column: 1 / -1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-sm); }
   .ok { color: var(--good); } .fail { color: var(--crit); }
-  .tool .output { margin-top: 2px; padding: 8px; max-height: 320px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 8px; font-size: 12px; white-space: pre; }
-  .tool .note { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
-  .link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 12px; text-decoration: underline; justify-self: start; }
+  .tool .output { margin-top: var(--sp-2); padding: var(--sp-8); max-height: 320px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); font-size: var(--fs-sm); white-space: pre; }
+  .tool .note { grid-column: 1 / -1; font-size: var(--fs-sm); color: var(--muted); }
+  .link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: var(--fs-sm); text-decoration: underline; justify-self: start; }
   .spin { width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
-  .working { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; padding-left: 40px; }
-  .dots { display: inline-flex; gap: 3px; }
+  .working { display: flex; gap: var(--sp-8); align-items: center; color: var(--muted); font-size: var(--fs-md); padding-left: var(--sp-40); }
+  .dots { display: inline-flex; gap: var(--sp-4); }
   .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite ease-in-out; }
   .dots i:nth-child(2) { animation-delay: 0.2s; }
   .dots i:nth-child(3) { animation-delay: 0.4s; }
@@ -832,32 +832,32 @@
   @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .spin, .dots i { animation: none; } }
   .earlier { align-self: center; }
-  .divider { display: flex; align-items: center; gap: 10px; color: var(--accent); font-size: 12px; font-weight: 600; }
+  .divider { display: flex; align-items: center; gap: var(--sp-10); color: var(--accent); font-size: var(--fs-sm); font-weight: 600; }
   .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--accent); opacity: 0.5; }
   .below { flex: none; display: flex; justify-content: center; margin-top: -40px; height: 40px; align-items: center; position: relative; pointer-events: none; }
-  .below .chip { pointer-events: auto; cursor: pointer; background: var(--surface); border-color: var(--accent); box-shadow: 0 2px 8px rgb(0 0 0 / 0.25); }
-  .composer { position: relative; flex: none; margin-top: 8px; display: flex; gap: 8px; align-items: flex-end; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 6px; }
+  .below .chip { pointer-events: auto; cursor: pointer; background: var(--surface); border-color: var(--accent); box-shadow: var(--shadow-float); }
+  .composer { position: relative; flex: none; margin-top: var(--sp-8); display: flex; gap: var(--sp-8); align-items: flex-end; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--sp-6); }
   .composer.dragging, .thread.dragging { outline: 2px dashed var(--accent); outline-offset: -2px; }
-  .drop { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface); border-radius: 12px; color: var(--accent); font-size: 14px; pointer-events: none; z-index: 1; }
-  .chosen { flex: none; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
-  .chosen .file { display: inline-flex; gap: 6px; align-items: center; max-width: 100%; overflow-wrap: anywhere; }
-  .chosen .x { background: none; border: 0; padding: 0 2px; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; }
-  .failed { flex-basis: 100%; margin: 0; color: var(--crit); font-size: 13px; }
-  .composer textarea { flex: 1; min-width: 0; align-self: stretch; min-height: 76px; max-height: 200px; resize: none; background: none; border: 0; padding: 8px 4px; }
-  .composer .actions { flex: none; display: flex; flex-direction: column; gap: 4px; }
+  .drop { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface); border-radius: var(--r-lg); color: var(--accent); font-size: var(--fs-ui); pointer-events: none; z-index: 1; }
+  .chosen { flex: none; display: flex; gap: var(--sp-6); flex-wrap: wrap; align-items: center; margin-top: var(--sp-8); }
+  .chosen .file { display: inline-flex; gap: var(--sp-6); align-items: center; max-width: 100%; overflow-wrap: anywhere; }
+  .chosen .x { background: none; border: 0; padding: 0 var(--sp-2); color: var(--muted); cursor: pointer; font-size: var(--fs-body); line-height: 1; }
+  .failed { flex-basis: 100%; margin: 0; color: var(--crit); font-size: var(--fs-md); }
+  .composer textarea { flex: 1; min-width: 0; align-self: stretch; min-height: 76px; max-height: 200px; resize: none; background: none; border: 0; padding: var(--sp-8) var(--sp-4); }
+  .composer .actions { flex: none; display: flex; flex-direction: column; gap: var(--sp-4); }
   .composer textarea:focus { outline: none; }
   .composer .iconbtn { border: 0; }
   .composer .send { background: var(--accent); color: var(--accent-ink); }
   .composer .iconbtn.on { color: var(--crit); }
-  .recording { flex: none; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
+  .recording { flex: none; display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; margin-top: var(--sp-8); font-size: var(--fs-md); }
   .recording .rec { width: 10px; height: 10px; border-radius: 50%; background: var(--crit); animation: blink 1.2s infinite ease-in-out; }
   @media (prefers-reduced-motion: reduce) { .recording .rec { animation: none; } }
-  .targets { flex: none; display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .targets { flex: none; display: flex; gap: var(--sp-6); flex-wrap: wrap; margin-top: var(--sp-8); }
   .targets .chip { cursor: pointer; }
   .targets .chip.on { color: var(--text); border-color: var(--accent); }
-  .question { display: inline-flex; align-items: center; gap: 4px; }
+  .question { display: inline-flex; align-items: center; gap: var(--sp-4); }
   .question a, .formlink { color: var(--accent); text-decoration: none; }
-  .formlink { font-size: 13px; align-self: center; }
-  .hints { position: absolute; bottom: calc(100% + 6px); left: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
-  .hints button { background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+  .formlink { font-size: var(--fs-md); align-self: center; }
+  .hints { position: absolute; bottom: calc(100% + 6px); left: 6px; display: flex; gap: var(--sp-6); flex-wrap: wrap; }
+  .hints button { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: var(--sp-4) var(--sp-10); font-size: var(--fs-md); }
 </style>

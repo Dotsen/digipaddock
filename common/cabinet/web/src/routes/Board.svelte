@@ -203,24 +203,24 @@
 <style>
   /* the projects: each chip edged in its project's colour (the cards' project chips wear it too), the chosen one
      filled with the accent */
-  .filters { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; }
+  .filters { display: flex; gap: var(--sp-8); overflow-x: auto; padding: var(--sp-2) 0 var(--sp-10); }
   .filters .chip {
-    cursor: pointer; font-size: 16px; padding: 5px 14px; color: var(--text); border: 2px solid var(--pc, var(--line));
+    cursor: pointer; font-size: var(--fs-lead); padding: 5px var(--sp-14); color: var(--text); border: 2px solid var(--pc, var(--line));
   }
   .filters .chip:hover { background: var(--surface-3); }
   .filters .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--pc, var(--accent)); }
-  .tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 10px; }
+  .tools { display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: flex-end; margin-bottom: var(--sp-10); }
   .search { flex: 0 1 260px; min-width: 0; }
-  .select { display: grid; gap: 3px; font-size: 12px; color: var(--muted); flex: 0 1 150px; }
+  .select { display: grid; gap: 3px; font-size: var(--fs-sm); color: var(--muted); flex: 0 1 150px; }
   /* the projects and the search in view; the five filters open on «Фильтры» at any width */
-  .toggle { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+  .toggle { flex: none; display: inline-flex; align-items: center; gap: var(--sp-6); }
   .toggle .n {
-    min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-ink);
-    font-size: 12px; line-height: 18px; text-align: center;
+    min-width: 18px; padding: 0 5px; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink);
+    font-size: var(--fs-sm); line-height: 18px; text-align: center;
   }
-  .extra { display: none; flex: 1 1 100%; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+  .extra { display: none; flex: 1 1 100%; gap: var(--sp-8); flex-wrap: wrap; align-items: flex-end; }
   .extra.open { display: flex; }
-  .cols { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+  .cols { display: grid; gap: var(--sp-14); grid-template-columns: minmax(0, 1fr); }
   .col { min-width: 0; }
   .col.none { display: none; }
   @media (min-width: 900px) {
@@ -229,11 +229,11 @@
     .cols.one { grid-template-columns: minmax(0, 1fr); }
   }
   @media (min-width: 1300px) { .cols:not(.one) { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
-  .col h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); display: flex; gap: 6px; }
+  .col h3 { margin: 0 0 var(--sp-8); font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); display: flex; gap: var(--sp-6); }
   .col h3 .n { color: var(--text); }
   .col h3 .more {
     margin-left: auto; background: none; border: 0; padding: 0; color: var(--accent); font: inherit;
     letter-spacing: inherit; text-transform: inherit; cursor: pointer;
   }
-  .list { display: flex; flex-direction: column; gap: 6px; }
+  .list { display: flex; flex-direction: column; gap: var(--sp-6); }
 </style>

@@ -102,7 +102,7 @@
 </section>
 
 <style>
-  .login { max-width: 380px; margin: 0 auto; padding: 48px 0; display: grid; gap: 16px; }
-  h1 { margin: 0 0 8px; font-size: 24px; }
-  .hint { margin: 0; font-size: 13px; }
+  .login { max-width: 380px; margin: 0 auto; padding: 48px 0; display: grid; gap: var(--sp-16); }
+  h1 { margin: 0 0 var(--sp-8); font-size: 24px; }
+  .hint { margin: 0; font-size: var(--fs-md); }
 </style>

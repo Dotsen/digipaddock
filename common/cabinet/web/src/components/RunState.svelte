@@ -114,8 +114,8 @@
 {/if}
 
 <style>
-  .run { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
-  .run .chip { white-space: normal; display: inline-flex; gap: 6px; align-items: center; }
+  .run { display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; font-size: var(--fs-md); }
+  .run .chip { white-space: normal; display: inline-flex; gap: var(--sp-6); align-items: center; }
   .spin { width: 10px; height: 10px; flex: none; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }

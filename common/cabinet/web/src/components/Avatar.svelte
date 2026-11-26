@@ -27,7 +27,7 @@
 
 <style>
   .avatar {
-    border-radius: 8px; display: inline-grid; place-items: center; font-weight: 700; flex: none;
+    border-radius: var(--r-md); display: inline-grid; place-items: center; font-weight: 700; flex: none;
     background: var(--surface-2); color: var(--muted);
   }
   .agent { background: var(--au-agent); color: var(--au-agent-ink); }

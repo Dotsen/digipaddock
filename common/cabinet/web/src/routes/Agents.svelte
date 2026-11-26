@@ -82,15 +82,15 @@
 {/if}
 
 <style>
-  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .grid { display: grid; gap: var(--sp-10); grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
   .agent {
-    display: grid; gap: 8px; align-content: start; padding: 14px; border-radius: var(--radius); background: var(--surface);
+    display: grid; gap: var(--sp-8); align-content: start; padding: var(--sp-14); border-radius: var(--radius); background: var(--surface);
     border: 2px var(--state-border-style) var(--state-color); min-width: 0;
   }
-  .head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .head { display: flex; flex-wrap: wrap; gap: var(--sp-10); align-items: center; }
   /* the name keeps its width: a state chip with no room left goes to the next line instead of covering it */
   .who { flex: 1 0 auto; max-width: 100%; overflow-wrap: anywhere; font-weight: 700; color: inherit; text-decoration: none; }
   .who:hover { color: var(--accent); }
-  .facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; margin: 0; }
-  .specs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .facts { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-12); font-size: var(--fs-md); margin: 0; }
+  .specs { display: flex; flex-wrap: wrap; gap: var(--sp-6); align-items: center; }
 </style>

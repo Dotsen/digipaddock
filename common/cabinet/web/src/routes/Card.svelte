@@ -332,13 +332,13 @@
     display: flex; flex-direction: column; height: var(--screen-h);
   }
   @media (min-width: 900px) { .cardview { --screen-h: calc(100dvh - 32px); } }
-  .card-h { display: flex; flex-direction: column; gap: 8px; padding: 14px 0 8px; flex: none; }
-  .card-h h1 { font-size: 20px; margin: 0; font-weight: 700; line-height: 1.3; text-wrap: balance; overflow-wrap: anywhere; }
+  .card-h { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-14) 0 var(--sp-8); flex: none; }
+  .card-h h1 { font-size: var(--fs-heading); margin: 0; font-weight: 700; line-height: 1.3; text-wrap: balance; overflow-wrap: anywhere; }
   .card-h .more { align-self: flex-start; }
-  .title-row { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+  .title-row { display: flex; align-items: flex-start; gap: var(--sp-10); min-width: 0; }
   .title-row h1 { flex: 1; min-width: 0; }
   /* the next step above the tabs on a phone (a compact block, the field below keeps its place), beside them on a desktop */
-  .body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+  .body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-10); }
   .side { flex: none; }
   .content { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   /* the next step above the tabs: the header and the next step scroll away with the page, the tabs,
@@ -349,17 +349,18 @@
     .content { flex: none; height: var(--screen-h); }
   }
   @media (min-width: 1100px) {
-    .body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; }
+    .body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--sp-16); }
     .side { order: 2; overflow-y: auto; }
     .content { order: 1; }
   }
   .card-h .id { color: var(--muted); font-weight: 500; }
   /* the card's facts as label → value rows (two pairs per row on a desktop) */
-  .props { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; align-items: center; font-size: 14px; }
-  .props dt { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-  .props dd { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .props { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-6) var(--sp-14); margin: 0; align-items: center; font-size: var(--fs-ui); }
+  /* :global — the rows a child writes (ModelChips, CouncilChip) are the same rows: no browser indent on their <dd> */
+  .props :global(dt) { margin: 0; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .props :global(dd) { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: var(--sp-6); align-items: center; }
   .props a.chip { text-decoration: none; color: var(--accent); }
   @media (min-width: 900px) { .props { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); } }
-  .pane { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 2px; }
-  .props .chip.brief { cursor: pointer; font: inherit; }
+  .pane { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sp-14) var(--sp-2); }
+  .props .chip.brief { cursor: pointer; }
 </style>

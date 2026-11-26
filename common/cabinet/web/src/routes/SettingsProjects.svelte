@@ -438,17 +438,17 @@
 {/if}
 
 <style>
-  .back { color: var(--muted); text-decoration: none; font-size: 20px; }
+  .back { color: var(--muted); text-decoration: none; font-size: var(--fs-heading); }
   @media (min-width: 900px) { .back { display: none; } } /* «Назад» there */
-  .projects { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
-  .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .projects { list-style: none; margin: 0 0 var(--sp-8); padding: 0; display: grid; gap: var(--sp-8); }
+  .head { display: flex; gap: var(--sp-10); align-items: center; flex-wrap: wrap; }
   .who { flex: 1 1 200px; display: grid; min-width: 0; }
-  .small { font-size: 12px; }
-  .editor { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+  .small { font-size: var(--fs-sm); }
+  .editor { margin-top: var(--sp-12); padding-top: var(--sp-12); border-top: 1px solid var(--line-soft); }
   .editor p { margin: 0; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row { display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: center; }
   .warn { color: var(--crit); }
-  .repo { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+  .repo { margin-top: var(--sp-4); padding-top: var(--sp-12); border-top: 1px solid var(--line-soft); }
   .repo-state:not(.warn) { color: var(--muted); }
   p.small { margin: 0; }
   .btn.danger { color: var(--crit); border-color: var(--crit); }

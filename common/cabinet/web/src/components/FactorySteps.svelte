@@ -27,11 +27,11 @@
 </ol>
 
 <style>
-  .ops { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-  .ops li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 3px; }
-  .st { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-  .x { color: var(--muted); font-size: 13px; max-width: 62ch; overflow-wrap: anywhere; }
+  .ops { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); }
+  .ops li { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-8) var(--sp-10); display: grid; gap: 3px; }
+  .st { display: flex; gap: var(--sp-8); align-items: baseline; flex-wrap: wrap; }
+  .x { color: var(--muted); font-size: var(--fs-md); max-width: 62ch; overflow-wrap: anywhere; }
   .x b { color: var(--text); font-weight: 500; }
-  .risk { margin-left: auto; font-size: 12px; white-space: nowrap; }
+  .risk { margin-left: auto; font-size: var(--fs-sm); white-space: nowrap; }
   .risk.low { color: var(--good); } .risk.medium { color: var(--warn); } .risk.high { color: var(--crit); }
 </style>

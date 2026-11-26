@@ -94,9 +94,8 @@
 {/if}
 
 <style>
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .actions .btn { padding: 12px 20px; font-size: 15px; }
-  .hint { margin: 0; font-size: 13px; color: var(--muted); }
-  .grant { display: grid; gap: 8px; }
+  .actions { display: flex; gap: var(--sp-8); flex-wrap: wrap; }
+  .hint { margin: 0; font-size: var(--fs-md); color: var(--muted); }
+  .grant { display: grid; gap: var(--sp-8); }
   .grant p { margin: 0; font-weight: 500; }
 </style>

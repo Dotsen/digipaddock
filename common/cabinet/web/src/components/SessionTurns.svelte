@@ -146,17 +146,17 @@
 {/if}
 
 <style>
-  .turns { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; }
-  .turn summary { cursor: pointer; display: flex; gap: 4px 8px; flex-wrap: wrap; align-items: baseline; font-size: 13px; }
-  .turn summary .text { min-width: 0; overflow-wrap: anywhere; font-family: monospace; font-size: 12px; }
-  .steps { list-style: none; margin: 6px 0 4px; padding: 0 0 0 12px; display: grid; gap: 4px; border-left: 2px solid var(--line-soft); }
-  .step { display: flex; gap: 4px 8px; flex-wrap: wrap; align-items: baseline; font-size: 13px; }
+  .turns { list-style: none; margin: var(--sp-4) 0 0; padding: 0; display: grid; gap: var(--sp-4); }
+  .turn summary { cursor: pointer; display: flex; gap: var(--sp-4) var(--sp-8); flex-wrap: wrap; align-items: baseline; font-size: var(--fs-md); }
+  .turn summary .text { min-width: 0; overflow-wrap: anywhere; font-family: monospace; font-size: var(--fs-sm); }
+  .steps { list-style: none; margin: var(--sp-6) 0 var(--sp-4); padding: 0 0 0 var(--sp-12); display: grid; gap: var(--sp-4); border-left: 2px solid var(--line-soft); }
+  .step { display: flex; gap: var(--sp-4) var(--sp-8); flex-wrap: wrap; align-items: baseline; font-size: var(--fs-md); }
   .step .say { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .step code { overflow-wrap: anywhere; font-size: 12px; }
-  .output { flex-basis: 100%; margin: 2px 0 0; padding: 8px; max-height: 320px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 8px; font-size: 12px; white-space: pre; }
-  .meta, .note { font-size: 12px; color: var(--muted); }
-  .note { margin: 4px 0; }
+  .step code { overflow-wrap: anywhere; font-size: var(--fs-sm); }
+  .output { flex-basis: 100%; margin: var(--sp-2) 0 0; padding: var(--sp-8); max-height: 320px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); font-size: var(--fs-sm); white-space: pre; }
+  .meta, .note { font-size: var(--fs-sm); color: var(--muted); }
+  .note { margin: var(--sp-4) 0; }
   .ok { color: var(--good); }
   .bad, .error { color: var(--crit); }
-  .link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 12px; text-decoration: underline; }
+  .link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: var(--fs-sm); text-decoration: underline; }
 </style>

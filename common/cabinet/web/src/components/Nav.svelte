@@ -296,15 +296,15 @@
   .tabbar {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
     height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
-    padding: 0 8px env(safe-area-inset-bottom, 0px);
+    padding: 0 var(--sp-8) env(safe-area-inset-bottom, 0px);
     display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
     background: var(--surface); border-top: 1px solid var(--line);
   }
-  .tabbar a, .tabbar .tab { font-size: 10px; }
+  .tabbar a, .tabbar .tab { font-size: var(--fs-tiny); }
   .tabbar span:not(.dot) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   a, .tab {
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-    color: var(--muted); font-size: 11px; position: relative; text-decoration: none;
+    color: var(--muted); font-size: var(--fs-xs); position: relative; text-decoration: none;
   }
   .tab { background: none; border: 0; padding: 0; }
   a.on, .tab.on { color: var(--text); }
@@ -315,21 +315,21 @@
   .dot { position: absolute; top: 6px; left: calc(50% + 6px); }
   /* The sheet ends above the tab bar; its height follows the visible entries. */
   .more-veil { bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px)); }
-  .more-sheet { gap: 4px; padding: 8px; max-height: calc(100dvh - var(--nav-h) - env(safe-area-inset-bottom, 0px) - 16px); align-content: start; }
-  .more-sheet a { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 12px; border-radius: 8px; font-size: 15px; }
+  .more-sheet { gap: var(--sp-4); padding: var(--sp-8); max-height: calc(100dvh - var(--nav-h) - env(safe-area-inset-bottom, 0px) - 16px); align-content: start; }
+  .more-sheet a { flex-direction: row; justify-content: flex-start; gap: var(--sp-12); padding: var(--sp-12); border-radius: var(--r-md); font-size: var(--fs-body); }
   .more-sheet a.on { background: var(--surface-2); }
   /* the search and "+" in one row: the field takes the width, "+" a square beside it */
-  .find { display: flex; gap: 8px; align-items: center; position: relative; min-width: 0; }
+  .find { display: flex; gap: var(--sp-8); align-items: center; position: relative; min-width: 0; }
   .find input { flex: 1; min-width: 0; padding-left: 34px; }
   .find .glass { position: absolute; left: 10px; width: 17px; height: 17px; color: var(--muted); pointer-events: none; }
   .plus {
     flex: none; width: 44px; height: 44px; display: grid; place-items: center; padding: 0;
-    border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--accent); cursor: pointer;
+    border: 1px solid var(--line); border-radius: var(--r-md); background: none; color: var(--accent); cursor: pointer;
   }
   .plus:hover { background: var(--surface-2); }
-  .more-sheet .find { margin-bottom: 4px; }
+  .more-sheet .find { margin-bottom: var(--sp-4); }
   .fold {
-    background: none; border: 0; padding: 6px; border-radius: 8px; color: var(--muted);
+    background: none; border: 0; padding: var(--sp-6); border-radius: var(--r-md); color: var(--muted);
     display: grid; place-items: center;
   }
   .fold:hover { color: var(--text); background: var(--surface-2); }
@@ -337,23 +337,23 @@
   @media (min-width: 900px) {
     .tabbar, .more-veil { display: none; }
     .side {
-      display: flex; flex-direction: column; gap: 4px; padding: 20px 12px; position: sticky; top: 0;
+      display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-20) var(--sp-12); position: sticky; top: 0;
       height: 100vh; border-right: 1px solid var(--line); background: var(--surface); overflow-y: auto;
     }
-    .head { display: flex; align-items: center; gap: 6px; padding: 0 0 12px 12px; }
+    .head { display: flex; align-items: center; gap: var(--sp-6); padding: 0 0 var(--sp-12) var(--sp-12); }
     .brand { display: block; width: 110px; height: auto; flex: 0 1 110px; min-width: 0; margin-right: auto; object-fit: contain; }
-    .side a { flex-direction: row; justify-content: flex-start; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 14px; }
+    .side a { flex-direction: row; justify-content: flex-start; gap: var(--sp-10); padding: 9px var(--sp-12); border-radius: var(--r-md); font-size: var(--fs-ui); }
     .side a.on { background: var(--surface-2); }
-    .side .find { margin-bottom: 8px; }
+    .side .find { margin-bottom: var(--sp-8); }
     .side .find input { padding-top: 7px; padding-bottom: 7px; }
     .side .plus { width: 38px; height: 38px; }
-    .side.folded .plus { margin-bottom: 4px; }
+    .side.folded .plus { margin-bottom: var(--sp-4); }
     .side .plus svg { width: 20px; height: 20px; }
     .side .badge-at { margin-left: auto; }
-    .who { margin-top: auto; display: grid; gap: 8px; padding: 0 12px; font-size: 13px; }
+    .who { margin-top: auto; display: grid; gap: var(--sp-8); padding: 0 var(--sp-12); font-size: var(--fs-md); }
     /* folded: a strip of icons, the badges over them, the names in aria-label and the tooltip */
-    .side.folded { padding: 16px 8px; align-items: center; }
-    .side.folded .head { padding: 0 0 12px; }
+    .side.folded { padding: var(--sp-16) var(--sp-8); align-items: center; }
+    .side.folded .head { padding: 0 0 var(--sp-12); }
     .side.folded a { padding: 9px; justify-content: center; }
     .side.folded .badge-at { position: absolute; top: 0; right: -4px; margin: 0; }
     .side.folded .who { padding: 0; justify-items: center; }

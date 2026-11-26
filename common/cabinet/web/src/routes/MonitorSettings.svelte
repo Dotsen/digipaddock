@@ -275,22 +275,22 @@
 {/if}
 
 <style>
-  .intro { font-size: 13px; margin: 0 0 8px; }
-  section { margin: 16px 0; }
-  h2 { font-size: 15px; margin: 0 0 8px; }
-  h3 { font-size: 13px; margin: 12px 0 6px; }
+  .intro { font-size: var(--fs-md); margin: 0 0 var(--sp-8); }
+  section { margin: var(--sp-16) 0; }
+  h2 { font-size: var(--fs-body); margin: 0 0 var(--sp-8); }
+  h3 { font-size: var(--fs-md); margin: var(--sp-12) 0 var(--sp-6); }
   .row {
-    display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 4px 12px; align-items: center;
-    padding: 8px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: var(--sp-4) var(--sp-12); align-items: center;
+    padding: var(--sp-8) 0; border-bottom: 1px solid var(--line-soft); font-size: var(--fs-md);
   }
   .row.changed .name { font-weight: 600; }
-  .row .meta { grid-column: 1; font-size: 12px; }
+  .row .meta { grid-column: 1; font-size: var(--fs-sm); }
   .row .btn { grid-column: 2; justify-self: start; }
   .row input { width: 100%; }
   .stale { color: var(--warn); }
   .pick { max-width: 320px; }
-  .checks { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); font-size: 13px; }
-  .check { display: flex; gap: 6px; align-items: center; }
-  .empty { margin: 0; padding: 8px 0; font-size: 13px; }
+  .checks { display: grid; gap: var(--sp-6); grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); font-size: var(--fs-md); }
+  .check { display: flex; gap: var(--sp-6); align-items: center; }
+  .empty { margin: 0; padding: var(--sp-8) 0; font-size: var(--fs-md); }
   @media (max-width: 599px) { .row { grid-template-columns: 1fr; } .row .meta, .row .btn { grid-column: 1; } }
 </style>

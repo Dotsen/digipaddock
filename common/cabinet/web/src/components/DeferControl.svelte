@@ -78,8 +78,8 @@
 
 <style>
   .lead { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
-  .hint { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
-  .defer { display: flex; flex-direction: column; gap: 8px; }
-  .defer label { display: flex; flex-direction: column; gap: 4px; }
-  .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  .hint { margin: 0; font-size: var(--fs-md); color: var(--muted); overflow-wrap: anywhere; }
+  .defer { display: flex; flex-direction: column; gap: var(--sp-8); }
+  .defer label { display: flex; flex-direction: column; gap: var(--sp-4); }
+  .buttons { display: flex; gap: var(--sp-8); flex-wrap: wrap; }
 </style>

@@ -95,8 +95,8 @@
 {/if}
 
 <style>
-  .platform-alerts { display: grid; gap: 8px; margin: 0 0 18px; }
-  .platform-alerts h2 { margin: 0; font-size: 16px; }
+  .platform-alerts { display: grid; gap: var(--sp-8); margin: 0 0 18px; }
+  .platform-alerts h2 { margin: 0; font-size: var(--fs-lead); }
   .platform-alerts .monitor-note { margin: 0; }
   .platform-alerts .btn { justify-self: start; }
   .platform-alert.critical { border-color: var(--crit); border-top-width: 2px; }

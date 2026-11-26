@@ -179,15 +179,15 @@
 </div>
 
 <style>
-  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-  .steps li { display: grid; gap: 8px; }
-  h2 { margin: 0; font-size: 16px; }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-12); }
+  .steps li { display: grid; gap: var(--sp-8); }
+  h2 { margin: 0; font-size: var(--fs-lead); }
   p { margin: 0; }
   summary { cursor: pointer; list-style: none; }
   summary h2 { display: inline; }
-  details[open] summary { margin-bottom: 10px; }
-  details .stack + .stack { margin-top: 14px; }
-  .secret { font-size: 16px; letter-spacing: .04em; overflow-wrap: anywhere; }
+  details[open] summary { margin-bottom: var(--sp-10); }
+  details .stack + .stack { margin-top: var(--sp-14); }
+  .secret { font-size: var(--fs-lead); letter-spacing: .04em; overflow-wrap: anywhere; }
   .row input { flex: 1; }
-  .finish { margin-top: 16px; justify-content: flex-end; }
+  .finish { margin-top: var(--sp-16); justify-content: flex-end; }
 </style>

@@ -135,20 +135,20 @@
 </div>
 
 <style>
-  .pane { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 2px; }
-  .pane .section-h { margin: 8px 0 0; }
-  .state { margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .rev { font-size: 12px; margin: 0; }
-  .diff { list-style: none; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  .pane { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sp-14) var(--sp-2); }
+  .pane .section-h { margin: var(--sp-8) 0 0; }
+  .state { margin: 0; display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; }
+  .rev { font-size: var(--fs-sm); margin: 0; }
+  .diff { list-style: none; margin: 0; padding: var(--sp-8) var(--sp-10); border: 1px solid var(--line); border-radius: var(--r-md);
     font: 13px/1.5 var(--mono, ui-monospace, monospace); overflow-x: auto; }
   .diff li { white-space: pre-wrap; overflow-wrap: anywhere; }
   .diff .d-del { color: var(--crit); text-decoration: line-through; }
   .diff .d-add { color: var(--good); }
   .diff .d-del::before { content: "− "; } .diff .d-add::before { content: "+ "; } .diff .d-same::before { content: "  "; }
   .diff .d-skip { color: var(--muted); font-style: italic; }
-  .versions { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-  .versions summary { cursor: pointer; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .versions details > :not(summary) { margin-top: 8px; }
-  .text ul { margin: 6px 0 0; padding-left: 20px; }
+  .versions { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); }
+  .versions summary { cursor: pointer; display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: center; }
+  .versions details > :not(summary) { margin-top: var(--sp-8); }
+  .text ul { margin: var(--sp-6) 0 0; padding-left: var(--sp-20); }
 
 </style>

@@ -122,16 +122,16 @@
 {/if}
 
 <style>
-  .filters { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; }
+  .filters { display: flex; gap: var(--sp-6); overflow-x: auto; padding: var(--sp-2) 0 var(--sp-8); }
   .filters .chip { cursor: pointer; }
   .filters .chip.on { color: var(--text); border-color: var(--accent); }
-  .select { display: grid; gap: 3px; font-size: 12px; color: var(--muted); max-width: 220px; margin-bottom: 12px; }
-  .events { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-  .events li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; padding: 8px 2px; border-bottom: 1px solid var(--line-soft); font-size: 14px; }
+  .select { display: grid; gap: 3px; font-size: var(--fs-sm); color: var(--muted); max-width: 220px; margin-bottom: var(--sp-12); }
+  .events { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+  .events li { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-8); align-items: baseline; padding: var(--sp-8) var(--sp-2); border-bottom: 1px solid var(--line-soft); font-size: var(--fs-ui); }
   .events b { font-weight: 600; }
   .events a { color: var(--accent); text-decoration: none; }
-  .when { font-size: 12px; min-width: 52px; }
+  .when { font-size: var(--fs-sm); min-width: 52px; }
   .what { flex: 1 1 9em; min-width: 0; overflow-wrap: anywhere; }
-  .events li.digest { display: grid; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin: 6px 0; }
-  .more { display: flex; justify-content: center; padding: 14px 0; }
+  .events li.digest { display: grid; gap: var(--sp-4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--sp-12) var(--sp-14); margin: var(--sp-6) 0; }
+  .more { display: flex; justify-content: center; padding: var(--sp-14) 0; }
 </style>

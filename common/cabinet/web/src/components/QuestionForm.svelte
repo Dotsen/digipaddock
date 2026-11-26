@@ -235,24 +235,24 @@
 </div>
 
 <style>
-  .qf { padding: 0 14px 12px; display: grid; gap: 10px; }
-  .parsed, .step, .note, .ctx { margin: 0; font-size: 13px; }
+  .qf { padding: 0 var(--sp-14) var(--sp-12); display: grid; gap: var(--sp-10); }
+  .parsed, .step, .note, .ctx { margin: 0; font-size: var(--fs-md); }
   .ctx { white-space: pre-wrap; }
-  .original summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  .q { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; margin: 0; display: grid; gap: 8px; }
-  .q legend { font-weight: 600; padding: 0 4px; }
-  .req { font-weight: 400; color: var(--muted); font-size: 12px; }
-  .opts { display: grid; gap: 6px; }
-  .opt { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+  .original summary { cursor: pointer; color: var(--muted); font-size: var(--fs-md); }
+  .q { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-8) var(--sp-10) var(--sp-10); margin: 0; display: grid; gap: var(--sp-8); }
+  .q legend { font-weight: 600; padding: 0 var(--sp-4); }
+  .req { font-weight: 400; color: var(--muted); font-size: var(--fs-sm); }
+  .opts { display: grid; gap: var(--sp-6); }
+  .opt { display: flex; gap: var(--sp-8); align-items: flex-start; cursor: pointer; }
   .opt input { margin-top: 3px; }
-  .text { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+  .text { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-8); align-items: baseline; }
   .lbl { font-weight: 500; }
-  .badge { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--good); color: var(--good); }
-  .desc { flex-basis: 100%; color: var(--muted); font-size: 13px; }
+  .badge { font-size: var(--fs-xs); padding: var(--sp-2) var(--sp-8); border-radius: var(--r-pill); border: 1px solid var(--good); color: var(--good); }
+  .desc { flex-basis: 100%; color: var(--muted); font-size: var(--fs-md); }
   textarea { width: 100%; resize: vertical; box-sizing: border-box; }
-  .review { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
-  .review li { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+  .review { margin: 0; padding-left: var(--sp-20); display: grid; gap: var(--sp-6); }
+  .review li { display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: baseline; }
   .review .title { font-weight: 600; }
-  .missing { margin: 0; color: var(--warn); font-size: 13px; }
-  .nav { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .missing { margin: 0; color: var(--warn); font-size: var(--fs-md); }
+  .nav { display: flex; gap: var(--sp-8); flex-wrap: wrap; justify-content: flex-end; }
 </style>

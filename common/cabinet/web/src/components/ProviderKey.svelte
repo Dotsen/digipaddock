@@ -70,6 +70,6 @@
 </form>
 
 <style>
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .small { font-size: 12px; }
+  .row { display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: center; }
+  .small { font-size: var(--fs-sm); }
 </style>

@@ -28,11 +28,11 @@
 </a>
 
 <style>
-  .bc { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; display: grid; gap: 6px; text-decoration: none; color: var(--text); min-width: 0; }
+  .bc { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-10) 11px; display: grid; gap: var(--sp-6); text-decoration: none; color: var(--text); min-width: 0; }
   .bc:hover { border-color: var(--muted); }
-  .t { font-size: 14px; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; min-width: 0; }
-  .id { color: var(--muted); font-size: 12px; }
-  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
+  .t { font-size: var(--fs-ui); font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; min-width: 0; }
+  .id { color: var(--muted); font-size: var(--fs-sm); }
+  .row { display: flex; gap: var(--sp-6); flex-wrap: wrap; align-items: center; min-width: 0; }
   .pill { display: inline-flex; }
   .defer { color: var(--muted); white-space: nowrap; }
   /* put off until a time: sunk into the page — hatched, a dashed edge, the title muted; the muted text keeps 4.5:1 at

@@ -43,5 +43,5 @@
 {/if}
 
 <style>
-  .what { margin: 0; font-size: 14px; }
+  .what { margin: 0; font-size: var(--fs-ui); }
 </style>

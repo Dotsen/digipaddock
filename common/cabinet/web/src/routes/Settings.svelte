@@ -401,16 +401,16 @@
 </div>
 
 <style>
-  .sections { gap: 14px; padding-bottom: 20px; }
-  h2 { margin: 0; font-size: 16px; }
-  .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-  .rows li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
-  .grow { flex: 1 1 200px; display: grid; gap: 2px; min-width: 0; }
-  .small { font-size: 12px; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .sections { gap: var(--sp-14); padding-bottom: var(--sp-20); }
+  h2 { margin: 0; font-size: var(--fs-lead); }
+  .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-6); }
+  .rows li { display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; padding: var(--sp-6) 0; border-bottom: 1px solid var(--line-soft); }
+  .grow { flex: 1 1 200px; display: grid; gap: var(--sp-2); min-width: 0; }
+  .small { font-size: var(--fs-sm); }
+  .row { display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; }
   .between { justify-content: space-between; }
   .between select { width: auto; }
-  .quiet { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .check { display: flex; gap: 6px; align-items: center; }
+  .quiet { display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; }
+  .check { display: flex; gap: var(--sp-6); align-items: center; }
   .btn.danger { color: var(--crit); border-color: var(--crit); }
 </style>

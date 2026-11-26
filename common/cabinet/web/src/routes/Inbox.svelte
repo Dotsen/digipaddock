@@ -382,35 +382,35 @@
      «Выбрать» keeps to the right */
   .topbar { flex-wrap: wrap; }
   .topbar > .btn:last-child { margin-left: auto; }
-  .list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+  .list { display: flex; flex-direction: column; gap: var(--sp-8); margin-bottom: var(--sp-8); }
   .item {
-    display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; text-align: left; width: 100%;
-    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; color: var(--text);
+    display: grid; grid-template-columns: auto 1fr auto; gap: var(--sp-10); align-items: start; text-align: left; width: 100%;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--sp-12); color: var(--text);
   }
   .item.dim { opacity: .45; }
   a.item.incident { text-decoration: none; border-color: var(--crit); }
-  .kind { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); }
+  .kind { width: 34px; height: 34px; border-radius: var(--r-md); display: grid; place-items: center; background: var(--surface-2); color: var(--muted); }
   .kind svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .kind.sign { color: var(--warn); } .kind.crit { color: var(--crit); } .kind.q { color: var(--info); }
   .t { display: block; font-weight: 600; line-height: 1.3; }
-  .s { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
-  .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
-  .age { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .s { display: block; color: var(--muted); font-size: var(--fs-md); margin-top: var(--sp-2); }
+  .meta { display: flex; gap: var(--sp-6); flex-wrap: wrap; margin-top: 7px; }
+  .age { color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
   /* a question: the title and the line under it never wrap, the body unfolds below them */
   .q-body { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
   .question .open { all: unset; cursor: pointer; display: block; width: 100%; min-width: 0; }
-  .question .open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .question .open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-xs); }
   .line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .fold { margin-top: 4px; padding-left: 0; }
-  .full { margin-top: 6px; font-size: 14px; width: 100%; }
-  .cb { width: 20px; height: 20px; border-radius: 5px; border: 1.5px solid var(--line); display: grid; place-items: center; margin-top: 7px; font-size: 13px; font-weight: 700; }
+  .fold { margin-top: var(--sp-4); padding-left: 0; }
+  .full { margin-top: var(--sp-6); font-size: var(--fs-ui); width: 100%; }
+  .cb { width: 20px; height: 20px; border-radius: 5px; border: 1.5px solid var(--line); display: grid; place-items: center; margin-top: 7px; font-size: var(--fs-md); font-weight: 700; }
   .item.checked .cb { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-  .results { display: grid; gap: 4px; margin: 10px 0; }
+  .results { display: grid; gap: var(--sp-4); margin: var(--sp-10) 0; }
   .results p { margin: 0; }
   .signbar {
     position: fixed; left: 16px; right: 16px; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 12px);
-    background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
-    display: flex; align-items: center; gap: 10px; z-index: 15; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); flex-wrap: wrap;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--sp-10) var(--sp-12);
+    display: flex; align-items: center; gap: var(--sp-10); z-index: 15; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); flex-wrap: wrap;
   }
   .signbar .spacer { flex: 1; }
   .signbar > .btn.primary:only-of-type { margin-left: auto; }
@@ -418,7 +418,7 @@
   /* the shared «what to rework» of a bulk return, just above the bar */
   .returning {
     position: fixed; left: 16px; right: 16px; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 76px);
-    background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--sp-10) var(--sp-12);
     z-index: 16; box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
   }
   @media (min-width: 900px) { .returning { left: calc(var(--side-w) + 32px); right: 32px; bottom: 84px; max-width: 800px; } }

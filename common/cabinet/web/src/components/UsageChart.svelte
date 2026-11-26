@@ -195,33 +195,33 @@
 {/if}
 
 <style>
-  .chart { overflow-x: auto; padding: 4px 0 8px; }
+  .chart { overflow-x: auto; padding: var(--sp-4) 0 var(--sp-8); }
   .bar { fill: var(--accent); }
   .bar.hs { fill: var(--info); }
   .bar.hs.partial { opacity: 0.45; }
-  .label { fill: var(--muted); font-size: 10px; text-anchor: middle; }
-  .legend { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; color: var(--muted); font-size: 12px; }
-  .legend .key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-left: 6px; }
+  .label { fill: var(--muted); font-size: var(--fs-tiny); text-anchor: middle; }
+  .legend { display: flex; align-items: center; gap: var(--sp-6); margin: 0 0 var(--sp-4); color: var(--muted); font-size: var(--fs-sm); }
+  .legend .key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-left: var(--sp-6); }
   .legend .key:first-child { margin-left: 0; }
   .legend .key.agents { background: var(--accent); }
   .legend .key.hs { background: var(--info); }
   .wrap { overflow-x: auto; }
-  .usage { border-collapse: collapse; width: 100%; font-size: 14px; }
-  .usage th, .usage td { padding: 7px 6px; border-bottom: 1px solid var(--line-soft); text-align: right; white-space: nowrap; }
+  .usage { border-collapse: collapse; width: 100%; font-size: var(--fs-ui); }
+  .usage th, .usage td { padding: 7px var(--sp-6); border-bottom: 1px solid var(--line-soft); text-align: right; white-space: nowrap; }
   .usage th[scope="row"], .usage thead th:first-child { text-align: left; }
-  .usage thead th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .usage thead th { font-size: var(--fs-sm); color: var(--muted); font-weight: 500; }
   .usage tfoot th, .usage tfoot td { font-weight: 600; border-bottom: 0; }
-  .note { margin-left: 6px; font-size: 12px; font-weight: 400; color: var(--warn); }
-  .small { padding: 8px 0; }
+  .note { margin-left: var(--sp-6); font-size: var(--fs-sm); font-weight: 400; color: var(--warn); }
+  .small { padding: var(--sp-8) 0; }
   .prices summary, .history summary { cursor: pointer; font-weight: 500; }
-  .history { margin-top: 8px; }
+  .history { margin-top: var(--sp-8); }
   .toggle { all: unset; cursor: pointer; }
   .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .sub th, .sub td { color: var(--muted); font-size: 13px; }
+  .sub th, .sub td { color: var(--muted); font-size: var(--fs-md); }
   .sub th[scope="row"] { padding-left: 22px; }
   @media (max-width: 600px) {
-    .spend { font-size: 12px; }
+    .spend { font-size: var(--fs-sm); }
     .spend th, .spend td { padding: 7px 3px; }
-    .spend thead th { font-size: 11px; }
+    .spend thead th { font-size: var(--fs-xs); }
   }
 </style>

@@ -72,17 +72,17 @@
 
 <style>
   .menu { position: relative; display: inline-flex; }
-  .trigger { display: inline-flex; align-items: center; gap: 6px; }
+  .trigger { display: inline-flex; align-items: center; gap: var(--sp-6); }
   .trigger.open { border-color: var(--accent); }
-  .caret { font-size: 10px; color: var(--muted); }
+  .caret { font-size: var(--fs-tiny); color: var(--muted); }
   .panel {
     position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; width: max-content; min-width: 220px;
-    max-width: calc(100vw - 32px); display: grid; gap: 2px; padding: 6px; background: var(--surface);
-    border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+    max-width: calc(100vw - 32px); display: grid; gap: var(--sp-2); padding: var(--sp-6); background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-pop);
   }
   .row {
-    display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; text-align: left;
-    background: none; border: 0; border-radius: 8px; padding: 8px 12px; font-size: 14px; color: var(--text);
+    display: flex; align-items: center; gap: var(--sp-10); width: 100%; min-height: 44px; text-align: left;
+    background: none; border: 0; border-radius: var(--r-md); padding: var(--sp-8) var(--sp-12); font-size: var(--fs-ui); color: var(--text);
   }
   .row:hover, .row:focus-visible { background: var(--surface-2); outline: none; }
   .row.good { background: var(--good-bg); color: var(--good); font-weight: 600; }

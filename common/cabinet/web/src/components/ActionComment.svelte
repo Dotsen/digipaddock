@@ -48,8 +48,8 @@
 </div>
 
 <style>
-  .ask { display: grid; gap: 6px; max-width: 560px; width: 100%; }
-  .ask textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); resize: vertical; }
-  .row { display: flex; gap: 8px; }
-  .hint { margin: 0; font-size: 13px; color: var(--muted); }
+  .ask { display: grid; gap: var(--sp-6); max-width: 560px; width: 100%; }
+  .ask textarea { width: 100%; box-sizing: border-box; font: inherit; padding: var(--sp-8) var(--sp-10); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); resize: vertical; }
+  .row { display: flex; gap: var(--sp-8); }
+  .hint { margin: 0; font-size: var(--fs-md); color: var(--muted); }
 </style>

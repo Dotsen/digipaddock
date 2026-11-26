@@ -317,19 +317,19 @@
 {/if}
 
 <style>
-  .back { color: var(--muted); text-decoration: none; font-size: 20px; }
+  .back { color: var(--muted); text-decoration: none; font-size: var(--fs-heading); }
   @media (min-width: 900px) { .back { display: none; } } /* «Назад» there */
-  .people { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
-  .head { display: flex; gap: 10px; align-items: center; }
+  .people { list-style: none; margin: 0 0 var(--sp-8); padding: 0; display: grid; gap: var(--sp-8); }
+  .head { display: flex; gap: var(--sp-10); align-items: center; }
   .who { flex: 1; display: grid; min-width: 0; }
-  .small { font-size: 12px; }
-  .roles { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-  .editor { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
-  .assign { display: flex; gap: 6px 12px; flex-wrap: wrap; align-items: center; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .small { font-size: var(--fs-sm); }
+  .roles { display: flex; gap: var(--sp-6); flex-wrap: wrap; margin-top: var(--sp-8); }
+  .editor { margin-top: var(--sp-12); padding-top: var(--sp-12); border-top: 1px solid var(--line-soft); }
+  .assign { display: flex; gap: var(--sp-6) var(--sp-12); flex-wrap: wrap; align-items: center; }
+  .row { display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: center; }
   .grow { flex: 1 1 200px; }
-  .check { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+  .check { display: flex; gap: var(--sp-6); align-items: center; font-size: var(--fs-ui); }
   .add-role { max-width: 220px; }
-  .issued { margin-bottom: 14px; }
+  .issued { margin-bottom: var(--sp-14); }
   input[type="checkbox"] { accent-color: var(--accent); }
 </style>

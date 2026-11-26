@@ -284,18 +284,17 @@
 </section>
 
 <style>
-  .next { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); min-width: 0; }
-  h2 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+  .next { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-12) var(--sp-14); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); min-width: 0; }
+  h2 { margin: 0; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
   .lead { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
-  .hint { margin: 0; font-size: 13px; color: var(--muted); }
-  .go { color: var(--accent); font-size: 14px; }
-  .deps { margin: 0; display: flex; gap: 6px; flex-wrap: wrap; }
+  .hint { margin: 0; font-size: var(--fs-md); color: var(--muted); }
+  .go { color: var(--accent); font-size: var(--fs-ui); }
+  .deps { margin: 0; display: flex; gap: var(--sp-6); flex-wrap: wrap; }
   .deps .chip { text-decoration: none; color: var(--accent); }
   .problem { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
   .problem.warn { color: var(--warn); }
   .outcome { margin: 0; overflow-wrap: anywhere; }
-  .waits { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
-  .waits ul { display: flex; gap: 6px; flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
+  .waits { display: flex; gap: var(--sp-6); align-items: baseline; flex-wrap: wrap; }
+  .waits ul { display: flex; gap: var(--sp-6); flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
   .waits .chip { text-decoration: none; color: var(--accent); }
-  .next :global(.actions .btn) { padding: 10px 16px; }
 </style>

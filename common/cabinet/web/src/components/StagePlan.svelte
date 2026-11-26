@@ -56,14 +56,14 @@
 </ol>
 
 <style>
-  .chain { margin: 0; font-size: 13px; color: var(--muted); }
+  .chain { margin: 0; font-size: var(--fs-md); color: var(--muted); }
   .gate { color: var(--text); }
-  .stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-  .stages li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 3px; }
-  .stages.compact li { padding: 6px 8px; gap: 2px; }
-  .st { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-  .key { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
-  .x { color: var(--muted); font-size: 13px; max-width: 62ch; overflow-wrap: anywhere; }
-  .ac { margin: 0; padding-left: 18px; font-size: 13px; }
-  .pill { font-size: 12px; margin-left: auto; white-space: nowrap; }
+  .stages { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); }
+  .stages li { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-8) var(--sp-10); display: grid; gap: 3px; }
+  .stages.compact li { padding: var(--sp-6) var(--sp-8); gap: var(--sp-2); }
+  .st { display: flex; gap: var(--sp-8); align-items: baseline; flex-wrap: wrap; }
+  .key { font-family: ui-monospace, monospace; font-size: var(--fs-sm); color: var(--muted); }
+  .x { color: var(--muted); font-size: var(--fs-md); max-width: 62ch; overflow-wrap: anywhere; }
+  .ac { margin: 0; padding-left: 18px; font-size: var(--fs-md); }
+  .pill { font-size: var(--fs-sm); margin-left: auto; white-space: nowrap; }
 </style>

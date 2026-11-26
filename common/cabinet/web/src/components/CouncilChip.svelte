@@ -53,8 +53,6 @@
 {/if}
 
 <style>
-  /* the same label style as the card's own <dt>s (Card.svelte .props dt): scoped styles do not reach a child */
-  dt { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
   .pick { cursor: pointer; color: var(--text); }
-  .caret { font-size: 10px; color: var(--muted); }
+  .caret { font-size: var(--fs-tiny); color: var(--muted); }
 </style>

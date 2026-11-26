@@ -19,6 +19,8 @@ One service under its own user (`<prefix>-cabinet`) owns the board's database an
 
 ## Screens
 
+Every screen takes its colours, sizes, spaces and corners from one set of design tokens; see [cabinet-design.md](cabinet-design.md).
+
 The pictures below are of the development cabinet with its synthetic seed (`kd-cabinet serve --dev --seed`; no
 deployment's names). `npm --prefix common/cabinet/web run screenshots` takes them again into `docs/images/cabinet/`.
 [Features](features.md) shows the same screens by what the factory does.

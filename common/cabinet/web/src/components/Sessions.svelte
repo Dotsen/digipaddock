@@ -109,12 +109,12 @@
 {/if}
 
 <style>
-  .sessions { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-  .sessions li { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 10px; padding: 8px 12px; display: grid; gap: 4px; font-size: 14px; }
-  .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .sessions { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); }
+  .sessions li { background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: var(--sp-8) var(--sp-12); display: grid; gap: var(--sp-4); font-size: var(--fs-ui); }
+  .head { display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; }
   .head .btn:first-of-type { margin-left: auto; }
-  .meta { display: flex; gap: 4px 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
-  .error { font-size: 13px; color: var(--crit); overflow-wrap: anywhere; }
-  .small { padding: 8px 0; }
-  .jobs-title { margin: 16px 0 8px; font-size: 14px; font-weight: 600; }
+  .meta { display: flex; gap: var(--sp-4) var(--sp-12); flex-wrap: wrap; font-size: var(--fs-sm); color: var(--muted); }
+  .error { font-size: var(--fs-md); color: var(--crit); overflow-wrap: anywhere; }
+  .small { padding: var(--sp-8) 0; }
+  .jobs-title { margin: var(--sp-16) 0 var(--sp-8); font-size: var(--fs-ui); font-weight: 600; }
 </style>

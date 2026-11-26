@@ -100,16 +100,16 @@
 </div>
 
 <style>
-  .list { display: flex; flex-direction: column; gap: 8px; }
+  .list { display: flex; flex-direction: column; gap: var(--sp-8); }
   .item {
-    display: grid; grid-template-columns: minmax(0, 128px) minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px;
+    display: grid; grid-template-columns: minmax(0, 128px) minmax(0, 1fr) auto; gap: var(--sp-10); align-items: center; padding: var(--sp-12);
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); color: var(--text);
     text-decoration: none;
   }
   .item:hover { border-color: var(--accent); }
   .item.dim { opacity: .55; }
-  .body { display: grid; gap: 2px; min-width: 0; }
-  .line { font-size: 12px; overflow-wrap: anywhere; }
+  .body { display: grid; gap: var(--sp-2); min-width: 0; }
+  .line { font-size: var(--fs-sm); overflow-wrap: anywhere; }
   .level { justify-content: center; text-align: center; min-width: 0; }
   .level.crit { color: var(--crit); background: var(--crit-bg); }
   .level.warn { color: var(--warn); background: var(--warn-bg); }

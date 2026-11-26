@@ -40,8 +40,8 @@
 <style>
   .action-sheet { margin: auto auto 0; max-height: calc(100dvh - 16px); color: var(--text); padding: 0; }
   .action-sheet::backdrop { background: rgb(0 0 0 / .55); }
-  .body { min-width: 0; padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 12px; overflow-wrap: anywhere; }
-  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .body { min-width: 0; padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px)); display: grid; gap: var(--sp-12); overflow-wrap: anywhere; }
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-12); }
   .body :global(p) { margin: 0; }
   @media (min-width: 900px) { .action-sheet { margin: auto; max-height: calc(100dvh - 32px); } }
 </style>

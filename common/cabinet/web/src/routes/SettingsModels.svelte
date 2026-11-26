@@ -307,22 +307,22 @@
 {/if}
 
 <style>
-  .back { color: var(--muted); text-decoration: none; font-size: 20px; }
+  .back { color: var(--muted); text-decoration: none; font-size: var(--fs-heading); }
   @media (min-width: 900px) { .back { display: none; } } /* «Назад» there */
-  .intro { margin: 0 0 8px; }
-  .tabs { margin-bottom: 12px; }
-  .keys { display: grid; gap: 8px; }
-  .models { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
+  .intro { margin: 0 0 var(--sp-8); }
+  .tabs { margin-bottom: var(--sp-12); }
+  .keys { display: grid; gap: var(--sp-8); }
+  .models { list-style: none; margin: 0 0 var(--sp-8); padding: 0; display: grid; gap: var(--sp-8); }
   .models .off { opacity: 0.7; }
-  .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .who { flex: 1 1 240px; display: grid; gap: 2px; min-width: 0; }
-  .small { font-size: 12px; }
+  .head { display: flex; gap: var(--sp-10); align-items: center; flex-wrap: wrap; }
+  .who { flex: 1 1 240px; display: grid; gap: var(--sp-2); min-width: 0; }
+  .small { font-size: var(--fs-sm); }
   .warn { color: var(--crit); }
   .good { color: var(--ok, var(--text)); }
   .probe { overflow-wrap: anywhere; }
-  .switch { display: inline-flex; gap: 6px; align-items: center; }
-  .editor { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+  .switch { display: inline-flex; gap: var(--sp-6); align-items: center; }
+  .editor { margin-top: var(--sp-12); padding-top: var(--sp-12); border-top: 1px solid var(--line-soft); }
+  .row { display: flex; gap: var(--sp-8); flex-wrap: wrap; align-items: center; }
+  .prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-8); }
   p.small { margin: 0; }
 </style>

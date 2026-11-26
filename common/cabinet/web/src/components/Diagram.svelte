@@ -59,9 +59,9 @@
 </div>
 
 <style>
-  .diagram { margin: 0 0 8px; }
+  .diagram { margin: 0 0 var(--sp-8); }
   .diagram:last-child { margin-bottom: 0; }
   iframe { display: block; width: 100%; border: 0; }
   iframe.off { visibility: hidden; }
-  .state { margin-bottom: 4px; color: var(--muted); font-size: 13px; }
+  .state { margin-bottom: var(--sp-4); color: var(--muted); font-size: var(--fs-md); }
 </style>

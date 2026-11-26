@@ -63,7 +63,5 @@
 </dd>
 
 <style>
-  /* the same label style as the card's own <dt>s (Card.svelte .props dt): scoped styles do not reach a child */
-  dt { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-  .warn { color: var(--crit); font-size: 12px; margin-left: 8px; }
+  .warn { color: var(--crit); font-size: var(--fs-sm); margin-left: var(--sp-8); }
 </style>
