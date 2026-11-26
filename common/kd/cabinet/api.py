@@ -2556,6 +2556,7 @@ from kd.cabinet import boss_review  # noqa: E402,F401 — BOSS hands checked wor
 from kd.cabinet import stage_gate  # noqa: E402,F401 — BOSS's decision on a stage of a chain plan
 from kd.cabinet import projects_api  # noqa: E402 — the owner's projects, the same way
 from kd.cabinet import llm_api  # noqa: E402 — the models of other providers, the same way
+from kd.cabinet import context_limits  # noqa: E402,F401 — each role's session context limit, the same way
 from kd.cabinet import councils  # noqa: E402 — the council's composition, the same way
 from kd.cabinet import council_api  # noqa: E402,F401 — kd-work council and council-reply
 from kd.cabinet import snapshot  # noqa: E402 — the card's snapshot, the same way

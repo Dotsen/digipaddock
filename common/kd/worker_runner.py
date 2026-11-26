@@ -30,6 +30,7 @@ from typing import Any, Callable, Mapping, Optional
 from kd import (
     agents,
     claude_token,
+    context_limit,
     llm_models,
     secret_fd,
     worker_board,
@@ -56,8 +57,9 @@ T_GIT = 120
 # The definition kd-worker submits (kd.worker_jobs.definition) and the bounds the host's end_line checks.
 DEFINITION_FIELDS = frozenset({"id", "card", "agent", "type", "repo", "spec", "skills", "prompt", "limits", "brief",
                                "caller", "requester", "writer", "timeout", "model"})
-# the cabinet model of the card and its effort; the files a job of the cabinet reads
-DEFINITION_OPTIONAL = frozenset({"model_spec", "effort", "inputs", "pull"})
+# the cabinet model of the card and its effort; the files a job of the cabinet reads; the role's session context
+# limit as the cabinet sent the job (kd.context_limit)
+DEFINITION_OPTIONAL = frozenset({"model_spec", "effort", "inputs", "pull", "context_limit"})
 HEAD_MISSING = "head_missing"  # the host's copy has not got the pull request's head (yet): the council waits
 DEFINITION_MAX = 48 * 1024  # the definition without its inputs
 STDIN_MAX = DEFINITION_MAX + worker_inputs.MAX
@@ -91,6 +93,7 @@ class Prepared:
     model_slug: str = ""  # the cabinet model the job runs on ("" — the pool's model on the subscription)
     model_spec: Optional[dict] = None  # its {id, provider, upstream, base_url}
     effort: str = ""
+    context_limit: int = 0  # the role's session context limit in tokens (0 — none: Claude Code's own window)
 
 
 def usage_slug(job: Mapping[str, Any]) -> str:
@@ -129,6 +132,8 @@ def check_definition(obj: Any, slot_ref: str) -> dict:
             worker_inputs.check(obj["inputs"])
         if "pull" in obj:
             worker_jobs.check_pull(obj["pull"])
+        if "context_limit" in obj:
+            context_limit.check(obj["context_limit"])
     except ValueError as exc:
         raise RunnerError(f"job definition: {exc}") from exc
     if "pull" in obj and not worker_jobs.reads_pull(obj):
@@ -625,6 +630,7 @@ def prepare(
         model_slug=usage_slug(job),
         model_spec=dict(spec) if spec else None,
         effort=job.get("effort", ""),
+        context_limit=job.get("context_limit", 0),
     )
 
 
@@ -683,9 +689,11 @@ def env(p: Prepared) -> dict[str, str]:
     """The session's whole environment: nothing of the unit's reaches claude; the slot and
     the job are named for the agent's Bash guard (slot mode) and the typing hook. The
     credential (``_credentials``) is here as a variable; ``launch`` moves it into a pipe
-    claude reads at start (``kd.secret_fd``), so it is never in claude's environ."""
+    claude reads at start (``kd.secret_fd``), so it is never in claude's environ. The role's context limit is
+    Claude Code's auto-compact window (``kd.context_limit``)."""
     return {
         **_credentials(p),
+        **context_limit.environment(p.context_limit),
         "PATH": f"{p.home}/.local/bin:/usr/local/bin:/usr/bin:/bin",
         "HOME": p.home,
         "USER": p.user,

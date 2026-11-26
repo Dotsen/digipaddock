@@ -219,6 +219,56 @@ def test_summary_masks_secrets_and_truncates():
     assert claude.summary("Mystery", {"a": 1}) == 'Mystery: {"a": 1}'
 
 
+COMPACTED = "sys.session.compacted"
+
+
+def test_a_compaction_is_a_status_line_with_the_context_before_and_after():
+    """Claude Code reports an auto-compaction as a ``compact_boundary`` system event with the size before; the
+    size after is the context of the next request of the main conversation (its input, cache read and cache write)
+    — never a subagent's, never a message without usage. The line comes before that request's text."""
+    items = replay("compact")
+    lines = [(i["kind"], i["body"]) for i in items if i.get("type") == "message"]
+    assert lines == [
+        ("text", "reading"),
+        ("text", "a subagent's own context"),
+        ("status", "context compacted (auto): 412345 -> 45005 tokens"),
+        ("text", "continuing"),
+        ("text", "done"),
+    ]
+    [status] = [i for i in items if i.get("kind") == "status"]
+    assert status["payload"] == {"key": COMPACTED, "params": {"trigger": "auto", "before": 412345, "after": 45005}}
+
+
+def test_a_compaction_the_turn_ends_after_shows_the_size_before_only():
+    norm = claude.Normalizer()
+    assert norm.feed({"type": "system", "subtype": "compact_boundary",
+                      "compact_metadata": {"trigger": "manual", "pre_tokens": 98765}}) == []
+    status, end = norm.feed({"type": "result", "subtype": "success", "num_turns": 1})
+    assert status["payload"] == {"key": COMPACTED + "_before", "params": {"trigger": "manual", "before": 98765}}
+    assert end["type"] == "turn_end"
+    # an event that names the size after itself needs no next request; odd metadata still says it compacted
+    [line] = norm.feed({"type": "system", "subtype": "compact_boundary",
+                        "compact_metadata": {"trigger": "auto", "pre_tokens": 500000, "post_tokens": 41000}})
+    assert line["payload"]["params"] == {"trigger": "auto", "before": 500000, "after": 41000}
+    norm.feed({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"pre_tokens": "x", "trigger": 7}})
+    [bare, _] = norm.feed({"type": "result", "subtype": "success"})
+    assert bare["payload"] == {"key": COMPACTED + "_bare", "params": {}}
+
+
+def test_a_compaction_event_as_the_pinned_claude_code_sends_it():
+    """The event's shape as Claude Code 2.1.289 printed it in a probe with a 100000 window: both sizes and fields
+    the line does not use."""
+    segment = {"head_uuid": "981a3975-1111-4222-8333-444455556666", "anchor_uuid": "9c8077c2-1111-4222-8333-444455556666",
+               "tail_uuid": "bc20b50f-1111-4222-8333-444455556666"}
+    [line] = claude.Normalizer().feed({
+        "type": "system", "subtype": "compact_boundary", "session_id": "39671b55-1111-4222-8333-444455556666",
+        "compact_metadata": {"trigger": "auto", "pre_tokens": 72228, "post_tokens": 12787,
+                             "cumulative_dropped_tokens": 59441, "duration_ms": 8437, "preserved_segment": segment,
+                             "preserved_messages": {"anchor_uuid": segment["anchor_uuid"], "uuids": [], "all_uuids": []}},
+    })
+    assert line["payload"]["params"] == {"trigger": "auto", "before": 72228, "after": 12787}
+
+
 def test_unknown_events_ignored():
     items = replay("garbage")
     assert [i["body"] for i in items if i.get("kind") == "text"] == ["still fine"]

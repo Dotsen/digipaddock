@@ -56,6 +56,11 @@ def _tick(env, host, now=None):
     return asyncio.run(dispatcher.tick(env.svc, host=host, now=now or env.when()))
 
 
+# a host older than a field refuses it, and every delivery names its role's context limit, the newest field:
+# such a host refuses that one first (test_cabinet_context_limits), then the field the test is about
+OLDER = (dispatcher.HostRefused("invalid", "unknown field for deliver"),) * 2
+
+
 def test_delivers_queued_command_with_resume_id(env):
     card, command = _assigned(env)
     session = env.store.session_for(card.thread, "analyst")
@@ -67,6 +72,7 @@ def test_delivers_queued_command_with_resume_id(env):
         "op": "deliver", "command": command["id"], "session": session["id"], "agent": "analyst",
         "thread": card.thread, "card": card.id, "text": command["text"],
         "resume": "0b9c3f1e-1111-2222-3333-444455556666",
+        "context_limit": 400000,  # the role's session context limit, the default here (test_cabinet_context_limits)
     }
     after = env.store.command(command["id"])
     assert after["state"] == "delivered" and after["session"] == session["id"]
@@ -242,8 +248,10 @@ def test_queued_job_is_delivered_to_the_host(env):
     card, job = _job(env)
     host = Host({"ok": True, "state": "queued", "position": 1})
     assert _tick(env, host) == {"delivered": 1, "retried": 0, "cancelled": 0, "failed": 0}
-    # the stored definition carries the card's effort (none here) beside what kd-worker sent
-    assert host.calls == [{"op": "job", "job": job["id"], "agent": "dev", "definition": {**job, "effort": ""}}]
+    # the stored definition carries the card's effort (none here) beside what kd-worker sent; the send adds the
+    # role's session context limit (the default here)
+    assert host.calls == [{"op": "job", "job": job["id"], "agent": "dev",
+                           "definition": {**job, "effort": "", "context_limit": 400000}}]
     assert _state(env, job)["state"] == "delivered"
     assert _tick(env, Host())["delivered"] == 0  # delivered once
 
@@ -535,9 +543,9 @@ def test_a_chat_carries_no_bank_even_when_projects_have_one(env):
 def test_a_host_without_memory_gets_the_delivery_without_the_bank(env):
     """A host not restarted after the release refuses the unknown field: the session starts on the role bank."""
     _, command = _bound(env)
-    host = Host(dispatcher.HostRefused("invalid", "unknown field for deliver"), {"ok": True, "state": "queued"})
+    host = Host(*OLDER, {"ok": True, "state": "queued"})
     assert _tick(env, host)["delivered"] == 1
-    assert [c.get("memory") for c in host.calls] == ["coding-agent::shop", None]
+    assert [c.get("memory") for c in host.calls] == ["coding-agent::shop", "coding-agent::shop", None]
     assert env.store.command(command["id"])["state"] == "delivered"
 
 
@@ -569,9 +577,9 @@ def test_a_host_without_urgent_gets_the_command_as_an_ordinary_one(env):
     """A host not restarted after the release refuses the unknown field: the command still reaches it, in the
     agent's queue as before."""
     card, command = _urgent(env)
-    host = Host(dispatcher.HostRefused("invalid", "unknown field for deliver"), {"ok": True, "state": "queued"})
+    host = Host(*OLDER, {"ok": True, "state": "queued"})
     assert _tick(env, host)["delivered"] == 1
-    assert [c.get("urgent") for c in host.calls] == [True, None]
+    assert [c.get("urgent") for c in host.calls] == [True, True, None]
     assert env.store.command(command["id"])["state"] == "delivered"
 
 
@@ -580,19 +588,20 @@ def test_a_host_without_memory_keeps_an_urgent_command_urgent(env):
     command still starts at once, on the role bank."""
     card, command = _urgent(env)
     env.store.update_project(card.project, actor="user:owner", memory_bank="coding-agent::shop")
-    host = Host(dispatcher.HostRefused("invalid", "unknown field for deliver"), {"ok": True, "state": "starting"})
+    host = Host(*OLDER, {"ok": True, "state": "starting"})
     assert _tick(env, host)["delivered"] == 1
-    assert [(c.get("urgent"), c.get("memory")) for c in host.calls] == [(True, "coding-agent::shop"), (True, None)]
+    assert [(c.get("urgent"), c.get("memory")) for c in host.calls] == [
+        (True, "coding-agent::shop"), (True, "coding-agent::shop"), (True, None)]
 
 
 def test_a_host_before_urgent_still_gets_a_bound_urgent_command(env):
     card, command = _urgent(env)
     env.store.update_project(card.project, actor="user:owner", memory_bank="coding-agent::shop")
     refused = dispatcher.HostRefused("invalid", "unknown field for deliver")
-    host = Host(refused, refused, {"ok": True, "state": "queued"})
+    host = Host(*OLDER, refused, {"ok": True, "state": "queued"})
     assert _tick(env, host)["delivered"] == 1
     assert [(c.get("urgent"), c.get("memory")) for c in host.calls] == [
-        (True, "coding-agent::shop"), (True, None), (None, None)]
+        (True, "coding-agent::shop"), (True, "coding-agent::shop"), (True, None), (None, None)]
     assert env.store.command(command["id"])["state"] == "delivered"
 
 
@@ -697,10 +706,12 @@ def test_a_model_without_a_key_fails_the_command_before_the_host(env):
 
 def test_a_host_without_model_fails_the_command_as_outdated(env):
     """A host not restarted after the release refuses the field: the card is not run on the subscription behind the
-    owner's back — the command fails, with no second delivery without the model."""
+    owner's back — the command fails, with no delivery without the model (only the role's context limit, newer
+    still, is dropped first)."""
     card, command = _modelled(env)
-    host = Host(dispatcher.HostRefused("invalid", "unknown field for deliver"), {"ok": True, "state": "starting"})
-    assert _tick(env, host)["failed"] == 1 and len(host.calls) == 1
+    host = Host(*OLDER, {"ok": True, "state": "starting"})
+    assert _tick(env, host)["failed"] == 1 and len(host.calls) == 2
+    assert all(c["model"] for c in host.calls)
     after = env.store.command(command["id"])
     assert after["state"] == "failed" and after["reason"] == "host_outdated"
     assert _last_line(env, card)["payload"]["key"] == "sys.session.host_outdated"
@@ -709,8 +720,8 @@ def test_a_host_without_model_fails_the_command_as_outdated(env):
 def test_a_host_without_effort_fails_the_command_as_outdated_too(env):
     card, _ = _assigned(env)
     env.store.update_project(card.project, actor="user:owner", memory_bank="coding-agent::shop", effort="low")
-    host = Host(dispatcher.HostRefused("invalid", "unknown field for deliver"), {"ok": True, "state": "starting"})
-    assert _tick(env, host)["failed"] == 1 and len(host.calls) == 1
+    host = Host(*OLDER, {"ok": True, "state": "starting"})
+    assert _tick(env, host)["failed"] == 1 and len(host.calls) == 2
     assert _last_line(env, card)["payload"]["key"] == "sys.session.host_outdated"
 
 

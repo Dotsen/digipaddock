@@ -21,6 +21,7 @@
   import { filesOf, isAudio, isPreview, retryRefusal, textOf, voiceView, type Attachment } from "../lib/attachments";
   import { fullDuration } from "../lib/audioDuration";
   import { bytes } from "../lib/bytes";
+  import { statusParams } from "../lib/contextLimit";
   import { errorText, hasKey, t, type Key } from "../lib/i18n.svelte";
   import { thread } from "../lib/stores/thread.svelte";
   import { toast } from "../lib/toast.svelte";
@@ -110,7 +111,7 @@
   function line(m: Message): string {
     const key = m.payload?.key;
     if (typeof key !== "string" || !hasKey(key)) return m.body;
-    const params: Record<string, string> = { ...(m.payload.params ?? {}) };
+    const params = statusParams(key, m.payload.params) as Record<string, string>; // a compaction's sizes, grouped
     if (params.type && hasKey(`decision.type.${params.type}`)) params.type = t(`decision.type.${params.type}` as Key);
     if (key === "sys.session.failed" && params.error) params.error = reasonText(params.error);
     if (m.kind === "diagnostic") {

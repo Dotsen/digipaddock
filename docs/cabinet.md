@@ -38,7 +38,7 @@ deployment's names). `npm --prefix common/cabinet/web run screenshots` takes the
   - *Brief* — its versions and their differences.
   - *Result* — the outcome, links, criteria, review rounds, the last release.
   - *History* — every event, in pages.
-  - *Sessions* — the agents' sessions on the card: each turn's command, steps, result, cost and the model that served it, as the usage ledger names it (`claude-opus-5-5`; a turn several models served names the costliest and «+N», all of them in the hint; a turn that reported no usage names none); to people who may steer the agent, a tool's output masked and cut to 4000 characters. «Stop» and «Continue» are here.
+  - *Sessions* — the agents' sessions on the card: each turn's command, steps, result, cost and the model that served it, as the usage ledger names it (`claude-opus-5-5`; a turn several models served names the costliest and «+N», all of them in the hint; a turn that reported no usage names none); to people who may steer the agent, a tool's output masked and cut to 4000 characters; a compaction of the conversation as a line with the context before and after it ([context limit](#session-context-limit)). «Stop» and «Continue» are here.
 
   The texts of a card — messages, the description, criteria, notes, results, questions — are shown as Markdown: headings, lists, tables, `code`, links; raw HTML is shown as text. Every agent's instructions tell it to write for that: technical names (paths, routes, fields, commands, codes, values) in backticks, several items as a list, a comparison as a table, a long text under headings. An agent passes a card's text as a command argument, where a `#` line after a line break is refused, so a heading there is a title underlined with `---`.
 
@@ -109,7 +109,8 @@ The repository's **passport** says what the developer and the factory may do wit
 
 By default every session runs on the host's Claude subscription, on the model its agent is set to. The owner can put
 a card, or a whole project, on **another model of the subscription**, or add **models of other providers** in
-Settings → Models (three tabs: the models, the provider keys, a new model; the tab is in the address) and put it on
+Settings → Models (four tabs: the models, each role's [context limit](#session-context-limit), the provider keys, a
+new model; the tab is in the address) and put it on
 one of those; the choice is a spend decision, so it needs the `settings` right.
 
 - **Models of the subscription** are a fixed catalog in the code (`common/coordination/claude-models.json`: Opus,
@@ -159,6 +160,27 @@ one of those; the choice is a spend decision, so it needs the `settings` right.
   show it next to the subscription's models. Its cache read and cache write columns are token sums over every model
   request, not the size of a conversation; how the prompt cache differs from a session's history is in
   [Session lifecycle](architecture.md#session-lifecycle).
+
+### Session context limit
+
+A conversation that is never compacted grows to the model's whole window, and every request carries all of it. The
+**Context limit** tab of Settings → Models (`settings`) holds one value per agent role — every role of the agent
+registry, one added later included: the size in tokens at which Claude Code compacts a session's conversation into
+a summary and goes on with the turn.
+
+- **Values.** 400 000 tokens by default («default» marks a role never set); a whole number from 100 000 to
+  1 000 000, or the explicit «No limit» (the model's own window). Anything else — a fraction, a letter, an empty
+  field, a number out of range — is refused in the owner's words and nothing is saved. A limit too low hurts: after
+  a compaction the agent no longer has what it already tried.
+- **Where it applies.** Every session of the role — a card's, its chat, its «Monitor» — and every worker job of
+  the role (a dev job takes dev's value). It is never written into the role's installed settings: each launch carries
+  the value in force, so a change applies from the role's next process, fresh or resumed, without a reinstall; an
+  idle process of the role restarts on the next turn with its history, a working one finishes its turn first. Roles
+  are independent: changing dev's limit changes nothing of the sysadmin's sessions.
+- **The journal.** Each change is a feed event with the role and the old and the new value.
+- **What it looks like.** A compaction is a line of its turn in the card's *Sessions* tab (and of the thread):
+  «Context compacted: 412 345 → 45 005 tokens» — the context before it, as Claude Code reports it, and the next
+  request's context after it. A turn that ends right after a compaction shows the size before only.
 
 ## The council of models
 

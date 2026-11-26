@@ -35,7 +35,7 @@ import sys
 import time
 from typing import Callable, Dict, Optional
 
-from kd import claude_token, llm_models, naming
+from kd import claude_token, context_limit, llm_models, naming
 from kd.cabinet import client as cabinet_client
 from kd.cabinet.client import CabinetError
 from kd.session_host import claude, core, devcheck, operation, probe, protocol, worker
@@ -712,6 +712,9 @@ class HostServer:
                     await self._run(self.core.exited(action.session, -1,
                                                      error=f"no_key: {action.model['provider']}"))
                     return False
+            # the role's context limit: Claude Code's auto-compact window, a plain variable of the unit that
+            # agent-launch passes on to claude (none — Claude Code's own window)
+            setenv = {**setenv, **context_limit.environment(action.context_limit)}
             argv = claude.argv(action.agent, action.user, action.unit, action.resume,
                                claude.context_args(action.session, action.thread, action.card, action.space,
                                                    action.memory, action.model, action.effort,
@@ -734,7 +737,7 @@ class HostServer:
         self.procs[action.session] = proc
         self.journal("spawn", session=action.session, agent=action.agent, unit=action.unit,
                      resume=bool(action.resume), model=action.model["id"] if action.model else "",
-                     effort=action.effort)
+                     effort=action.effort, context_limit=action.context_limit)
         self._tasks.append(asyncio.ensure_future(self._read(action.session, proc)))
         return True
 

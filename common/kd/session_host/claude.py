@@ -219,6 +219,36 @@ def _message(kind: str, body: str, payload: Mapping) -> dict:
     return {"type": "message", "kind": kind, "body": body, "payload": dict(payload)}
 
 
+COMPACTED = "sys.session.compacted"  # + "_before" (the size after unknown), "_bare" (neither size known)
+TRIGGERS = ("auto", "manual")
+
+
+def _tokens(value) -> Optional[int]:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def request_context(message) -> Optional[int]:
+    """The context one model request carried: its input, cache read and cache write tokens; None without usage."""
+    used = message.get("usage") if isinstance(message, Mapping) else None
+    if not isinstance(used, Mapping):
+        return None
+    parts = [_tokens(used.get(k, 0)) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")]
+    return None if None in parts else sum(parts)
+
+
+def compaction(trigger: str, before: Optional[int], after: Optional[int]) -> dict:
+    """The status line of a compaction: the context before it and the next request's after it, as far as known."""
+    params = {"trigger": trigger} if trigger else {}
+    body = "context compacted" + (f" ({trigger})" if trigger else "")
+    if before is not None and after is not None:
+        return _message("status", f"{body}: {before} -> {after} tokens",
+                        {"key": COMPACTED, "params": {**params, "before": before, "after": after}})
+    if before is not None:
+        return _message("status", f"{body}: {before} tokens before",
+                        {"key": COMPACTED + "_before", "params": {**params, "before": before}})
+    return _message("status", body, {"key": COMPACTED + "_bare", "params": params})
+
+
 _MODEL_FIELDS = (("in", "inputTokens"), ("out", "outputTokens"), ("cache_read", "cacheReadInputTokens"),
                  ("cache_write", "cacheCreationInputTokens"), ("cost", "costUSD"))
 
@@ -255,7 +285,8 @@ def model_usage(event: Mapping, slug: str = "") -> dict:
 
 class Normalizer:
     """stream-json events of one process → the host's items: ``session`` (a new Claude session id),
-    ``message`` (text, tool_call, tool_result, status) and ``turn_end`` (ok, usage, error, assistant — the model
+    ``message`` (text, tool_call, tool_result, status — a compaction among them, ``compaction``) and ``turn_end``
+    (ok, usage, error, assistant — the model
     answered at least once this turn; rejected — the API refused a request as invalid, a 400). ``slug`` — the
     cabinet model the process runs on, for its usage."""
 
@@ -266,6 +297,7 @@ class Normalizer:
         self.saw_assistant = False  # the model answered this turn (a synthetic message is not an answer)
         self.rejected = False  # the API answered a request with invalid_request (the history, mostly)
         self.memory_calls = {}
+        self.compacted = None  # (trigger, size before) of a compaction whose size after the next request tells
 
     def feed(self, event: Mapping) -> List[dict]:
         kind, subtype = event.get("type"), event.get("subtype")
@@ -278,6 +310,8 @@ class Normalizer:
         if kind == "system" and subtype == "permission_denied":
             tool = _clean(str(event.get("tool_name") or event.get("tool") or "tool"))[:64]
             return [_message("status", f"denied: {tool}", {"key": "sys.session.denied", "params": {"tool": tool}})]
+        if kind == "system" and subtype == "compact_boundary":
+            return self._compaction(event)
         if kind == "assistant":
             # Claude Code reports an API failure as an assistant event with an error and the model <synthetic>
             error, message = event.get("error"), event.get("message")
@@ -285,7 +319,13 @@ class Normalizer:
             self.auth_failed = self.auth_failed or error == "authentication_failed"
             self.rejected = self.rejected or error == "invalid_request"
             self.saw_assistant = self.saw_assistant or not synthetic
-            return self._assistant(event)
+            after = None
+            if self.compacted is not None and not synthetic and event.get("parent_tool_use_id") is None:
+                after = request_context(message)  # the main conversation's next request, not a subagent's
+            if after is None:
+                return self._assistant(event)
+            (trigger, before), self.compacted = self.compacted, None
+            return [compaction(trigger, before, after), *self._assistant(event)]
         if kind == "user":
             return self._results(event)
         if kind == "result":
@@ -300,8 +340,28 @@ class Normalizer:
             self.auth_failed = self.saw_assistant = self.rejected = False
             pending = [self._memory(operation, "interrupted", call) for call, operation in self.memory_calls.items()]
             self.memory_calls.clear()
-            return [*pending, item]
+            return [*self._compacted_now(), *pending, item]
         return []
+
+    def _compaction(self, event: Mapping) -> List[dict]:
+        """A ``compact_boundary``: Claude Code compacted the conversation (``compact_metadata``: the trigger and the
+        tokens before). The size after is the next request's context, unless the event names it (``post_tokens``)."""
+        meta = event.get("compact_metadata")
+        meta = meta if isinstance(meta, Mapping) else {}
+        trigger = meta.get("trigger") if meta.get("trigger") in TRIGGERS else ""
+        before, after = _tokens(meta.get("pre_tokens")), _tokens(meta.get("post_tokens"))
+        out = self._compacted_now()  # an earlier one no request followed
+        if before is not None and after is not None:
+            return [*out, compaction(trigger, before, after)]
+        self.compacted = (trigger, before)
+        return out
+
+    def _compacted_now(self) -> List[dict]:
+        """The waiting compaction's line with what is known, at the turn's end (no request followed it)."""
+        if self.compacted is None:
+            return []
+        (trigger, before), self.compacted = self.compacted, None
+        return [compaction(trigger, before, None)]
 
     @staticmethod
     def _content(event: Mapping) -> list:

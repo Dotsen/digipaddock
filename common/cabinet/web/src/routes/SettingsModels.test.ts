@@ -137,7 +137,8 @@ it("three tabs: the models, the providers' keys for the owner, a new model; the 
     serve();
     render(SettingsModels);
     expect(await screen.findByText("GPT-5 via OpenRouter")).toBeTruthy();
-    expect(screen.getAllByRole("tab").map((b) => b.textContent)).toEqual(["Модели", "Ключи провайдеров", "Новая модель"]);
+    expect(screen.getAllByRole("tab").map((b) => b.textContent)).toEqual(
+      ["Модели", "Предел контекста", "Ключи провайдеров", "Новая модель"]);
     expect(screen.queryByLabelText("Ключ · OpenRouter")).toBeNull();
     // a model without its key links to the keys, not to a root command
     expect(screen.queryByText(/kd-secret put/)).toBeNull();
@@ -158,7 +159,20 @@ it("no keys tab for someone who may not change the keys", async () => {
   serve();
   render(SettingsModels);
   expect(await screen.findByText("GPT-5 via OpenRouter")).toBeTruthy();
-  expect(screen.getAllByRole("tab").map((b) => b.textContent)).toEqual(["Модели", "Новая модель"]);
+  expect(screen.getAllByRole("tab").map((b) => b.textContent)).toEqual(["Модели", "Предел контекста", "Новая модель"]);
+});
+
+it("the context limit tab lists each role's limit and is in the address (KD-9462)", async () => {
+  login();
+  const fetch = serve();
+  fetch.mockImplementation(async (url: string) =>
+    Response.json(url === "/api/context-limits" ? [{ agent: "dev", limit: 400000, set: false }]
+      : url === "/api/models/providers" ? PROVIDERS : url === "/api/models" ? [orx] : {}));
+  render(SettingsModels);
+  await fireEvent.click(await screen.findByRole("tab", { name: "Предел контекста" }));
+  expect(location.search).toBe("?tab=context");
+  expect(await screen.findByLabelText("Предел @dev, токенов")).toBeTruthy();
+  expect(screen.queryByText("GPT-5 via OpenRouter")).toBeNull();
 });
 
 it("a model of the subscription is listed first: probed like any, never changed, switched off or deleted (KD-9266)", async () => {

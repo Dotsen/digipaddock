@@ -4,12 +4,13 @@
   // enable switch and "Check" (one short run through the session host); a new model (its id never changes:
   // the usage ledger counts under it); the prices and the title editable in place; a delete that a card's or a
   // project's reference refuses — disable the model instead. the models of the Claude subscription come
-  // first — rows of the catalog: probed like any, never changed, disabled or deleted. three tabs — the
-  // models, the providers' keys (the
+  // first — rows of the catalog: probed like any, never changed, disabled or deleted. four tabs — the
+  // models, each role's session context limit (ContextLimits), the providers' keys (the
   // owner's, signed with a passkey) and a new model; the tab is in the address (`?tab=`), a model without its key links
   // to the keys.
   import { onMount } from "svelte";
   import BackButton from "../components/BackButton.svelte";
+  import ContextLimits from "../components/ContextLimits.svelte";
   import ProviderKey from "../components/ProviderKey.svelte";
   import { apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
   import { errorText, t, type Key } from "../lib/i18n.svelte";
@@ -28,9 +29,11 @@
   let providers = $state<LlmProvider[]>([]);
   let subscription = $state<LlmProvider | null>(null);
   const keyed = $derived([...(subscription ? [subscription] : []), ...providers.filter((p) => p.manage_key)]);
-  const TABS = ["list", "keys", "add"] as const;
+  const TABS = ["list", "context", "keys", "add"] as const;
   type Tab = (typeof TABS)[number];
-  const TAB_LABEL: Record<Tab, Key> = { list: "models.tab_list", keys: "models.keys", add: "models.add" };
+  const TAB_LABEL: Record<Tab, Key> = {
+    list: "models.tab_list", context: "models.tab_context", keys: "models.keys", add: "models.add",
+  };
   const tabs = $derived(TABS.filter((name) => name !== "keys" || keyed.length > 0));
   const asked = $derived(router.current.query.get("tab") ?? "");
   const tab = $derived<Tab>((tabs as readonly string[]).includes(asked) ? (asked as Tab) : "list");
@@ -184,13 +187,15 @@
 {#if !settings}
   <p class="empty">{t("error.forbidden")}</p>
 {:else}
-  <p class="muted small intro">{t("models.intro")}</p>
+  {#if tab !== "context"}<p class="muted small intro">{t("models.intro")}</p>{/if}<!-- the tab has its own -->
   <div class="tabs" role="tablist">
     {#each tabs as name (name)}
       <button type="button" role="tab" aria-selected={tab === name} class:on={tab === name} onclick={() => show(name)}>{t(TAB_LABEL[name])}</button>
     {/each}
   </div>
-  {#if tab === "keys"}
+  {#if tab === "context"}
+    <ContextLimits />
+  {:else if tab === "keys"}
     <p class="muted small intro">{t("models.key_help")}</p>
     <div class="keys">
       {#each keyed as p (p.id)}

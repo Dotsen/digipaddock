@@ -5,6 +5,7 @@
   import { onMount } from "svelte";
   import { apiGet } from "../lib/api";
   import { bytes } from "../lib/bytes";
+  import { statusParams } from "../lib/contextLimit";
   import { errorText, hasKey, t, type Key } from "../lib/i18n.svelte";
   import { reasonText } from "../lib/runReason";
   import { models } from "../lib/stores/models.svelte";
@@ -73,7 +74,9 @@
     return hasKey(key) ? t(key) : state;
   };
   const statusText = (step: TurnStep) =>
-    step.status && hasKey(step.status.key) ? t(step.status.key as Key, step.status.params) : step.body;
+    step.status && hasKey(step.status.key)
+      ? t(step.status.key as Key, statusParams(step.status.key, step.status.params))
+      : step.body;
 </script>
 
 {#if failed}

@@ -613,6 +613,19 @@ def test_a_job_without_a_model_runs_on_the_pools_without_an_effort(world, monkey
     assert "--effort" not in wr.argv(p) and "ANTHROPIC_BASE_URL" not in wr.env(p)
 
 
+def test_a_job_runs_with_its_roles_context_limit_as_claudes_auto_compact_window(world, monkeypatch):
+    """the cabinet names the role's limit in the definition it sends; ``-p`` mode compacts at it too. A job
+    without one (the role has no limit) sets nothing: Claude Code's own window."""
+    monkeypatch.setattr(wr.claude_token, "env", lambda *a: {})
+    job = wr.check_definition({**world["definition"], "context_limit": 400000}, "dev/worker1")
+    p = _prepare({**world, "job": job})
+    assert p.context_limit == 400000 and wr.env(p)["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "400000"
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in wr.env(_prepare(world))
+    for bad in (99999, "400000", True):
+        with pytest.raises(wr.RunnerError):
+            wr.check_definition({**world["definition"], "context_limit": bad}, "dev/worker1")
+
+
 def test_a_missing_provider_key_is_the_jobs_failure(world, monkeypatch):
     monkeypatch.setattr(wr.llm_models, "read_secret", lambda *a, **k: {})
     p = _on_model(world)

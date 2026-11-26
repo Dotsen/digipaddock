@@ -185,12 +185,13 @@ def test_an_older_host_gets_the_delivery_without_egress(env):
     card = _card(env)
     command = _command(env, card)
     host = Host(
+        dispatcher.HostRefused("invalid", "unknown field for deliver"),  # the role's context limit, the newest
         dispatcher.HostRefused("invalid", "unknown field for deliver"),
         {"ok": True, "state": "queued"},
     )
     assert _tick(env, host)["delivered"] == 1
     delivers = [c for c in host.calls if c["op"] == "deliver"]
-    assert [c.get("egress") for c in delivers] == ["probe", None]
+    assert [c.get("egress") for c in delivers] == ["probe", "probe", None]
     assert env.store.command(command["id"])["state"] == "delivered"
 
 

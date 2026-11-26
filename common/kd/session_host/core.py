@@ -34,7 +34,10 @@ card's and the project's settings; none — the subscription and the agent's eff
 its life: a delivery with another pair closes an idle process at once and a working one after its turn, and the
 next input starts a process on the new pair. A delivery of a model whose key the host does not hold is refused
 (``no_key``). A process that resumes a history another model wrote and fails its first turn without an answer runs
-that input once more fresh (no ``--resume``) and says so in the thread; a second failure is the turn's.
+that input once more fresh (no ``--resume``) and says so in the thread; a second failure is the turn's. Every
+session's process runs on its latest delivery's context limit (the role's, ``kd.context_limit``) the same way: a
+delivery with another limit closes an idle process at once and a working one after its turn, and the next process —
+with ``--resume``, the same conversation — compacts at the new limit.
 
 An urgent input (the wake of an approved critical command, whose approval lives 15 minutes) never waits for
 a slot: its session starts at once over the agent's limit — no working turn is cut, an ordinary session still waits
@@ -73,6 +76,7 @@ class Spawn:
     model: Optional[dict] = None  # the cabinet model's spec {id, provider, upstream, base_url}; None — the subscription
     effort: str = ""  # the effort level; "" — the agent's own
     egress: str = ""  # the card's probe exit ("" — none)
+    context_limit: int = 0  # the role's session context limit in tokens (0 — none: Claude Code's own window)
 
 
 @dataclass
@@ -141,6 +145,8 @@ class _Session:
     proc_effort: str = ""
     egress: str = ""  # the latest delivery's probe exit (for the next process) and the running process's own
     proc_egress: str = ""
+    context_limit: int = 0  # the latest delivery's context limit (for the next process) and the running process's own
+    proc_context_limit: int = 0
     revoked: bool = False  # the cabinet cut the working process: its card no longer grants the exit (revoke)
     last_slug: str = ""  # the cabinet model the previous process ran on ("" — the subscription)
     switched: bool = False  # the running process resumes a history another model wrote: its first failure without
@@ -174,13 +180,13 @@ NO_START = "Рабочая сессия не запустилась."
 
 
 def _key(s: "_Session") -> tuple:
-    """What the next process runs on: the latest delivery's model, effort and probe exit; a process
+    """What the next process runs on: the latest delivery's model, effort, probe exit and context limit; a process
     whose own differ closes after its turn (an idle one at once)."""
-    return s.model, s.effort, s.egress
+    return s.model, s.effort, s.egress, s.context_limit
 
 
 def _proc_key(s: "_Session") -> tuple:
-    return s.proc_model, s.proc_effort, s.proc_egress
+    return s.proc_model, s.proc_effort, s.proc_egress, s.proc_context_limit
 
 
 def _place(card: str) -> str:
@@ -241,6 +247,7 @@ class Host:
             s.resume = req["resume"] or s.resume
         s.memory = req.get("memory", "")
         s.model, s.effort, s.egress = model, req.get("effort", ""), req.get("egress", "")
+        s.context_limit = req.get("context_limit", 0)
         s.inputs.append((req["command"], req["text"]))
         urgent = bool(req.get("urgent"))
         if urgent:
@@ -636,12 +643,13 @@ class Host:
         # (the previous process's, or the subscription's before this host) may find it refused once
         slug = _slug(s.model)
         s.proc_model, s.proc_effort, s.proc_egress = s.model, s.effort, s.egress
+        s.proc_context_limit = s.context_limit
         s.switched, s.last_slug = bool(s.resume) and slug != s.last_slug, slug
         actions = [
             Report({"type": "session", "session": s.id, "state": "starting", "slot": s.slot,
                     "model": _model_name(s.model), "effort": s.effort}),
             Spawn(s.id, s.agent, self.users[s.agent], unit, s.resume, s.thread, s.card, s.space, s.memory,
-                  s.model, s.effort, s.egress),
+                  s.model, s.effort, s.egress, s.context_limit),
         ]
         return actions + self._next_input(s, report_working=False)
 

@@ -3,7 +3,8 @@
 ``deliver`` hands the host one command for one session (the host is idempotent by command id; ``urgent`` true —
 it starts at once over the agent's slots; ``space`` ``monitor`` names the agent's "Monitor" thread
 for the launch's context; ``memory`` — the Hindsight bank of a card's project; ``model`` and ``effort`` —
-the cabinet model's spec and the effort level a card's session runs on), ``cancel`` takes a
+the cabinet model's spec and the effort level a card's session runs on; ``context_limit`` — the role's session
+context limit in tokens, ``kd.context_limit``), ``cancel`` takes a
 delivered command that has not started out of the host's queues, ``stop`` stops a session, ``revoke`` cuts the process holding
 a probe exit its card no longer grants (the session goes on without it), ``status`` tells the
 sessions and slots. ``job`` hands it a worker job (its definition goes to the runner's stdin), and
@@ -17,7 +18,7 @@ as a stream-json user message, and nothing of a request reaches a command line b
 import json
 import re
 
-from kd import llm_models, memory_bank, worker_inputs, worker_jobs
+from kd import context_limit, llm_models, memory_bank, worker_inputs, worker_jobs
 from kd.egress import EXIT as EGRESS
 
 HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -54,7 +55,7 @@ CHECK_PARAMS = {"card", "project", "repo", "pr", "head", "base_sha", "target", "
 CANCELS = ("card_left", "superseded", "root")
 FIELDS = {
     "deliver": {"op", "command", "session", "agent", "thread", "card", "text", "resume", "urgent", "space", "memory",
-                "model", "effort", "egress"},
+                "model", "effort", "egress", "context_limit"},
     "stop": {"op", "session", "command"},
     "revoke": {"op", "session", "egress"},
     "cancel": {"op", "session", "command"},
@@ -128,7 +129,7 @@ def parse(line: bytes) -> dict:
         if not (isinstance(request.get("command"), str) and HEX32.fullmatch(request["command"])):
             raise _bad("cancel needs a command id")
         return request
-    optional = {"urgent", "space", "memory", "model", "effort", "egress"}
+    optional = {"urgent", "space", "memory", "model", "effort", "egress", "context_limit"}
     if set(request) - optional != FIELDS["deliver"] - optional:
         raise _bad("deliver needs command, session, agent, thread, card, text and resume")
     # the model and effort of a card's session — the cabinet model's spec and a level, present only when
@@ -147,6 +148,12 @@ def parse(line: bytes) -> dict:
             raise _bad(f"effort: {exc}") from None
         if not level or request["card"] == "":
             raise _bad("effort is a level, only with a card")
+    # the role's session context limit in tokens, present only when the role has one (any session: a card's, the chat)
+    if "context_limit" in request:
+        try:
+            context_limit.check(request["context_limit"])
+        except ValueError as exc:
+            raise _bad(f"context_limit: {exc}") from None
     # the autonomy design, piece 2: a card's probe exit, present only when the cabinet granted it
     egress = request.get("egress")
     if "egress" in request and not (isinstance(egress, str) and EGRESS.fullmatch(egress) and request["card"] != ""):
@@ -208,6 +215,8 @@ def _job(request: dict) -> dict:
             llm_models.check_effort(definition["effort"])
         if "pull" in definition:  # the runner puts the job's copy on a pull request's head
             worker_jobs.check_pull(definition["pull"])
+        if "context_limit" in definition:  # the role's session context limit, as the cabinet sent the job
+            context_limit.check(definition["context_limit"])
     except ValueError as exc:
         raise _bad(f"job definition: {exc}") from None
     return request

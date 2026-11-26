@@ -1,5 +1,6 @@
 // Journal events in words, for a card's history and the feed. The server stores keys and facts only;
 // the reader's language turns them into text here.
+import { tokens } from "./contextLimit";
 import { hasKey, t, type Key } from "./i18n.svelte";
 import { projects } from "./stores/projects.svelte";
 import { when } from "./time";
@@ -100,6 +101,10 @@ export function describeEvent(event: JournalEvent): string {
       return t("feed.project.created", { project: p.name ?? p.project ?? "" });
     case "project.changed":
       return t("feed.project.changed", { project: projects.name(p.project ?? "") });
+    case "context_limit.changed": { // a role's session context limit: tokens or "none"
+      const value = (v: unknown) => (typeof v === "number" ? tokens(v) : t("feed.context_limit.none"));
+      return t("feed.context_limit.changed", { agent: p.agent ?? "", from: value(p.limit?.from), to: value(p.limit?.to) });
+    }
     case "project.deleted":
       return t("feed.project.deleted", { project: p.project ?? "", target: projects.name(p.target ?? "") });
     case "project.repo": // a repository request or the root unit's outcome; "" — unbound

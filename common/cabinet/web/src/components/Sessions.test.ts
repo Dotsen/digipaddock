@@ -156,6 +156,25 @@ describe("Sessions", () => {
       expect(fetch.mock.calls.map((c) => c[0])).toEqual(["/api/sessions/s1/turns"]);
     });
 
+    it("a compaction is a line of its turn with the context before and after (KD-9462)", async () => {
+      const compacted = (key: string, params: Record<string, string | number>) =>
+        step({ seq: 9, kind: "status", body: "context compacted", status: { key, params } });
+      serve([200, [{ ...TURNS[1], steps: [
+        step({ seq: 3, body: "Смотрю карточку" }),
+        compacted("sys.session.compacted", { trigger: "auto", before: 412345, after: 45005 }),
+        { ...compacted("sys.session.compacted_before", { trigger: "auto", before: 98765 }), seq: 10 },
+      ] }]]);
+      render(Sessions, { sessions: [agentSession({ id: "s1", state: "working" })], canControl: true });
+      await fireEvent.click(screen.getByRole("button", { name: "Ход" }));
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Смотрю карточку"));
+      const steps = [...document.querySelectorAll(".step")].map((s) => s.textContent?.replace(/\s+/g, " ").trim());
+      expect(steps).toEqual([
+        "Смотрю карточку",
+        "Контекст сжат: 412 345 → 45 005 токенов",
+        "Контекст сжат: было 98 765 токенов",
+      ]);
+    });
+
     it("retries the turns after an error", async () => {
       serve([500, { error: "unavailable", message: "x" }], [200, TURNS]);
       render(Sessions, { sessions: [agentSession({ id: "s1", state: "idle" })], canControl: true });

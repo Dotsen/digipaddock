@@ -1039,6 +1039,43 @@ def test_a_key_gone_before_the_sessions_spawn_fails_it_no_key(tmp_path, monkeypa
     assert sessions == [("starting", None), ("failed", "no_key: openrouter")] and seen == []
 
 
+def test_the_roles_context_limit_reaches_the_launch_as_claudes_auto_compact_window(tmp_path):
+    """the delivery's ``context_limit`` is a plain variable of the unit, which agent-launch passes on to claude;
+    a delivery without it sets nothing, and the journal names the window each process starts with."""
+    cabinet = Cabinet()
+
+    async def scenario():
+        host = _host(tmp_path, cabinet)
+        await host.start()
+        line = json.loads(_deliver())
+        line["context_limit"] = 400000
+        answer = json.loads(await host.request(json.dumps(line).encode() + b"\n", CABINET_UID))
+        await _until(lambda: any(i.get("state") == "idle" for i in cabinet.items()))
+        await host.close()
+        return host, answer
+
+    host, answer = asyncio.run(scenario())
+    assert answer == {"ok": True, "state": "starting"}
+    [argv] = host.argvs
+    assert "--setenv=CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000" in argv
+    assert argv.index("--setenv=CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000") < argv.index("/usr/local/bin/agent-launch")
+    journal = [json.loads(line) for line in (tmp_path / "host.jsonl").read_text("utf-8").splitlines()]
+    assert [j["context_limit"] for j in journal if j.get("op") == "spawn"] == [400000]
+
+    plain = Cabinet()
+
+    async def without():
+        host = _host(tmp_path / "plain", plain)
+        await host.start()
+        await host.request(_deliver(), CABINET_UID)
+        await _until(lambda: any(i.get("state") == "idle" for i in plain.items()))
+        await host.close()
+        return host
+
+    [argv] = asyncio.run(without()).argvs
+    assert not any(part.startswith("--setenv=CLAUDE_CODE_AUTO_COMPACT_WINDOW") for part in argv)
+
+
 def test_a_subscription_session_starts_on_the_host_token_with_the_alias(tmp_path, monkeypatch):
     """a card on ``claude:sonnet`` — ``--model sonnet`` on the host's own Claude token, no provider
     environment, no kind's key read; the turn's usage is under the names Claude Code reports, at their cost."""

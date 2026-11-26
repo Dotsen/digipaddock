@@ -210,7 +210,11 @@ def test_dispatcher_names_the_space_and_an_old_host_gets_it_without(env):
     request = dispatcher._prepare(svc, monitor, now)
     assert request["space"] == "monitor" and "space" not in dispatcher._prepare(svc, plain, now)
     old = dispatcher.HostRefused("invalid", "unknown field for deliver")
-    assert "space" not in dispatcher._ordinary(request, old) and dispatcher._ordinary(request, ValueError()) is None
+    # the role's context limit, newer than ``space``, goes first; a host older than both gets neither
+    without_limit = dispatcher._ordinary(request, old)
+    assert "context_limit" not in without_limit and without_limit["space"] == "monitor"
+    assert "space" not in dispatcher._ordinary(without_limit, old)
+    assert dispatcher._ordinary(request, ValueError()) is None
 
 
 SID = "0b9c3f1e-1111-2222-3333-444455556666"

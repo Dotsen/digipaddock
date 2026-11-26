@@ -59,6 +59,13 @@ describe("Message", () => {
     expect(text).not.toContain("exit 143");
   });
 
+  it("a compaction line in the thread writes its sizes with digit groups (KD-9462)", () => {
+    const line = status("sys.session.compacted", {}, "context compacted (auto): 412345 -> 45005 tokens");
+    render(Message, { message: { ...line, payload: { key: "sys.session.compacted",
+                                                     params: { trigger: "auto", before: 412345, after: 45005 } } } });
+    expect((document.body.textContent ?? "").replace(/\s/g, " ")).toContain("Контекст сжат: 412 345 → 45 005 токенов");
+  });
+
   it("renders a diagnostic result with code, target and requester (R31)", () => {
     const diagnostic = (key: string, params: Record<string, string>): MessageType => ({
       seq: 6, author: "system:diag", author_name: "", kind: "diagnostic", body: "",

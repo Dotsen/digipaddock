@@ -38,6 +38,13 @@ describe("journal events in words", () => {
     );
   });
 
+  it("names a role's context limit change with the old and the new value (KD-9462)", () => {
+    const changed = (from: unknown, to: unknown) =>
+      describeEvent(event("context_limit.changed", { agent: "dev", limit: { from, to } }, "user:owner")).replace(/\s/g, " ");
+    expect(changed(400000, 250000)).toBe("Предел контекста @dev: 400 000 → 250 000");
+    expect(changed(250000, "none")).toBe("Предел контекста @dev: 250 000 → без предела");
+  });
+
   it("says who decided what", () => {
     const text = describeEvent(event("decision.approved", { type: "admin_plan" }, "user:owner"));
     expect(text).toContain("@owner");

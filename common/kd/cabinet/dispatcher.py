@@ -12,7 +12,9 @@ writes a wake that comes while the process lives into that process). A delivered
 (it waits at the host for a slot or behind a turn) is checked again each tick, and the host gives it back when its card moved on.
 A new ``command.queued`` event wakes the loop at once. An ``urgent`` command (the wake of an approved
 critical command) goes with ``urgent`` true, and once more without it to a host that does not know the field yet.
-A card's command of a project with a memory bank names it as ``memory``, the same way. A card's command on
+A card's command of a project with a memory bank names it as ``memory``, the same way. Every command names its
+role's session context limit in force as ``context_limit`` (``kd.cabinet.context_limits``; none — no field), the
+same way again: it is the first field dropped for an older host. A card's command on
 a cabinet model (the card's, else its project's) names it as ``model`` and the effort as ``effort`` — those
 are never dropped for an older host: a session the owner put on a model is not run on the subscription behind their
 back, the command fails ``host_outdated`` until the host restarts. A disabled model or a kind without its key on the
@@ -52,7 +54,7 @@ from typing import Optional
 import uuid
 
 from kd import contours, naming
-from kd.cabinet import api, commands, devchecks, egress, jobs, llm_api, operations, sessions_api
+from kd.cabinet import api, commands, context_limits, devchecks, egress, jobs, llm_api, operations, sessions_api
 
 HOST_SOCKET = "/run/digipaddock-session-host/host.sock"
 BACKOFF = (2, 5, 15, 30, 60, 120, 300)
@@ -155,6 +157,9 @@ def _prepare(svc, command: dict, now: datetime) -> Optional[dict]:
         request["urgent"] = True  # the host starts it at once, over the agent's slots
     if space not in ("", "chat"):
         request["space"] = space  # the session of the agent's "Monitor" launches as that thread's
+    limit = context_limits.effective(store, command["agent"])  # the role's limit in force; 0 — none, not sent
+    if limit:
+        request["context_limit"] = limit
     if command["card"]:
         record = store.card(command["card"])
         project = store.project(record.project) or {}
@@ -211,13 +216,16 @@ MODEL_FIELDS = ("model", "effort")  # never dropped — see ``_refusal``
 
 
 def _ordinary(request: dict, exc: Exception) -> Optional[dict]:
-    """A host older than ``urgent``, ``space`` or ``memory`` refuses the field — the same
-    delivery without the newest of them, so the command still reaches the agent's queue as before (a session without
-    ``memory`` keeps the role bank, an ``urgent`` one stays urgent on a host that knows it); None for any other
-    refusal. The host does not name the field, hence one field a retry. A delivery with a model or an effort is
-    never retried without them: an unknown field there fails it as ``host_outdated``."""
+    """A host older than ``urgent``, ``space``, ``memory``, ``egress`` or ``context_limit`` refuses the field — the
+    same delivery without the newest of them, so the command still reaches the agent's queue as before (a session
+    without ``memory`` keeps the role bank, an ``urgent`` one stays urgent on a host that knows it, one without
+    ``context_limit`` runs on Claude Code's own window); None for any other refusal. The host does not name the
+    field, hence one field a retry. A delivery with a model or an effort is never retried without them: an unknown
+    field there, once the newer fields are gone, fails it as ``host_outdated``."""
     newer = [k for k in NEWER_FIELDS if k in request]
     unknown = isinstance(exc, HostRefused) and exc.kind == "invalid" and "unknown field" in str(exc)
+    if unknown and "context_limit" in request:  # the newest: a host older than it runs on Claude Code's own window
+        return {k: v for k, v in request.items() if k != "context_limit"}
     if unknown and "egress" in request:  # a host older than probe exits: the session runs without one
         return {k: v for k, v in request.items() if k != "egress"}
     if any(k in request for k in MODEL_FIELDS):

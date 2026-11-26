@@ -547,6 +547,11 @@ def prepare(ctx, job_id: str, expired_before: str) -> Optional[dict]:
     definition = job["data"]["definition"]
     if job["data"].get("inputs"):  # what the job's worker reads goes with it
         definition = {**definition, "inputs": job["data"]["inputs"]}
+    from kd.cabinet import context_limits  # lazy: api imports this module before context_limits
+
+    limit = context_limits.effective(ctx.store, job["agent"])  # the role's limit as the job is sent; 0 — none
+    if limit:
+        definition = {**definition, "context_limit": limit}
     return {"op": "job", "job": job_id, "agent": job["agent"], "definition": definition}
 
 

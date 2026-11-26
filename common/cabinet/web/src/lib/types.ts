@@ -799,7 +799,7 @@ export interface TurnStep {
   ok: boolean | null;
   size: number | null;
   output: boolean;
-  status: { key: string; params: Record<string, string> } | null;
+  status: { key: string; params: Record<string, string | number> } | null; // a compaction's sizes are numbers
 }
 
 /** A session's turn: the command that started it, how it went, its cost and its steps. */

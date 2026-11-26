@@ -4,6 +4,8 @@
 ``GET /api/models/providers`` — the catalog's kinds without their secret names, with whether the host holds each
 kind's key; ``POST``, ``PATCH``, ``DELETE /api/models[/{id}]`` and ``POST /api/models/{id}/probe`` — ``settings``.
 A model a card or a project names answers 409 ``model_referenced`` to a delete: disable it instead.
+``GET /api/context-limits`` and ``PUT /api/context-limits/{agent}`` — ``settings``: each role's session context
+limit, the same page's «Context limit» tab.
 """
 
 from fastapi import APIRouter, Depends, Request
@@ -133,3 +135,20 @@ async def probe(model_id: str, request: Request, user: deps.User = Depends(deps.
     """Ask the host to try the model; the row shows ``probe.state = requested`` until the result lands."""
     _settings(request, user)
     return (await call(request, user, {"op": "llm.probe.request", "id": model_id}))["model"]
+
+
+@router.get("/api/context-limits")
+async def context_limits(request: Request, user: deps.User = Depends(deps.current_user)):
+    """Each role's session context limit: ``{agent, limit (tokens or "none"), set}`` (``kd.cabinet.context_limits``)."""
+    _settings(request, user)
+    return (await call(request, user, {"op": "context.list"}))["limits"]
+
+
+@router.put("/api/context-limits/{agent}")
+async def context_limit_set(agent: str, request: Request, user: deps.User = Depends(deps.writer)):
+    """``{limit}`` — tokens or ``"none"``; a value out of range answers 400 ``context_limit_range``."""
+    body = await deps.json_body(request)
+    _settings(request, user)
+    if set(body) != {"limit"}:
+        raise Failure(400, "invalid", "only limit is accepted")
+    return (await call(request, user, {"op": "context.set", "agent": agent, "limit": body["limit"]}))["limit"]

@@ -247,7 +247,11 @@ cabinet). Tokens and the cache hit rate are counted per agent and per worker job
 A card or a project can be put on another model of the subscription, or on a model of another provider (the Anthropic API, the OpenAI API through a local
 transport, OpenRouter, Fireworks, DeepSeek or a custom Anthropic-compatible endpoint) and on an effort level, from the cabinet; the provider's key stays in a root file on
 the host, usage is priced by the model's own table, and a model that cannot run fails the card's command with the
-reason instead of falling back to the subscription ([cabinet](cabinet.md#models-and-providers)).
+reason instead of falling back to the subscription ([cabinet](cabinet.md#models-and-providers)). Each role has a
+session context limit, 400 000 tokens by default: past it Claude Code compacts the conversation instead of carrying
+the whole history in every request; the owner sets it per role in the cabinet, a change applies from the role's next
+turn without a reinstall, and each compaction shows in the card's Sessions tab
+([cabinet](cabinet.md#session-context-limit)).
 
 ## Try it
 
