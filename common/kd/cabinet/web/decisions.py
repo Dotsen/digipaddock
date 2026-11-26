@@ -28,7 +28,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
 
-from kd import admin_action, boss_board, boss_promote, pr_signature
+from kd import admin_action, boss_board, boss_promote, factory_ops, pr_signature
 from kd import admin_operations as ops
 from kd.cabinet import (
     api, briefs, councils, decisions, effects, passkeys, prs_api, questions, review_client, store, users,
@@ -56,7 +56,8 @@ def _card(service, decision) -> Optional[dict]:
 
 def _mechanics(op, deployed: str = "") -> str:
     if op.get("component"):  # the component, its mode and the tree the signature covers — the one deployed
-        tree = f"ревизия на момент подписи (сейчас {deployed[:12]})" if deployed else "ревизия на момент подписи"
+        now = factory_ops.short(deployed)
+        tree = f"ревизия на момент подписи (сейчас {now})" if deployed else "ревизия на момент подписи"
         return f"{op['verb']} · {op['component']} {op.get('mode', '')} · {tree}"
     return f"{op['verb']} · {', '.join(op.get('agents') or ())}"
 
@@ -350,15 +351,14 @@ def _ids(value) -> list:
     return value
 
 
-PASSKEY_ONLY = "a server plan or a critical command is signed with a passkey"
+PASSKEY_ONLY = "a server or factory plan, a critical command or a monitor trust is signed with a passkey"
 
 
 def _passkey_only(decision: dict) -> bool:
-    """a server plan or a critical command is signed for the targets' exec gate, which verifies a passkey
-    assertion — a TOTP code is no signature there. A factory plan runs on the factory host: TOTP still signs it."""
-    if decision["type"] == "admin_critical":
-        return True
-    return decision["type"] == "admin_plan" and decision["payload"].get("policy") != "factory"
+    """a plan (a server's or the factory's), a critical command and a trust of the monitor are signed with a
+    passkey only: the targets' exec gate verifies a passkey assertion — a TOTP code is no signature there —
+    and the security model promises one for each of them."""
+    return decision["type"] in ("admin_critical", "admin_plan", "monitor_trust")
 
 
 @router.post("/api/decisions/challenge")
@@ -391,7 +391,7 @@ async def challenge(request: Request, user: deps.User = Depends(deps.writer)):
     totp = step_up and not passkey_only and service.users.has_second_factor(user.id)["totp"]
     if step_up and not allow and not totp:
         raise Failure(403, "setup_required",
-                      "add a passkey first: a server plan or a critical command is signed with one"
+                      "add a passkey first: a plan, a critical command or a monitor trust is signed with one"
                       if passkey_only else "add a passkey or TOTP first")
     revisions = {decisions.basis_key(d): api.decision_basis(service.ctx, d) for d in found}
     for d in found:  # the tree a component step will be signed for

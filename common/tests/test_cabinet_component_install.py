@@ -252,6 +252,78 @@ def test_authorize_takes_an_empty_batch(granted):
     assert answer["allowed"] is False and answer["reason"] == "revision_moved"
 
 
+# --- a release is the code and the overlay: the signature binds both ---
+TREE_A, TREE_A2 = f"{REV_A[:7]}+1111111", f"{REV_A[:7]}+2222222"
+
+
+def test_deployed_is_the_code_and_the_overlay_revision(tmp_path):
+    from types import SimpleNamespace
+
+    (tmp_path / "REVISION").write_text(REV_A[:7] + "\n")
+    ctx = SimpleNamespace(repo_root=str(tmp_path))
+    assert operations.deployed(ctx) == REV_A[:7]  # a host with no overlay keeps working
+    (tmp_path / "DEPLOY_REVISION").write_text("1111111\n")
+    assert operations.deployed(ctx) == TREE_A
+    (tmp_path / "DEPLOY_REVISION").write_text("main\n")
+    with pytest.raises(api.ApiError) as exc:
+        operations.deployed(ctx)
+    assert exc.value.kind == "unavailable"
+
+
+def test_an_overlay_only_release_ends_the_signature(env):  # noqa: F811 - the imported fixture
+    env.ctx.deployed_revision = lambda: TREE_A
+    env.put("KD-50", project="digipaddock", assignee="@dev", status="In Progress")
+    approve(env, open_plan(env, steps=(STEP,)))
+    op = ask(env)
+    assert op["revision"] == TREE_A
+    assert env.call("root", {"op": "operation.authorize", "operation": op["id"], "agents": []})["allowed"] is True
+    env.ctx.deployed_revision = lambda: TREE_A2  # the same code, another overlay
+    answer = env.call("root", {"op": "operation.authorize", "operation": op["id"], "agents": []})
+    assert (answer["allowed"], answer["reason"]) == (False, "revision_moved")
+    with pytest.raises(api.ApiError) as exc:
+        ask(env, key="c:2")
+    assert exc.value.kind == "refused" and "new plan" in str(exc.value)
+
+
+def test_a_plan_naming_the_code_commit_alone_is_the_deployed_tree(env):  # noqa: F811 - the imported fixture
+    env.ctx.deployed_revision = lambda: TREE_A
+    env.put("KD-50", project="digipaddock", assignee="@dev", status="In Progress")
+    assert open_plan(env, steps=({**STEP, "revision": REV_A[:12]},))["state"] == "open"
+    with pytest.raises(api.ApiError) as exc:
+        open_plan(env, steps=({**STEP, "revision": f"{REV_A[:7]}+3333333"},))
+    assert exc.value.kind == "refused" and "deployed" in str(exc.value)
+
+
+def test_the_release_asks_by_its_code_commit_on_a_tree_with_an_overlay(env):  # noqa: F811 - the imported fixture
+    """kd-release names the code's REVISION; the operation records the whole tree it runs on."""
+    env.ctx.deployed_revision = lambda: TREE_A
+    env.put("KD-50", project="digipaddock", assignee="@dev", status="In Progress")
+    approve(env, open_plan(env, steps=(RELEASE_STEP,)))
+    assert release_ask(env, rev=REV_A[:7])["revision"] == TREE_A
+    with pytest.raises(api.ApiError) as exc:
+        release_ask(env, rev=f"{REV_A[:7]}+2222222", key="release:x")
+    assert exc.value.kind == "refused" and operations.REVISION_MOVED in str(exc.value)
+
+
+def test_the_host_gets_the_code_commit_and_the_runner_s_tree_is_checked(env):  # noqa: F811 - the imported fixture
+    """The session host (maybe pinned to an older release) takes a commit; the overlay is checked at authorize, with
+    the tree the runner itself read."""
+    env.ctx.deployed_revision = lambda: TREE_A
+    env.put("KD-50", project="digipaddock", assignee="@dev", status="In Progress")
+    approve(env, open_plan(env, steps=(STEP,)))
+    op = ask(env)
+    assert operations.host_request(operations.row(env.store, op["id"]), 900)["revision"] == REV_A[:7]
+
+    def asks(tree):
+        return env.call("root", {"op": "operation.authorize", "operation": op["id"], "agents": [], "tree": tree})
+
+    assert asks(TREE_A)["allowed"] is True
+    assert (asks(TREE_A2)["allowed"], asks(TREE_A2)["reason"]) == (False, "revision_moved")
+    with pytest.raises(api.ApiError) as exc:
+        asks("../x")
+    assert exc.value.kind == "invalid"
+
+
 def test_success_posts_codes_and_tails_in_the_thread(granted):
     op = ask(granted)
     report(granted, op, "succeeded", phase="installing",

@@ -156,6 +156,49 @@ def test_a_sysctl_drop_that_changes_the_network_or_hides_its_key_is_refused(text
 
 
 @pytest.mark.parametrize(
+    "key",
+    [
+        "kernel.yama.ptrace_scope",
+        "kernel/yama/ptrace_scope",
+        "-kernel.yama.ptrace_scope",
+        "fs.protected_symlinks",
+        "fs.protected_hardlinks",
+        "fs.protected_fifos",
+        "fs.protected_regular",
+        "fs.suid_dumpable",
+        "kernel.kptr_restrict",
+        "kernel.dmesg_restrict",
+        "kernel.perf_event_paranoid",
+        "kernel.unprivileged_bpf_disabled",
+        "kernel.unprivileged_userns_clone",
+        "kernel.apparmor_restrict_unprivileged_userns",
+        "kernel.randomize_va_space",
+        "kernel.sysrq",
+        "kernel.io_uring_disabled",
+        "vm.mmap_min_addr",
+        "vm.unprivileged_userfaultfd",
+        "dev.tty.ldisc_autoload",
+        "dev.tty.legacy_tiocsti",
+        "user.max_user_namespaces",
+    ],
+)
+def test_a_sysctl_drop_that_weakens_a_kernel_protection_is_refused(key):
+    # applied at once like net.*: loosening the kernel's own protections is a critical action the owner signs
+    problem = policy.drop_problem("/etc/sysctl.d", "60-kd.conf", "vm.swappiness = 10\n%s = 0\n" % key)
+    assert problem is not None and "kd-admin-propose-action" in problem, problem
+
+
+def test_a_binfmt_handler_is_a_program_the_kernel_starts():
+    problem = policy.drop_problem("/etc/sysctl.d", "60-kd.conf", "fs.binfmt_misc.register = x\n")
+    assert problem is not None and "fs.binfmt_misc" in problem, problem
+
+
+@pytest.mark.parametrize("key", ["kernel.pid_max", "kernel.panic", "fs.file-max", "vm.max_map_count", "kernel.shmmax"])
+def test_ordinary_kernel_tunables_may_still_be_dropped(key):
+    assert policy.drop_problem("/etc/sysctl.d", "60-kd.conf", "%s = 1\n" % key) is None
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "\"/var/log/app/access.log\" '/var/log/app/error.log' {\n  copytruncate\n}\n",

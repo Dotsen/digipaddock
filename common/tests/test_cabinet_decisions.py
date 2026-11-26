@@ -1257,3 +1257,45 @@ def test_the_rule_answering_a_live_approval_still_closes_an_older_open_question(
     assert again["decision"]["id"] == first["decision"]["id"] and again["approved"] == first["approved"]
     assert env.call("digi-cabinet", {"op": "decision.get", "id": asked["id"]})["decision"]["state"] == "expired"
     assert env.call("digi-cabinet", {"op": "decision.list", "state": "open"})["decisions"] == []
+
+
+# --- every question is a push to the people: an agent's are bounded ---------------------
+def _ask(env, card, text, agent="dev"):
+    return env.call("digi", {"op": "decision.open", "type": "question", "agent": agent, "card": card.id,
+                             "payload": {"text": text}})["decision"]
+
+
+def test_a_card_holds_a_bounded_number_of_open_questions(tmp_path):
+    from kd import pipeline_config
+
+    env = CabinetEnv(tmp_path)
+    env.ctx.pipeline = lambda: pipeline_config.Config(questions_open=2)
+    card = env.card(project="digipaddock", assignee="@dev")
+    first = _ask(env, card, "1?")
+    _ask(env, card, "2?")
+    assert _ask(env, card, "1?")["id"] == first["id"]  # asked again: the same open question, nothing new
+    with pytest.raises(api.ApiError) as exc:
+        _ask(env, card, "3?")
+    assert exc.value.kind == "refused" and f"2 open questions on {card.id}" in str(exc.value)
+    _owner(env)
+    env.call("digi-cabinet", {"op": "decision.reply", "id": first["id"], "user": "owner", "text": "да"})
+    assert _ask(env, card, "3?")["state"] == "open"  # an answered one leaves room
+
+
+def test_an_agents_questions_are_bounded_per_window_across_its_cards(tmp_path):
+    from kd import pipeline_config
+
+    env = CabinetEnv(tmp_path)
+    env.ctx.pipeline = lambda: pipeline_config.Config(questions_window_s=3600, questions_per_window=3)
+    cards = [env.card(project="digipaddock", assignee="@dev") for _ in range(3)]
+    _ask(env, cards[0], "1?")
+    _ask(env, cards[1], "2?")
+    _ask(env, cards[2], "3?")
+    with pytest.raises(api.ApiError) as exc:
+        _ask(env, cards[0], "4?")
+    assert exc.value.kind == "refused" and "3 questions in 60 minutes" in str(exc.value)
+    assert len(env.call("root", {"op": "decision.list", "state": "open"})["decisions"]) == 3
+    other = env.card(project="admin", assignee="@sysadmin")
+    assert _ask(env, other, "5?", agent="sysadmin")["state"] == "open"  # another agent's window is its own
+    env.now = "2026-10-14T11:00:01Z"  # the window moved past the first three
+    assert _ask(env, cards[0], "4?")["state"] == "open"

@@ -29,11 +29,10 @@
 
   const type = $derived(items[0]?.decision.type ?? "");
   const ttlOptions = $derived(items[0]?.view.ttl_options ?? []);
-  // a server plan or a critical command is signed with a passkey only — the target verifies that
-  // signature, a code it could not (the server refuses TOTP for them anyway; the page does not offer it).
-  // every decision of a batch counts, not only the first — a factory plan first must not offer the code
-  const needsPasskey = (item: DecisionItem) =>
-    item.decision.type === "admin_critical" || (item.decision.type === "admin_plan" && item.view.policy !== "factory");
+  // a plan, a critical command and a monitor trust are signed with a passkey only — the targets verify that
+  // signature, a code they could not (the server refuses TOTP for them anyway; the page does not offer it).
+  // every decision of a batch counts, not only the first
+  const needsPasskey = (item: DecisionItem) => ["admin_plan", "admin_critical", "monitor_trust"].includes(item.decision.type);
   const passkeyOnly = $derived(!!mode || items.some(needsPasskey));
   let ttl = $state(72);
   let phase = $state<"ready" | "working" | "totp" | "conflict">("ready");

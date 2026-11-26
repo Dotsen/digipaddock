@@ -471,6 +471,47 @@ def test_release_lock_with_a_second_link_is_refused(tmp_path, monkeypatch):
     assert "kd-cabinet: release lock" in err.getvalue() and chowned == [] and not (release / "request.json").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="a symlink and its mode: POSIX, run on the Linux host")
+def test_roots_request_sets_its_mode_on_the_descriptor_not_through_a_swapped_name(tmp_path, monkeypatch):
+    """The release directory is the forge user's: it may swap root's temporary request for a link to a root file
+    between the write and the rename. Root's mode goes on the file it wrote, never on what the name points to."""
+    from kd import atomic_file
+
+    cab = _kd_cabinet()
+    release, repos = tmp_path / "release", tmp_path / "repos.json"
+    release.mkdir()
+    repos.write_text(json.dumps({"digipaddock": {"repo": "example/digipaddock", "dir": "w", "release": "digipaddock"}}),
+                     encoding="utf-8")
+    victim = tmp_path / "root-secret"
+    victim.write_text("secret", encoding="utf-8")
+    victim.chmod(0o600)
+    monkeypatch.setattr(cab, "RELEASE_DIR", str(release))
+    monkeypatch.setattr(cab, "REPOS", str(repos))
+    monkeypatch.setattr(cab.os, "fchown", lambda fd, uid, gid: None, raising=False)
+    real_fsync = os.fsync
+
+    def swap(fd):  # the directory's owner, between root's write and its rename
+        real_fsync(fd)
+        for name in os.listdir(release):
+            if name.startswith(".request.json.") and name.endswith(".tmp"):
+                os.unlink(release / name)
+                os.symlink(victim, release / name)
+
+    monkeypatch.setattr(atomic_file.os, "fsync", swap)
+    err = io.StringIO()
+    cab.main(["release", "digipaddock"], out=io.StringIO(), err=err)
+    assert victim.stat().st_mode & 0o777 == 0o600 and victim.read_text(encoding="utf-8") == "secret"
+
+
+def test_atomic_replace_sets_the_mode_it_was_given(tmp_path):
+    from kd import atomic_file
+
+    atomic_file.replace(str(tmp_path / "f.json"), b"{}", 0o640)
+    assert (tmp_path / "f.json").read_bytes() == b"{}"
+    if os.name != "nt":
+        assert (tmp_path / "f.json").stat().st_mode & 0o777 == 0o640
+
+
 def test_release_rollback_hands_over_to_kd_release(monkeypatch):
     cab = _kd_cabinet()
     seen = []

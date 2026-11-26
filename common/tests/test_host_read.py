@@ -402,3 +402,37 @@ def test_an_unknown_root_name_is_usage() -> None:
 def test_paths_lists_names_and_paths() -> None:
     rc, out, _ = _run(["paths"])
     assert rc == 0 and out == "attention  /var/lib/digipaddock/attention\n"
+
+
+# --- the read gateway's mask guards (KD-9481) and the host reader (KD-9483) ---------------------------
+# The gateway refuses forms that reshape text past its masks. kd-host-read has no masks: what it may reach holds no
+# secret by its catalog, so those refusals guard nothing here. What these tests pin is the part that still matters:
+# the forms that would reach further stay refused, and a -g search answers nothing about a record it drops.
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["systemctl", "show", "-P", "MainPID", "nginx"], ["cat", "-v", "attention/a.json"], ["cat", "-A", "attention/x"],
+     ["journalctl", "-u", "nginx", "-o", "json-pretty"], ["journalctl", "-u", "nginx", "--output=json-sse"],
+     ["sys", "ps", "-ww"], ["sys", "ps", "--cols=999"]],
+)
+def test_the_gateways_reshaping_forms_are_not_forms_of_the_host_reader(argv) -> None:
+    rc, _, seen = _run(argv)
+    assert rc == host_read.EXIT_USAGE and not seen
+
+
+def test_systemctl_value_prints_what_show_prints_with_names() -> None:
+    # no mask keys on the property's name here, so dropping the name hides nothing more and shows nothing more
+    rc, _, seen = _run(["systemctl", "show", "--value", "-p", "MainPID", "nginx"])
+    assert rc == 0 and seen[0][-4:] == ["--value", "--property=MainPID", "--", "nginx"]
+
+
+def test_journal_grep_says_nothing_about_a_dropped_record() -> None:
+    # journalctl matches -g; the reader drops private and audit records before it counts -n, and its exit code is 0
+    # whatever matched: a private record that matched answers as if nothing had
+    private = _entry("COMMAND=/bin/true", unit="digipaddock-release.service", transport="syslog", comm="sudo")
+    audit = _entry("tool Bash x", unit="digipaddock-release.service", transport="syslog", ident="kd-permission")
+    public = _entry("released x", unit="digipaddock-release.service", us=1)
+    argv = ["journalctl", "-u", "digipaddock-release", "-g", "x", "-n", "1", "-o", "cat"]
+    assert _run(argv, lines=[private, audit, public])[:2] == (0, "released x\n")
+    assert _run(argv, lines=[private, audit])[:2] == _run(argv, lines=[])[:2] == (0, "")

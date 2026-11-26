@@ -11,6 +11,7 @@ itself — exec key, time and output limits, signals, journal "result", the noti
 ssh-exec's own (execute._execute).
 """
 import argparse
+import json
 import os
 import re
 import sys
@@ -52,6 +53,35 @@ def _envelope(grant, op, op_index, command, *, card, catalog, inventory_data, en
     if plan.sha256 != grant.proposal_sha256:
         raise Refused(f"{grant.task_id}: the stored proposal is not the approved one; the owner approved another plan")
     return exec_envelope.build_plan(grant, plan.as_dict(), op_index, op.server, command)
+
+
+STEP_TIMEOUT = 20
+
+
+def _check_previous(grant, envelope, op_index, runner, inventory_path, enabled_path) -> None:
+    """A signed plan runs in order: step N only after step N-1 succeeded. A target's gate journals the steps it ran
+    and keeps the order of its own; when step N-1 ran on another server, its gate answers whether it succeeded
+    there (``exec_envelope.STEP_RUN``) — anything but its "ok" refuses (fail closed). An unsigned grant (the test
+    zone's rule, a grant before the signature named its decision) keeps no journal there: nothing to ask."""
+    if op_index == 1 or grant.approved_by == admin_grant.TEST_ZONE:
+        return
+    data = json.loads(envelope)
+    previous = admin_grant.operation_at(grant, op_index - 1)["server"]
+    key = exec_envelope.plan_key(data["decision"]["id"], data["decision"]["nonce"],
+                                 data["payload"]["proposal_sha256"], op_index - 1)
+    if previous == data["server"] or not key:
+        return
+    server = inventory.get(previous, inventory_path, enabled_path)
+    ssh = inventory.ssh_argv(execute.EXEC_KEY, execute.KNOWN_HOSTS, server.exec_user, server.host,
+                             f"{exec_envelope.STEP_RUN} {key}")
+    try:
+        result = runner(ssh, timeout=STEP_TIMEOUT, limit=4096, kill_on_limit=True)
+        confirmed = not result.timed_out and result.returncode == 0 and result.output.split() == [b"ok"]
+    except Exception:  # noqa: BLE001 — ssh did not start: nothing confirms the step
+        confirmed = False
+    if not confirmed:
+        raise Refused(f"{grant.task_id}: operation {op_index - 1} on {previous} has not succeeded (its gate does not "
+                      f"confirm it); run it first — a failed operation may be run again")
 
 
 def main(argv=None, *, env=None, client=None, grants=admin_approval.GRANTS,
@@ -113,6 +143,7 @@ def main(argv=None, *, env=None, client=None, grants=admin_approval.GRANTS,
         if exec_envelope.enabled() if envelopes is None else envelopes:
             envelope = _envelope(grant, op, op_index, command, card=card, catalog=catalog,
                                  inventory_data=inventory_data, enabled=enabled, grants=grants, owner_uid=owner)
+            _check_previous(grant, envelope, op_index, runner, inventory_path, enabled_path)
     except (Refused, admin_grant.GrantError, admin_task.CardError, ops.ProposalError, ops.CatalogError,
             inventory.InventoryError, ValueError, KeyError, OSError) as exc:
         reason = str(exc) or exc.__class__.__name__
@@ -126,6 +157,8 @@ def main(argv=None, *, env=None, client=None, grants=admin_approval.GRANTS,
 
     extra = {"kind": "admin", "task_id": task_id, "grant_id": grant.grant_id, "op_index": op_index,
              "op_count": len(grant.operations), "operation": op.as_dict()}
+    if grant.approved_by == admin_grant.TEST_ZONE:
+        extra["test_zone"] = True  # no owner's signature: its step hands nothing to the monitor's baseline
     out.write(f"=== {task_id} {op_index}/{len(grant.operations)}: {ops.describe(op)}\n".encode("utf-8"))
     try:
         execute._state["armed"] = True

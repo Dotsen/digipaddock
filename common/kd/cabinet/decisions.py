@@ -155,6 +155,14 @@ class Decisions:
             return found
         return [d for d in found if d["project"] in projects]
 
+    def asked_since(self, requested_by: str, since: str) -> int:
+        """How many questions ``requested_by`` opened at or after ``since``, on any card and in any state now."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM decisions WHERE type='question' AND requested_by=? AND created>=?",
+            (requested_by, since),
+        ).fetchone()
+        return int(row[0])
+
     # --- the challenge -------------------------------------------------------------------------
     @staticmethod
     def digest(

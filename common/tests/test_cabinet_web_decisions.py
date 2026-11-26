@@ -304,8 +304,7 @@ def test_a_batch_holds_one_type(w, admin_proposal):
 
 
 def _factory_plan(w, task_id):
-    """The developer's factory plan as a decision: it runs on the factory host, so a TOTP code still
-    signs it (only the targets' plans are bound to a passkey)."""
+    """The developer's factory plan as a decision."""
     w.env.put(task_id, project="digipaddock", assignee="@dev", status="In Progress")
     step = {"verb": "agent.reinstall", "target": "factory", "agents": ["dev"], "what": "Переустановить dev",
             "effect": "Новые инструкции dev", "risk": {"level": "low", "why": "Очередь сохраняется"},
@@ -370,6 +369,8 @@ def test_server_plan_refuses_totp(w, admin_proposal):
     """a server plan is signed for the targets' gate, which checks a passkey assertion — a TOTP code is
     no signature: the challenge offers none, a code sent anyway is refused before it is checked, the passkey
     still signs."""
+    from kd.cabinet.web import decisions as web_decisions
+
     w.login()
     auth = _passkey(w)
     d = _plan(w, admin_proposal, "KD-193")
@@ -377,7 +378,7 @@ def test_server_plan_refuses_totp(w, admin_proposal):
     assert ch["step_up"] is True and ch["totp"] is False and ch["options"]["challenge"]
     r = _approve(w, {"challenge_id": ch["challenge_id"], "totp": "123456"})
     assert r.status_code == 403 and r.json()["error"] == "stepup_required", r.text
-    assert r.json()["message"] == "a server plan or a critical command is signed with a passkey"
+    assert r.json()["message"] == web_decisions.PASSKEY_ONLY
     assert w.env.admin.store.load("KD-193") is None
     ch = _challenge(w, [d["id"]]).json()
     r = _approve(w, {"challenge_id": ch["challenge_id"], "credential": auth.assert_(ch["options"])})
@@ -417,34 +418,29 @@ def test_a_critical_command_refuses_totp(w, admin_proposal):
     assert r.status_code == 403 and r.json()["error"] == "stepup_required", r.text
 
 
-def test_factory_plan_still_takes_totp(w):
-    """A factory plan runs on the factory host, not on a target: a TOTP code signs it as before, and the code that
-    signed once signs nothing else (global review 15.10.2026); five misses lock the decision."""
+def test_factory_plan_and_monitor_trust_refuse_totp(w):
+    """The security model promises a passkey for a server change and for trusting the monitor: a factory plan is no
+    exception (it was signed by a TOTP code until KD-9483), and a trust decision never was one."""
+    from kd.cabinet.web import decisions as web_decisions
+
+    assert web_decisions._passkey_only({"type": "monitor_trust", "payload": {}})
+    assert web_decisions._passkey_only({"type": "admin_plan", "payload": {"policy": "factory"}})
+    assert not web_decisions._passkey_only({"type": "delegate", "payload": {}})
     from kd.cabinet import commands
 
     commands.install(w.env.store, lambda agent: agent in ("dev", "analyst", "boss"))
     w.login()
-    current, following = _totp(w)
+    auth = _passkey(w)
     one = _factory_plan(w, "KD-50")
     ch = _challenge(w, [one["id"]]).json()
-    assert ch["step_up"] is True and ch["options"] is None and ch["totp"] is True
-    r = _approve(w, {"challenge_id": ch["challenge_id"], "totp": current})
+    assert ch["step_up"] is True and ch["totp"] is False and ch["options"]["challenge"]
+    r = _approve(w, {"challenge_id": ch["challenge_id"], "totp": "123456"})
+    assert r.status_code == 403 and r.json()["error"] == "stepup_required", r.text
+    assert _factory_grant(w, "KD-50") is None
+    ch = _challenge(w, [one["id"]]).json()
+    r = _approve(w, {"challenge_id": ch["challenge_id"], "credential": auth.assert_(ch["options"])})
     assert r.status_code == 200, r.text
-    assert r.json()["decisions"][0]["state"] == "approved"
-    grant = _factory_grant(w, "KD-50")
-    assert grant.signer == "totp" and set(json.loads(grant.signature)["binding"]) == {"expires", "nonce", "revisions"}
-    two = _factory_plan(w, "KD-51")
-    ch = _challenge(w, [two["id"]]).json()
-    r = _approve(w, {"challenge_id": ch["challenge_id"], "totp": current})
-    assert r.status_code == 403, r.text
-    for _ in range(4):
-        ch = _challenge(w, [two["id"]]).json()
-        r = _approve(w, {"challenge_id": ch["challenge_id"], "totp": "000000"})
-        assert r.status_code == 403, r.text
-    ch = _challenge(w, [two["id"]]).json()
-    r = _approve(w, {"challenge_id": ch["challenge_id"], "totp": following})
-    assert r.status_code == 423 and r.json()["error"] == "locked"
-    assert _factory_grant(w, "KD-51") is None
+    assert _factory_grant(w, "KD-50") is not None
 
 
 def test_a_step_up_decision_needs_a_signing_factor_first(w, admin_proposal):

@@ -11,7 +11,9 @@ A plan of such operations is a schema-2 proposal like the sysadmin's (intent, ba
 what/effect/risk/rollback); the owner's approval writes the same grant through ``admin_grant.Store`` under the
 factory policy. A ``component.install`` step names the deployed ``revision`` it was signed for — the tree deployed
 at the signature (``at_revision``; the plan's own is the tree it was opened on): it covers that tree only (any number
-of runs while the grant lives — the owner's choice), a release ends it. A request is
+of runs while the grant lives — the owner's choice), a release ends it. A release tree is the code and the
+deployment's overlay (``tree_revision``: ``<REVISION>+<DEPLOY_REVISION>``, the code's alone on a host with no
+overlay), so a release that changes only the overlay ends it too. A request is
 checked against that grant here: the card, its single assignee as the requester, the kind and the agents or the
 component, mode and revision.
 """
@@ -24,7 +26,8 @@ import os
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Iterable, Mapping, Tuple
+from pathlib import Path
+from typing import Iterable, Mapping, Tuple, Union
 
 from kd import admin_grant, admin_task
 from kd.admin_operations import MAX_EXPLAIN, MAX_WHAT, SCHEMA_VERSION, ProposalError, _text, risk
@@ -38,7 +41,8 @@ KINDS = (REINSTALL, COMPONENT)  # what the code knows how to run; the catalog en
 TARGET = "factory"
 MAX_OPERATIONS = 4
 _NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
-REVISION = re.compile(r"[0-9a-f]{7,40}")
+# a release tree: the code's commit, then the overlay's when the release has one (kd-release's release id)
+TREE = re.compile(r"[0-9a-f]{7,40}(?:\+[0-9a-f]{7,40})?")
 # a mode's argv: a setup script of the deployed tree with plain word arguments, or the restart of a digipaddock- unit
 SCRIPT = re.compile(r"(?:common|agents/[a-z][a-z0-9_-]{0,31})/install/[a-z][a-z0-9_]{0,63}\.sh")
 ARG = re.compile(r"[a-z][a-z0-9-]{0,31}")
@@ -51,7 +55,8 @@ _MODE_KEYS = frozenset({"run", "check", "drain"})
 _PROPOSAL_KEYS = frozenset({"schema_version", "task_id", "intent", "basis", "operations"})
 
 __all__ = ["Catalog", "CatalogError", "Mode", "Operation", "FactoryProposal", "ProposalError", "load_catalog",
-           "operations_of", "proposal", "check_request", "revision_matches", "binds_tree", "RELEASE_REVISION"]
+           "operations_of", "proposal", "check_request", "revision_matches", "binds_tree", "RELEASE_REVISION",
+           "tree_revision", "names_tree", "short"]
 
 
 class CatalogError(ValueError):
@@ -207,8 +212,9 @@ def _operation(op: object, catalog: Catalog, known: frozenset) -> Operation:
         if not isinstance(component, str) or not isinstance(mode, str):
             raise ProposalError("a component step names its component and mode")
         catalog.mode(component, mode)
-        if not isinstance(revision, str) or not (REVISION.fullmatch(revision) or revision == RELEASE_REVISION):
-            raise ProposalError(f"revision is the deployed tree's commit (7 to 40 hex) or {RELEASE_REVISION!r}")
+        if not isinstance(revision, str) or not (TREE.fullmatch(revision) or revision == RELEASE_REVISION):
+            raise ProposalError(f"revision is the deployed tree's commit (7 to 40 hex, +the overlay's) or "
+                                f"{RELEASE_REVISION!r}")
         level, why = risk(op.get("risk"))
         return Operation(verb, op["target"], (), _text(op, "what", MAX_WHAT, allowed=""),
                          _text(op, "effect", MAX_EXPLAIN), level, why, _text(op, "rollback", MAX_EXPLAIN),
@@ -252,8 +258,8 @@ def proposal(data: object, *, catalog: Catalog, agents_known: Iterable[str]) -> 
 def at_revision(prop: FactoryProposal, revision: str) -> FactoryProposal:
     """The plan with every component step on ``revision``: the signature covers the
     tree deployed when the owner signs, not the one of the hour the plan was opened. Other steps stay as they are."""
-    if not REVISION.fullmatch(revision or ""):
-        raise ProposalError(f"the deployed revision {revision[:40]!r} is not a commit")
+    if not TREE.fullmatch(revision or ""):
+        raise ProposalError(f"the deployed revision {revision[:81]!r} is not a release tree")
     steps = tuple(replace(op, revision=revision) if op.verb == COMPONENT and op.revision != RELEASE_REVISION
                   else op for op in prop.operations)
     return replace(prop, operations=steps)
@@ -269,9 +275,47 @@ def binds_tree(steps) -> bool:
     return False
 
 
+def tree_revision(root: Union[str, Path]) -> str:
+    """The release tree at ``root``: its code's ``REVISION`` and, when the release carries an overlay, the overlay's
+    ``DEPLOY_REVISION`` beside it — ``<code>+<overlay>``. OSError when the code's is unreadable, ValueError for a
+    revision that is not a commit: a tree nobody can name is never the signed one."""
+    root = Path(root)
+    code = (root / "REVISION").read_text(encoding="utf-8").strip()
+    try:
+        overlay = (root / "DEPLOY_REVISION").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:  # a host with no overlay
+        overlay = ""
+    tree = f"{code}+{overlay}" if overlay else code
+    if not TREE.fullmatch(tree):
+        raise ValueError(f"the release tree's revision {tree[:81]!r} is not a commit")
+    return tree
+
+
+def _same_commit(a: str, b: str) -> bool:
+    return bool(a and b) and (a.startswith(b) or b.startswith(a))
+
+
 def revision_matches(signed: str, deployed: str) -> bool:
-    """A revision named short or in full is the same commit."""
-    return bool(signed and deployed) and (deployed.startswith(signed) or signed.startswith(deployed))
+    """The same release tree: the same code commit and the same overlay commit (each named short or in full), or
+    neither names an overlay."""
+    signed_code, _, signed_overlay = (signed or "").partition("+")
+    deployed_code, _, deployed_overlay = (deployed or "").partition("+")
+    if not _same_commit(signed_code, deployed_code):
+        return False
+    return _same_commit(signed_overlay, deployed_overlay) if signed_overlay or deployed_overlay else True
+
+
+def names_tree(given: str, deployed: str) -> bool:
+    """``given`` names the deployed tree: the same tree, or its code commit alone (a caller that knows only the
+    code's, such as the release tool's request). Never what a grant is checked with — that is ``revision_matches``."""
+    if "+" not in (given or ""):
+        return revision_matches(given, (deployed or "").partition("+")[0])
+    return revision_matches(given, deployed)
+
+
+def short(revision: str) -> str:
+    """A tree as a person reads it: each commit's first 12 characters."""
+    return "+".join(part[:12] for part in (revision or "").split("+"))
 
 
 def check_request(grant: admin_grant.Grant, *, card: admin_task.Card, requester: str, kind: str,
@@ -308,8 +352,8 @@ def check_request(grant: admin_grant.Grant, *, card: admin_task.Card, requester:
         if steps:
             raise admin_grant.GrantError(
                 f"{card.task_id}: {component} {mode} was approved for revision "
-                f"{', '.join(sorted(str(op.get('revision'))[:12] for op in steps))}, the deployed tree is "
-                f"{revision[:12]} — a new plan for this revision")
+                f"{', '.join(sorted(short(str(op.get('revision'))) for op in steps))}, the deployed tree is "
+                f"{short(revision)} — a new plan for this revision")
         raise admin_grant.GrantError(f"{card.task_id}: {component} {mode} not covered by the approved operations")
     wanted = set(agents)
     for op in grant.operations:

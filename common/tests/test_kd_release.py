@@ -326,8 +326,10 @@ def test_switched_but_result_not_written_is_a_failure_not_a_refusal(tmp_path, kd
 
 
 @pytest.mark.skipif(os.name == "nt", reason="симлинки и O_NOFOLLOW — POSIX; прогон на example-stage")
-@pytest.mark.parametrize("kind", ["symlink", "dir"])
+@pytest.mark.parametrize("kind", ["symlink", "dir", "hardlink", "fifo"])
 def test_request_symlink_or_dir_is_removed_and_refused(tmp_path, kd_release, kind):
+    """The request's directory is the forge user's: a link, a directory, a FIFO or a hard link of another file in
+    place of request.json is never read as a request (a hard link of a root-owned file would pass for root's own)."""
     s = make_env(tmp_path)
     req = s["rel"] / "request.json"
     target = tmp_path / "elsewhere.json"
@@ -335,11 +337,15 @@ def test_request_symlink_or_dir_is_removed_and_refused(tmp_path, kd_release, kin
     req.unlink()
     if kind == "symlink":
         req.symlink_to(target)  # root does not follow a symlink of the forge agent
+    elif kind == "hardlink":
+        os.link(target, req)
+    elif kind == "fifo":
+        os.mkfifo(req)  # never a hang
     else:
         req.mkdir()
     assert go(kd_release, s) == 0
     assert result(s)["ok"] is False and s["switched"] == [] and not req.exists() and not req.is_symlink()
-    assert target.exists()
+    assert target.exists() and json.loads(target.read_text(encoding="utf-8")) == REQUEST
 
 
 def test_default_switch_gets_release_target(tmp_path, kd_release, monkeypatch):

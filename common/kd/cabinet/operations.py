@@ -33,7 +33,6 @@ from kd.cabinet import api, notices, store
 
 OPERATION_ID = re.compile(r"[0-9a-f]{32}")
 KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._+-]{0,95}")  # "+": a pair release's release:<rev>+<deploy>
-REVISION = re.compile(r"[0-9a-f]{7,40}")
 ACTIVE = ("pending", "running")
 FINAL = ("succeeded", "failed", "superseded")
 PHASES = ("", "delivered", "draining", "installing", "checking", "resuming")
@@ -132,13 +131,15 @@ def _grants(ctx):
 
 
 def deployed(ctx) -> str:
-    """The revision the deployed tree runs (``REVISION`` beside it, release_switch.sh); ctx may set its own."""
+    """The release tree deployed: the code's ``REVISION`` and the overlay's ``DEPLOY_REVISION`` beside it
+    (``factory_ops.tree_revision``: ``<code>+<overlay>``, the code's alone without an overlay); ctx may set its
+    own."""
     own = getattr(ctx, "deployed_revision", None)
     if own is not None:
         return own()
     try:
-        return (Path(ctx.repo_root) / "REVISION").read_text(encoding="utf-8").strip()
-    except (OSError, TypeError) as exc:
+        return factory_ops.tree_revision(Path(ctx.repo_root))
+    except (OSError, TypeError, ValueError) as exc:
         raise api.ApiError("unavailable", f"the deployed revision cannot be read ({exc.__class__.__name__})")
 
 
@@ -268,9 +269,9 @@ def request(ctx, *, card: str, requester: str, kind: str, agents, key: str, revi
     else:
         params, agents = {}, _agents(ctx, agents)
     current = deployed(ctx)
-    if revision and revision != current:
-        raise api.ApiError("refused", f"{REVISION_MOVED}: the deployed revision is {current[:12]}, not "
-                                      f"{revision[:12]} — an older tree is never installed")
+    if revision and not factory_ops.names_tree(revision, current):
+        raise api.ApiError("refused", f"{REVISION_MOVED}: the deployed revision is {factory_ops.short(current)}, "
+                                      f"not {factory_ops.short(revision)} — an older tree is never installed")
     s, grant_id = ctx.store, ""
     with s.transaction():
         if requester != "root":
@@ -492,7 +493,7 @@ def _component_notice(s, done: Mapping, state: str, reason: str, ran: Optional[d
     """A component's end in the card's thread: the codes and the masked tails the runner saw."""
     ran = ran or {}
     params = {"component": done["params"].get("component", ""), "mode": done["params"].get("mode", ""),
-              "revision": done["revision"][:12], "operation": done["id"][:12],
+              "revision": factory_ops.short(done["revision"]), "operation": done["id"][:12],
               "code": "-" if ran.get("code") is None else str(ran["code"]),
               "check": "-" if ran.get("check") is None else str(ran["check"]),
               "reason": reason or "-", "tail": _fence(ran.get("tail") or ""),
@@ -557,7 +558,7 @@ def finish(ctx, op: Mapping, state: str, *, reason: str = "", agents=None, phase
             notices.post_in_tx(s, source=SOURCE, level="critical", key=key, card=done["card"], params=params)
         else:
             notices.post_in_tx(s, source=SOURCE, level="info", key="notice.factory.done", card=done["card"],
-                               params={"agents": names, "revision": done["revision"][:12],
+                               params={"agents": names, "revision": factory_ops.short(done["revision"]),
                                        "operation": done["id"][:12]})
         return done
 
@@ -596,8 +597,10 @@ def next_due(s, now: str) -> Optional[dict]:
 def host_request(op: Mapping, timeout: int, start: bool = True) -> dict:
     """The host's ``operation``: ``start`` for a pending one; a poll of one in flight asks only (the host answers
     ``unknown`` rather than start again what it lost)."""
+    # the host takes the code's commit (a host pinned to an older release knows no other form); the overlay's is
+    # checked at ``operation.authorize``, against the tree the runner itself read
     request = {"op": "operation", "operation": op["id"], "kind": op["kind"], "agents": list(op["agents"]),
-               "revision": op["revision"], "timeout": timeout, "start": start}
+               "revision": op["revision"].partition("+")[0], "timeout": timeout, "start": start}
     if op["kind"] == COMPONENT:  # the host names them in the runner's request; the runner maps the catalog
         params = op.get("params") or {}
         request.update(component=params.get("component", ""), mode=params.get("mode", ""),
@@ -674,8 +677,8 @@ def _request_op(ctx, principal, req):
     if card and (not isinstance(card, str) or not api.CARD.fullmatch(card)):
         raise _invalid("card is KD-<n>")
     revision = req.get("revision") or ""
-    if revision and (not isinstance(revision, str) or not REVISION.fullmatch(revision)):
-        raise _invalid("revision is a commit sha")
+    if revision and (not isinstance(revision, str) or not factory_ops.TREE.fullmatch(revision)):
+        raise _invalid("revision is a commit sha, or the code's and the overlay's joined by +")
     if principal.kind == "root":
         requester = req.get("requester") or "root"
         if requester not in ("root", "release"):
@@ -720,10 +723,15 @@ def _get_op(ctx, principal, req):
 
 def _authorize_op(ctx, principal, req):
     """The session host's question right before a batch of the operation starts — is it still
-    allowed: the operation active, the roles its own, its grant still covering it, the tree still its revision."""
+    allowed: the operation active, the roles its own, its grant still covering it, the tree still its revision.
+    The runner asks again with ``tree``, the code's and the overlay's revision it read itself: it must be the
+    operation's tree too (the host's request carries the code's alone)."""
     operation_id = req.get("operation")
     if not isinstance(operation_id, str) or not OPERATION_ID.fullmatch(operation_id):
         raise _invalid("invalid operation id")
+    tree = req.get("tree")
+    if tree is not None and (not isinstance(tree, str) or not factory_ops.TREE.fullmatch(tree)):
+        raise _invalid("tree is the revision the runner read")
     op = row(ctx.store, operation_id)
     if op is None:
         return {"allowed": False, "reason": "unknown_operation"}
@@ -737,7 +745,7 @@ def _authorize_op(ctx, principal, req):
     if op["state"] not in ACTIVE:
         return {"allowed": False, "reason": f"operation_{op['state']}"}
     why = grant_usable(ctx, op)
-    if why is None and op["revision"] != deployed(ctx):
+    if why is None and (op["revision"] != deployed(ctx) or (tree is not None and tree != op["revision"])):
         why = REVISION_MOVED
     return {"allowed": why is None, "reason": why or ""}
 

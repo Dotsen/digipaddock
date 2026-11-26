@@ -246,8 +246,10 @@ def _interrupted_result(directory, progress, installed):
 
 def _read_request(path):
     """(the text of request.json, the file is ours) or None if there is no request. No following of symlinks and no
-    hanging on a FIFO: only a regular file up to 4 KB; anything else — an empty string (then "the request is not an
-    object"). "Ours" — the file's owner is the one kd-release runs as (root): root wrote such a request itself."""
+    hanging on a FIFO: only a regular file with one link up to 4 KB, checked and read through one descriptor;
+    anything else — an empty string (then "the request is not an object"). "Ours" — the file's owner is the one
+    kd-release runs as (root): root wrote such a request itself. The directory is the forge user's, so a hard link
+    there of a file of root's elsewhere would pass for root's own request: a second link refuses it."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         fd = os.open(path, flags)
@@ -257,7 +259,7 @@ def _read_request(path):
         return "", False  # a symlink (ELOOP), a directory and the like
     try:
         st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_size > REQUEST_MAX:
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > REQUEST_MAX:
             return "", False
         ours = not hasattr(os, "geteuid") or st.st_uid == os.geteuid()
         return os.read(fd, REQUEST_MAX + 1).decode("utf-8", "replace"), ours
@@ -272,6 +274,9 @@ def _remove(path) -> bool:
     except FileNotFoundError:
         return True
     except OSError:
+        if not shutil.rmtree.avoids_symlink_attacks:  # only the descriptor-based one: it never follows a swapped link
+            print(f"kd-release: could not remove {path}: not a file", file=sys.stderr)
+            return False
         try:
             shutil.rmtree(path)  # a directory in the request's place
             return True

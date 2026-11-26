@@ -32,6 +32,7 @@ SCHEMA_VERSION = 1
 MAX_BYTES = 128 * 1024
 GATE_RUN = "agent-exec-gate run"
 SNAPSHOT_RUN = "agent-exec-gate snapshot"  # + " <16-hex nonce>": the plan window's read-only snapshot by the gate
+STEP_RUN = "agent-exec-gate step"  # + " <plan_key>": "ok" when that step of a signed plan succeeded on the target
 FLAG = "/etc/digipaddock/exec-envelopes"
 _NONCE = re.compile(r"[0-9a-f]{32}")
 _DECISION = re.compile(r"[0-9a-f]{32}")  # the cabinet's decision id (kd.cabinet.api.DECISION_ID)
@@ -103,6 +104,15 @@ def decision_of(grant) -> Decision:
     decision_id = named if isinstance(named, str) and _DECISION.fullmatch(named) else ""
     assertion = _assertion_of(data) if decision_id and revisions is not None and nonce and expires else None
     return Decision(decision_id, user, expires, nonce, revisions or {}, digests, assertion)
+
+
+def plan_key(decision_id: Any, nonce: Any, proposal_sha256: Any, step: Any) -> str:
+    """The key under which a target's gate journals step ``step`` of a signed plan (agent_exec_gate.plan_key): the
+    signed decision's id and nonce and the plan's hash; "" when one is missing (an unsigned step keeps no mark)."""
+    if not all(isinstance(v, str) and v for v in (decision_id, nonce)) or not isinstance(proposal_sha256, str) \
+            or not _HEX.fullmatch(proposal_sha256) or isinstance(step, bool) or not isinstance(step, int) or step < 1:
+        return ""
+    return hashlib.sha256(f"plan|{decision_id}|{nonce}|{proposal_sha256}|{step}".encode("utf-8")).hexdigest()
 
 
 def _envelope(kind: str, grant, payload: dict, proposal: Mapping, server: str, command: str, **extra: Any) -> bytes:

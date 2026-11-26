@@ -1727,11 +1727,25 @@ _CRON_SPECIAL = ("@reboot", "@yearly", "@annually", "@monthly", "@weekly", "@dai
 _CRON_FIELD = re.compile(r"(?:\*|[0-9]{1,2}(?:-[0-9]{1,2})?|[A-Za-z]{3})(?:/[0-9]{1,2})?\Z")
 _CRON_LIMITS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
 _SYSCTL_LINE = re.compile(r"-?([A-Za-z0-9_][A-Za-z0-9_.*/-]*)[ \t]*=[ \t]*(.*)\Z")
-# keys whose value is a program the kernel starts (as root) or a mask of what such helpers may do
+# keys whose value is a program the kernel starts (as root) or a mask of what such helpers may do; a binfmt_misc
+# entry names the interpreter the kernel runs for every matching file
 _SYSCTL_EXEC = ("kernel.core_pattern", "kernel.modprobe", "kernel.poweroff_cmd", "kernel.hotplug",
-                "kernel.usermodehelper")
+                "kernel.usermodehelper", "fs.binfmt_misc")
 # the network's keys: applied at once, they change access (forwarding, filters, routes) — a critical action's
 _SYSCTL_NET = "net"
+# the kernel's own protections: ptrace between processes, links and FIFOs in sticky directories, setuid core dumps,
+# kernel addresses and its log, perf, unprivileged BPF, user namespaces and their AppArmor limits, ASLR, the null page,
+# userfaultfd, io_uring, tty line disciplines and TIOCSTI, magic SysRq. Applied at once, a weaker value is a critical
+# action's, like the network's. A name ending in "_" is a family (every key it starts); the rest is a key or a subtree.
+_SYSCTL_GUARDS = ("kernel.yama", "fs.protected_", "fs.suid_dumpable", "kernel.kptr_restrict", "kernel.dmesg_restrict",
+                  "kernel.perf_event_paranoid", "kernel.unprivileged_", "kernel.apparmor_", "kernel.randomize_va_space",
+                  "kernel.exec-shield", "kernel.sysrq", "kernel.io_uring_", "vm.mmap_min_addr", "vm.unprivileged_",
+                  "dev.tty.ldisc_autoload", "dev.tty.legacy_tiocsti", "user.max_user_namespaces")
+
+
+def _sysctl_guarded(key: str) -> bool:
+    return any(key.startswith(guard) if guard.endswith("_") else key == guard or key.startswith(guard + ".")
+               for guard in _SYSCTL_GUARDS)
 # logrotate words that run a program (script blocks, compressors) or send the logs away (mail), or read another file
 _LOGROTATE_DENY = ("prerotate", "postrotate", "firstaction", "lastaction", "preremove", "endscript", "sharedscripts",
                    "compresscmd", "uncompresscmd", "mail", "mailfirst", "maillast", "include", "tabooext", "taboopat")
@@ -1856,6 +1870,9 @@ def drop_problem(directory: str, name: str, text: str) -> Optional[str]:
                 return "ключ sysctl %s с шаблоном * — ключ пишется полностью" % key[:80]
             if key == _SYSCTL_NET or key.startswith(_SYSCTL_NET + "."):
                 return ("ключ %s меняет сетевой доступ сразу (sysctl -p) — только критичным действием с подписью "
+                        "владельца (kd-admin-propose-action)" % key[:80])
+            if _sysctl_guarded(key):
+                return ("ключ %s меняет защиту ядра сразу (sysctl -p) — только критичным действием с подписью "
                         "владельца (kd-admin-propose-action)" % key[:80])
             for denied in _SYSCTL_EXEC:
                 if key == denied or key.startswith(denied + "."):

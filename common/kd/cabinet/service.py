@@ -19,14 +19,16 @@ CABINET = api.Principal("cabinet", -1, "cabinet")
 CARRY_TIMEOUT = 20.0  # kd-review's carry inside a publish: the forge executor waits for the answer at most 30 s
 USAGE = "/var/lib/digipaddock/usage.jsonl"
 CHALLENGES_MAX = 10000
+LOGIN_CHALLENGES_MAX = 1000  # passkey sign-in options nobody is signed in for: the oldest go first
 PAGE = 500  # journal events read at once after a write
 
 
 class Challenges:
-    """Single-use values by (kind, key) that expire after ``ttl`` seconds."""
+    """Single-use values by (kind, key) that expire after ``ttl`` seconds. With ``limit`` the store holds at most
+    that many values: a new one past it evicts the oldest (for what anyone may ask for without a login)."""
 
-    def __init__(self, ttl=CHALLENGE_TTL, clock=time.monotonic):
-        self.ttl, self.clock = ttl, clock
+    def __init__(self, ttl=CHALLENGE_TTL, clock=time.monotonic, limit: Optional[int] = None):
+        self.ttl, self.clock, self.limit = ttl, clock, limit
         self._items: Dict[Tuple[str, str], Tuple[float, Any]] = {}
 
     def put(self, kind: str, key: str, value, ttl: Optional[float] = None):
@@ -35,6 +37,8 @@ class Challenges:
         if len(self._items) >= CHALLENGES_MAX:
             self._items = {k: v for k, v in self._items.items() if v[0] > now}
         self._items[(kind, key)] = (now + (self.ttl if ttl is None else ttl), value)
+        while self.limit is not None and len(self._items) > self.limit:
+            del self._items[next(iter(self._items))]
 
     def pop(self, kind: str, key: str):
         item = self._items.pop((kind, key), None)
@@ -73,6 +77,7 @@ class Service:
         self.operation_poll = {}  # the factory operation in flight -> when the host was last asked
         self.devcheck_poll = {}  # each contour's check the host has -> when it was last asked
         self.challenges = Challenges()
+        self.login_challenges = Challenges(limit=LOGIN_CHALLENGES_MAX)  # asked for without a session
         self.usage_path = USAGE  # kd-usage's ledger: the agents' spend
 
     def now(self) -> str:

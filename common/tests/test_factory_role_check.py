@@ -1,11 +1,11 @@
 """a role's reinstall is refused only by its own problems; a failure says what failed (stage, batch unit,
 masked output, the roles left on the old version, the retry) and its journal is readable by the card's lead."""
+# ruff: noqa: F811 - the fixtures imported below are named by the tests' arguments
 
 import asyncio
 import io
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -209,13 +209,11 @@ def test_the_tail_is_cut_to_its_limit_after_masking(tmp_path):
 
 
 @pytest.mark.parametrize("masks", [True, False])
-def test_the_units_journal_gets_only_masked_output(monkeypatch, capsys, masks):
+def test_the_units_journal_gets_only_masked_output(capsys, masks):
     """AC7: the stage's raw output never reaches the unit's journal; without masks, the placeholder."""
-    raw = b"connecting with DB_PASSWORD=hunter2\n"
-    monkeypatch.setattr(operation_runner.subprocess, "run",
-                        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, raw, None))
+    child = "import sys; print('connecting with DB_PASSWORD=hunter2'); sys.exit(1)"  # a real child: it is read live
     mask = None if masks else (lambda text: None)
-    code, out = operation_runner._capture([NEW_AGENT, "--check", "dev"], mask)
+    code, out = operation_runner._capture([sys.executable, "-c", child], mask)
     printed = capsys.readouterr().out
     assert code == 1 and "hunter2" not in printed
     assert ("DB_PASSWORD=***" in printed) if masks else (printed.strip() == operation_runner.UNMASKED)

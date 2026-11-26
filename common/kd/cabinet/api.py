@@ -1313,9 +1313,10 @@ def pin_revisions(ctx, steps):
                 pass  # signed for the card's own release, no tree to pin
             elif given is None:
                 step = {**step, "revision": current}
-            elif isinstance(given, str) and not factory_ops.revision_matches(given, current):
-                raise ApiError("refused", f"{step.get('component')} {step.get('mode')}: revision {given[:12]} is not "
-                                          f"the deployed tree {current[:12]}")
+            elif isinstance(given, str) and not factory_ops.names_tree(given, current):
+                raise ApiError("refused", f"{step.get('component')} {step.get('mode')}: revision "
+                                          f"{factory_ops.short(given)} is not the deployed tree "
+                                          f"{factory_ops.short(current)}")
         out.append(step)
     return out
 
@@ -1362,12 +1363,7 @@ def _boss(op):
                 deps = {
                     d: _snapshot(ctx, d) for d in card.dependencies if CARD.fullmatch(d)
                 }
-        specs = None
-        if op == "assign" and (
-            body.get("spec")
-            or any(v.startswith(boss_board.SPEC_PREFIX) for v in card.labels)
-        ):
-            specs = ctx.specs()
+        specs = ctx.specs() if boss_board.needs_specs(body, card) else None
         try:
             plan = boss_board.plan(body, ctx.routing(), card, deps, specs=specs)
         except boss_board.StaleRevision as exc:
@@ -1523,11 +1519,15 @@ def _search(ctx, principal, request):
     text = request.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ApiError("invalid", "search text is empty")
+    try:
+        found = ctx.store.search(text.strip())
+    except store.Invalid as exc:
+        raise ApiError("invalid", str(exc))
     deferred = defers.active_map(ctx.store)  # the board's tile says until when
     return {
         "cards": [
             {**compact(r), "defer": defers.view(deferred.get(r.id))}
-            for r in ctx.store.search(text.strip())
+            for r in found
             if visible(ctx, principal, r.project)
         ]
     }
@@ -1926,6 +1926,19 @@ def _plan_by_rule(ctx, agent, card, payload):
     return {"decision": recorded, "approved": approved}
 
 
+def _question_limits(ctx, card, agent: str, open_now: list) -> None:
+    """Every question is a push to the people: a looping or hostile agent may not flood them. So many open on one
+    card, so many in a window across the agent's cards (``pipeline_config``: ``questions``)."""
+    config = ctx.pipeline()
+    held = sum(1 for d in open_now if d["type"] == "question")
+    if held >= config.questions_open:
+        raise ApiError("refused", f"rate limit: {held} open questions on {card.id}; wait for their answers")
+    minutes = config.questions_window_s // 60
+    since = people.shift(ctx.now(), seconds=-config.questions_window_s)
+    if _ledger(ctx).asked_since(f"agent:{agent}", since) >= config.questions_per_window:
+        raise ApiError("refused", f"rate limit: {config.questions_per_window} questions in {minutes} minutes")
+
+
 def _decision_open(ctx, principal, request):
     """An agent asks: the sysadmin its plan or critical action, BOSS a promote or delegation, any agent a
     question on its own card (through the base executor)."""
@@ -1981,9 +1994,12 @@ def _decision_open(ctx, principal, request):
             raise ApiError("refused", f"{agent} may not open a {kind} decision")
     ledger = _ledger(ctx)
     sha = decisions.payload_sha(payload)
-    for open_ in ledger.list(state="open", card=card.id):
+    open_now = ledger.list(state="open", card=card.id)
+    for open_ in open_now:
         if open_["type"] == kind and open_["payload_sha"] == sha:
             return {"decision": open_}  # asked again: the same open decision
+    if kind == "question":
+        _question_limits(ctx, card, agent, open_now)
     if kind in ("admin_plan", "promote", "delegate"):  # one per card and kind: a new one supersedes the open ones
         for stale in ledger.list(state="open", card=card.id):
             if stale["type"] == kind:

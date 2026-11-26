@@ -17,7 +17,8 @@ is the contract between the two.
 
 The release identity is `release_id = <REVISION>+<DEPLOY_REVISION>`. Operations a release orders
 (agent reinstalls, component steps) are keyed by it, so a release that changes only the overlay is a
-new release.
+new release. The owner's signature on a factory component step names the same pair, so such a release ends
+it too: the overlay's values are what the step's installer reads.
 
 An overlay is **data only**: nothing of it is ever run. Before the switch, in this order:
 

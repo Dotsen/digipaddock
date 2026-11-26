@@ -158,7 +158,7 @@ The daily service `digipaddock-vulnscan.timer` (04:20 in the host's time zone) r
 only orchestrates: the database is downloaded in a child unit as the `ci` user with network into
 `/var/lib/digipaddock/devcheck/osv` (a failure is in the service's journal and fails the unit); root fetches the base
 branch of every project of `/etc/digipaddock/repos.json` with the repo user's read key and hands its lock files to a
-scan as the `ci` user with no network. Both children, like the checks' own units, have a pid namespace of their own
+scan as the `ci` user with no network. Both children, like the checks' own units, have a pid namespace, an IPC namespace and a `/dev/shm` of their own
 (`common/kd/ci_unit.py`): a check's tests, run by the same user, cannot reach the download's directory through
 `/proc`. A finding not seen before and not under a valid exception of that project's
 `osv-scanner.toml` becomes one Inbox card of the project for `@dev`, whatever the project's route, through the cabinet's `card.create`; the seen

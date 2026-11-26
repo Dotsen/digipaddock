@@ -454,6 +454,27 @@ def test_challenges_are_single_use_and_expire():
     assert challenges.pop("login", "b") is None
 
 
+def test_challenges_with_a_limit_evict_the_oldest():
+    from kd.cabinet import service
+
+    challenges = service.Challenges(limit=3, clock=lambda: 0.0)
+    for n in range(5):
+        challenges.put("login", str(n), n)
+    assert len(challenges._items) == 3
+    assert [challenges.pop("login", str(n)) for n in range(5)] == [None, None, 2, 3, 4]
+
+
+def test_passkey_options_without_a_login_keep_a_bounded_store(tmp_path, monkeypatch):
+    from kd.cabinet import service
+
+    monkeypatch.setattr(service, "LOGIN_CHALLENGES_MAX", 4)
+    w = _owner(tmp_path)
+    ids = [w.client.get("/api/auth/passkey/options").json()["login_id"] for _ in range(6)]
+    assert len(w.svc.login_challenges._items) == 4
+    assert w.svc.challenges._items == {}  # the signed-in people's challenges are not in it
+    assert [w.svc.login_challenges.pop("login", i) is not None for i in ids] == [False, False, True, True, True, True]
+
+
 def test_the_second_factor_of_a_password_login_is_limited_per_account(tmp_path):
     # review 04.11.2026: misses were counted per (user, address) only — a known password and many addresses could try
     # every code; now they count for the account, as step-up's, from every address
@@ -470,9 +491,29 @@ def test_the_second_factor_of_a_password_login_is_limited_per_account(tmp_path):
         assert r.status_code == 401
     r = w.client.post("/api/auth/password", headers={"X-Forwarded-For": "198.51.100.99"},
                       json={"user": "owner", "password": "correct horse battery", "totp": codes[1]})
-    assert r.status_code == 429  # even the right code: the account's second factor waits out the window
+    assert r.status_code == 401  # even the right code: the account's second factor waits out the window
     # a wrong password is the address's miss, not the account's: nobody locks the owner out without the password
     assert w.users.too_many("totp|owner", w.svc.now())
+
+
+def test_the_second_factor_lock_does_not_tell_a_right_password_from_a_wrong_one(tmp_path):
+    # the lock is checked after the password and answers as a wrong password does: no 429 that only a right
+    # password reaches
+    w = _owner(tmp_path)
+    w.login()
+    w.client.post("/api/me/password", headers=w.headers(), json={"password": "correct horse battery"})
+    b32 = w.client.post("/api/me/totp/setup", headers=w.headers()).json()["secret"]
+    codes = totp_codes(b32)
+    assert w.client.post("/api/me/totp/confirm", headers=w.headers(), json={"code": codes[0]}).status_code == 200
+    w.client.post("/api/auth/logout", headers=w.headers())
+    for _ in range(5):
+        w.users.failed_attempt("totp|owner", w.svc.now())
+    answers = []
+    for n, password in enumerate(("correct horse battery", "wrong password here")):
+        r = w.client.post("/api/auth/password", headers={"X-Forwarded-For": f"198.51.100.{n}"},
+                          json={"user": "owner", "password": password, "totp": codes[1]})
+        answers.append((r.status_code, r.json()))
+    assert answers[0] == answers[1] and answers[0][0] == 401
 
 
 def test_an_unknown_user_costs_the_same_argon2_work(tmp_path, monkeypatch):

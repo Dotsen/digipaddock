@@ -1,6 +1,7 @@
 """The pipeline's mode and limits.
 
-Two files. The repository's ``common/coordination/pipeline.json`` holds the limits of automatic continuations; it
+Two files. The repository's ``common/coordination/pipeline.json`` holds the limits of automatic continuations and of
+an agent's questions to the people (each one a push: so many an hour across its cards, so many open on one card); it
 ships with the code (who may close a card without the owner's acceptance is the project's ``done_by`` in the
 cabinet). The mode is the root's: ``/etc/digipaddock/pipeline.json`` (root, 0644) says ``observe`` or ``enforce`` and since
 when; no file is ``observe``. In ``observe`` the cabinet records outcomes, waits and problems and starts nothing;
@@ -28,6 +29,10 @@ class Config:
     window_s: int = 3600
     per_window: int = 6
     streak: int = 3
+    # an agent's questions to the people, each a push: so many in a window across its cards, so many open on a card
+    questions_window_s: int = 3600
+    questions_per_window: int = 20
+    questions_open: int = 5
     chain: bool = True  # chain plans (``kd.cabinet.stages``) for the plans approved from now on
 
     @property
@@ -59,15 +64,21 @@ def _read(path: str) -> Optional[dict]:
 
 
 def _defaults(data: dict) -> dict:
-    if set(data) - {"continuations"}:
-        raise ValueError("pipeline: the defaults hold continuations only")
+    if set(data) - {"continuations", "questions"}:
+        raise ValueError("pipeline: the defaults hold continuations and questions only")
     limits = data.get("continuations", {})
     if not isinstance(limits, dict) or set(limits) - {"windowMinutes", "perWindow", "streak"}:
         raise ValueError("pipeline: continuations are windowMinutes, perWindow and streak")
+    asked = data.get("questions", {})
+    if not isinstance(asked, dict) or set(asked) - {"windowMinutes", "perWindow", "openPerCard"}:
+        raise ValueError("pipeline: questions are windowMinutes, perWindow and openPerCard")
     return {
         "window_s": _int(limits.get("windowMinutes", 60), 1, 24 * 60, "windowMinutes") * 60,
         "per_window": _int(limits.get("perWindow", 6), 1, 100, "perWindow"),
         "streak": _int(limits.get("streak", 3), 1, 100, "streak"),
+        "questions_window_s": _int(asked.get("windowMinutes", 60), 1, 24 * 60, "questions.windowMinutes") * 60,
+        "questions_per_window": _int(asked.get("perWindow", 20), 1, 1000, "questions.perWindow"),
+        "questions_open": _int(asked.get("openPerCard", 5), 1, 100, "questions.openPerCard"),
     }
 
 

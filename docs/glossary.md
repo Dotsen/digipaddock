@@ -82,7 +82,7 @@ Terms used across the code, the instructions and these documents. Command names 
 
 **Executor.** A program that performs a privileged effect after validating every argument: merge a pull request, run a server command, write to the board for the coordinator. It runs under a service user and is reached through a capability channel.
 
-**Factory operation.** A change of the host the factory runs from a fixed catalog under the owner's signed plan: `agent.reinstall` (drain a role's sessions with its queue kept, reinstall, check, resume) and `component.install` (a platform component in one of its fixed modes, on the deployed revision the signature names). The developer requests one with `kd-factory`; a root runner of the session host does it.
+**Factory operation.** A change of the host the factory runs from a fixed catalog under the owner's signed plan: `agent.reinstall` (drain a role's sessions with its queue kept, reinstall, check, resume) and `component.install` (a platform component in one of its fixed modes, on the deployed release tree the signature names: the code's revision and the overlay's). The developer requests one with `kd-factory`; a root runner of the session host does it.
 
 **Forgejo.** The code host. The developer opens pull requests there; the owner approves them with a signature in the cabinet (the approver service then posts the Approve) or with Approve in Forgejo.
 

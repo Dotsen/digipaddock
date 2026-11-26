@@ -199,7 +199,8 @@ def plan(
 ):
     """Return the ``Edit`` or ``Create`` for one BOSS request, or raise ``Refused``.
 
-    ``specs`` maps ``@agent`` to its installed specializations; ``assign`` with ``spec`` needs it.
+    ``specs`` maps ``@agent`` to its installed specializations; ``assign`` with ``spec`` and ``set-labels`` that adds
+    a ``spec:`` label need it.
     """
     if not isinstance(request, Mapping):
         raise Refused("request must be an object")
@@ -232,9 +233,22 @@ def plan(
         return _promote(card, revision, routing, reason)
     if op == "assign":
         summary, changes = _assign(request, card, routing, specs)
+    elif op == "set-labels":
+        summary, changes = _set_labels(request, card, routing, specs)
     else:
         summary, changes = _OPS[op](request, card, routing)
     return Edit(card.id, revision, {**changes, **_comment(summary, reason)})
+
+
+def needs_specs(request: Mapping, card: Optional[Card]) -> bool:
+    """Whether ``plan`` judges this request against the specialization registry: an ``assign`` with ``spec`` or of a
+    card that carries a ``spec:`` label, a ``set-labels`` that adds one. The registry is read only then."""
+    op = request.get("op")
+    if op == "assign":
+        return bool(request.get("spec")) or (card is not None and any(
+            v.startswith(SPEC_PREFIX) for v in card.labels))
+    added = request.get("add") if op == "set-labels" else None
+    return isinstance(added, list) and any(isinstance(v, str) and v.startswith(SPEC_PREFIX) for v in added)
 
 
 def _assign(request, card: Card, routing: Routing, specs=None):
@@ -271,9 +285,13 @@ def _assign(request, card: Card, routing: Routing, specs=None):
 
 
 def _set_project(request, card: Card, routing: Routing):
+    """Only an Inbox card: one the owner started was approved in its project — its repository, its route, who sees
+    it — and moving it on would carry that approval to another one."""
     project = request["project"]
     if not isinstance(project, str) or project not in routing.projects:
         raise Refused("unknown project")
+    if card.status != INBOX:
+        raise Refused(f"the project is set only in Inbox; {card.id} is {card.status}")
     if card.project == project:
         raise Refused("nothing to change")
     return f"project {project}", {"project": project}
@@ -288,7 +306,7 @@ def _set_priority(request, card: Card, routing: Routing):
     return f"priority {priority}", {"priority": priority}
 
 
-def _set_labels(request, card: Card, routing: Routing):
+def _set_labels(request, card: Card, routing: Routing, specs=None):
     add, remove = _changes(request, _label)
     for label in add:
         duplicate = _DUPLICATE.fullmatch(label)
@@ -298,7 +316,30 @@ def _set_labels(request, card: Card, routing: Routing):
     remove = [label for label in remove if label in card.labels]
     if not add and not remove:
         raise Refused("nothing to change")
+    _spec_labels(card, add, remove, specs)
     return f"labels {_delta(add, remove)}", _label_changes(add, remove)
+
+
+def _spec_labels(card: Card, add, remove, specs) -> None:
+    """A ``spec:`` label set by hand names a specialization of the registry (spec 5.8.5): one the card's assignee
+    holds, or — a card nobody holds yet — one some agent holds; and a card keeps one. Removing one needs nothing: a
+    label that fits nobody is dropped this way."""
+    added = [label[len(SPEC_PREFIX):] for label in add if label.startswith(SPEC_PREFIX)]
+    if not added:
+        return
+    if specs is None:
+        raise Refused("no specialization registry: the spec: label cannot be set")
+    kept = [v for v in card.labels if v.startswith(SPEC_PREFIX) and v not in remove]
+    if len(added) + len(kept) > 1:
+        raise Refused("one spec: label per card: remove the other in the same set-labels, or assign --spec")
+    name = added[0]
+    if not _SPEC.fullmatch(name):
+        raise Refused("invalid spec name")
+    if card.assignees:
+        if name not in specs.get(card.assignees[0], ()):
+            raise Refused(f"spec:{name} is not a specialization of {card.assignees[0]}")
+    elif not any(name in held for held in specs.values()):
+        raise Refused(f"spec:{name} is no agent's specialization")
 
 
 def _set_dependency(request, card: Card, routing: Routing):

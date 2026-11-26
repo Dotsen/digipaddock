@@ -232,7 +232,7 @@ def test_the_runner_asks_the_cabinet_after_the_release_wait(tmp_path):
     host = Host(release=[True, True])
     asked = []
 
-    def authorize(operation_id, agents):
+    def authorize(operation_id, agents, tree):
         asked.append((operation_id, list(agents), len(host.release)))
         return "grant_revoked"
 
@@ -252,13 +252,39 @@ def test_the_runners_own_authorization_answers_a_reason(monkeypatch):
 
     class Client:
         def call(self, request):
-            assert request == {"op": "operation.authorize", "operation": OP, "agents": ["dev"]}
+            assert request == {"op": "operation.authorize", "operation": OP, "agents": ["dev"],
+                               "tree": "abc1234+1234567"}
             answer = answers.pop(0)
             if isinstance(answer, Exception):
                 raise answer
             return answer
 
     monkeypatch.setattr(cabinet_client, "Client", Client)
-    assert operation_runner._authorize(OP, ["dev"]) == ""
-    assert operation_runner._authorize(OP, ["dev"]) == "refused"
-    assert operation_runner._authorize(OP, ["dev"]) == "authorize_unavailable"
+    assert operation_runner._authorize(OP, ["dev"], "abc1234+1234567") == ""
+    assert operation_runner._authorize(OP, ["dev"], "abc1234+1234567") == "refused"
+    assert operation_runner._authorize(OP, ["dev"], "abc1234+1234567") == "authorize_unavailable"
+
+
+def test_the_runner_hands_the_cabinet_the_tree_it_read(tmp_path):
+    """The host's request names the code's commit; the overlay's stands beside it in the tree, and the cabinet
+    checks that the whole tree the runner read is the operation's."""
+    state = _state(tmp_path)
+    (tmp_path / "repo" / "DEPLOY_REVISION").write_text("1234567\n")
+    host, asked = Host(), []
+
+    def authorize(operation_id, agents, tree):
+        asked.append(tree)
+        return ""
+
+    result = operation_runner.run(OP, state_dir=str(state), repo=tmp_path / "repo", run_cmd=host.run,
+                                  host_slots=host.host_slots, release_active=host.release_active, sleep=host.sleep,
+                                  new_agent=NEW_AGENT, host_setup=HOST_SETUP, authorize=authorize, batch=1)
+    assert asked == [f"{REV}+1234567"] and result["state"] == "succeeded"
+
+
+def test_a_request_naming_another_overlay_is_a_moved_tree(tmp_path):
+    state = _state(tmp_path, revision=f"{REV[:7]}+7654321")
+    (tmp_path / "repo" / "DEPLOY_REVISION").write_text("1234567\n")
+    host = Host()
+    result = _run(state, host)
+    assert result["state"] == "failed" and result["reason"] == "revision_moved" and host.calls == []

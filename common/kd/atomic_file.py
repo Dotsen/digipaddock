@@ -40,17 +40,24 @@ def read(path: str, limit: int) -> bytes:
 
 
 def replace(path: str, data: bytes, mode: int) -> None:
-    """Write ``data`` to a temp file in the same directory, fsync, rename over ``path``."""
+    """Write ``data`` to a temp file in the same directory, fsync, rename over ``path``.
+
+    The mode goes on the descriptor ``mkstemp`` opened, never through the temp file's name: in a directory another
+    user owns (root's release request in the forge user's directory) that name can be swapped for a link to a file
+    of root's between the write and the rename, and a chmod by name would follow it."""
     directory = os.path.dirname(path) or "."
     fd, temp = tempfile.mkstemp(
         prefix="." + os.path.basename(path) + ".", suffix=".tmp", dir=directory
     )
     try:
         with os.fdopen(fd, "wb") as handle:
+            if hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), mode)
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temp, mode)
+        if not hasattr(os, "fchmod"):  # Windows (tests): no other user owns the directory there
+            os.chmod(temp, mode)
         os.replace(temp, path)
         if os.name != "nt":
             dfd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)

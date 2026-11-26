@@ -25,7 +25,8 @@ const PROFILE = {
     "input", "li", "ol", "p", "pre", "s", "strong", "table", "tbody", "td", "th", "thead", "tr", "ul",
   ],
   ALLOWED_ATTR: ["href", "title", "type", "checked", "disabled", "align"],
-  ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|\/(?!\/)|#)/i,
+  // a slash-backslash start is read by browsers as `//`, a link to another host: only `/path` stays inside
+  ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|\/(?![\/\\])|#)/i,
 };
 
 let hooked = false;

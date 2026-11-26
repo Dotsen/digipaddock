@@ -158,7 +158,8 @@ def test_diff_skips_sections_with_an_error_in_either_snapshot():
     }
 
 
-STEP = {"kind": "admin", "task_id": "KD-5", "grant_id": "g", "op_index": 1, "op_count": 1}
+STEP = {"kind": "admin", "task_id": "KD-5", "grant_id": "g", "op_index": 1, "op_count": 1,
+        "operation": {"server": "example-stage", "verb": "script", "script": "true"}}
 
 
 def run(args, tmp_path, runner, clock=None, extra=STEP):
@@ -452,3 +453,65 @@ def test_a_signal_during_the_open_call_closes_the_window_it_named(
         "errors": [],
         "failed": "прервано до шага",
     }
+
+
+# --- a window takes only what the step's kind may change (KD-9483) -----------------------------------------------
+# Anything else the server changed while the step ran is no step's: it stays out of the baseline and is checked as
+# usual. A step of the test zone carries no owner's signature and opens no window at all.
+
+def _step(verb, **more):
+    return dict(STEP, operation={"server": "example-stage", "verb": verb}, **more)
+
+
+ROOT_CRON = "cron:/var/spool/cron/crontabs/root"
+
+
+def test_a_typed_step_hands_over_only_what_its_kind_changes(tmp_path, cab, task):
+    runner = Runner([{}, {"unit": "b" * 64, "port": 443}])  # a unit file changed too, meanwhile
+    code, *_ = run(["--task", "KD-5", "example-stage", "systemctl restart nginx.service"], tmp_path, runner,
+                   extra=_step("service.restart"))
+    opened, closed = cab.calls
+    assert code == 0 and runner.calls == ["snapshot", "step", "snapshot"]
+    assert closed["changes"] == {"ports:tcp:0.0.0.0:80": ["nginx", None], "ports:tcp:0.0.0.0:443": [None, "nginx"]}
+
+
+@pytest.mark.parametrize("extra", [
+    _step("app.tool"), _step("app.flag"), _step("file.drop"), _step("gate.script"), _step("package.refresh"),
+    _step("no.such.verb"), dict(STEP, operation=None),
+    _step("service.reload", test_zone=True), _step("app.tool", test_zone=True), _step("script", test_zone=True),
+])
+def test_a_step_with_nothing_to_hand_over_opens_no_window(tmp_path, cab, task, extra):
+    runner = Runner()
+    code, *_ = run(["--task", "KD-5", "example-stage", "true"], tmp_path, runner, extra=extra)
+    assert code == 0 and runner.calls == ["step"] and cab.calls == []
+
+
+def test_a_script_and_a_critical_action_hand_over_every_object(tmp_path, cab, task):
+    critical = {"kind": "critical", "task_id": "KD-5", "proposal_id": "p", "action_id": "a"}
+    for extra in (STEP, critical):
+        cab.calls.clear()
+        runner = Runner([{}, {"unit": "b" * 64, "port": 443}])
+        run(["--task", "KD-5", "example-stage", "true"], tmp_path, runner, extra=extra)
+        assert set(cab.calls[1]["changes"]) == {"units:x.service", "ports:tcp:0.0.0.0:80", "ports:tcp:0.0.0.0:443"}
+
+
+@pytest.mark.parametrize("verb, key, taken", [
+    ("cron.line", ROOT_CRON, True),
+    ("cron.line", "cron:/var/spool/cron/root", True),
+    ("cron.line", "cron:/etc/cron.d/x", False),
+    ("cron.line", "cron:/var/spool/cron/crontabs/www-data", False),
+    ("cron.line", "units:x.service", False),
+    ("package.install", "users:svc", True),
+    ("package.install", "units:multi-user.target.wants/x.service", True),
+    ("package.install", "cron:/etc/cron.d/x", True),
+    ("package.install", "ports:tcp:0.0.0.0:80", True),
+    ("package.install", "sshd:file:/etc/ssh/sshd_config", False),
+    ("package.install", "persist:/etc/rc.local", False),
+    ("package.upgrade", "shadow:/etc/shadow", True),
+    ("service.start", "wgpeers:wg0:x", True),
+    ("service.start", "fw:ufw", False),
+    ("service.reload", "units:x.service", False),
+])
+def test_what_each_kind_may_hand_over(verb, key, taken):
+    assert plan_window.within(key, plan_window.scope(_step(verb))) is taken
+    assert plan_window.within(key, plan_window.scope(_step("script")))

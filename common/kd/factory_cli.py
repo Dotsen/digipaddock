@@ -132,12 +132,17 @@ def _call(client, request):
         raise Refused(EXIT_ERROR, f"the cabinet is unavailable ({exc.__class__.__name__})") from exc
 
 
+def _short(revision: str) -> str:
+    """A release tree as printed: each commit (the code's, then the overlay's) cut to 12 characters."""
+    return "+".join(part[:12] for part in str(revision).split("+"))
+
+
 def _show(op, out):
     params = op.get("params") or {}
     what = (f"component {params.get('component', '')} {params.get('mode', '')}" if op.get("kind") == "component.install"
             else f"agents {','.join(op['agents'])}")
     out.write(f"operation {op['id']} {op['state']} phase {op['phase'] or '-'} {what} "
-              f"revision {op['revision'][:12]}{' error ' + op['error'] if op['error'] else ''}\n")
+              f"revision {_short(op['revision'])}{' error ' + op['error'] if op['error'] else ''}\n")
     for name, item in sorted((op.get("result") or {}).get("agents", {}).items()):
         out.write(f"  {name}: {item['state']} {item['stage'] or '-'}{' ' + item['error'] if item['error'] else ''}\n")
     ran = (op.get("result") or {}).get("component")
@@ -177,7 +182,7 @@ def main(argv=None, *, environ, client, registry=agents.REGISTRY, out=sys.stdout
                                    "kind": "component.install", "component": args.component, "mode": args.mode,
                                    "key": args.key})["operation"]
             out.write(f"operation {found['id']} {found['state']} {args.component} {args.mode} "
-                      f"revision {found['revision'][:12]}\n")
+                      f"revision {_short(found['revision'])}\n")
             if found["state"] in ("pending", "running"):
                 out.write(FINISH.format(card=args.card, id=found["id"], what="install") + "\n")
             return 0

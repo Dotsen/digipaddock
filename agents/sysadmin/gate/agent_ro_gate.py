@@ -1581,9 +1581,46 @@ LINE_MASKS = (
 )
 
 
+PEM_BEGIN_RE = re.compile(rb"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
+PEM_END_RE = re.compile(rb"-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
+
+
+def _pem_lines(data: bytes, inside: bool = False) -> Tuple[bytes, bool]:
+    """data with every private key masked line for line: its BEGIN line from the marker on shows the key as PEM_RE
+    shows it whole, each further line of the key up to its END marker is ***, the text after END stays. PEM_RE joins
+    a key into one line; grep reads one line at a time and would print a body line it matched without the BEGIN line
+    the output's PEM_RE needs (KD-9483) — this keeps the line count and masks those lines. ``inside`` — data starts
+    inside a key an earlier block of the same file began; → (the text, whether it ends inside a key)."""
+    if not inside and PEM_MARK not in data:
+        return data, False
+    out = []  # type: List[bytes]
+    pos, size = 0, len(data)
+    while pos < size:
+        shown = False  # the key's current line already shows its mask (the BEGIN line)
+        if not inside:
+            begin = PEM_BEGIN_RE.search(data, pos)
+            if begin is None:
+                out.append(data[pos:])
+                break
+            out.append(data[pos:begin.start()] + _PEM_MASKED)
+            pos, inside, shown = begin.end(), True, True
+        end = PEM_END_RE.search(data, pos)
+        lines = data.count(b"\n", pos, size if end is None else end.start())
+        tail = b""
+        if end is None and data.endswith(b"\n"):  # the key goes on in the next block, from the start of a line
+            lines, tail = lines - 1, b"\n"
+        out.append((b"" if shown else MASK) + b"\n***" * lines + tail)
+        if end is None:
+            return b"".join(out), True
+        pos, inside = end.end(), False
+    return b"".join(out), inside
+
+
 def _mask_lines(data: bytes, total: List[int]) -> bytes:
-    """Every mask that keeps to one line: all but PEM_RE and EDGE_END_RE. None of them adds or removes a line break,
-    so the masked text keeps its line numbers."""
+    """Every mask that keeps to one line: a private key line for line (_pem_lines), then LINE_MASKS. None of them adds
+    or removes a line break, so the masked text keeps its line numbers. In redact_counted PEM_RE has joined every key
+    into one line already, which _pem_lines leaves as it is."""
+    data = _pem_lines(data)[0]
     for mask in LINE_MASKS:
         data = mask.apply(data, total)
     return data
@@ -1676,6 +1713,12 @@ def _apply_on(data: bytes, spans: List[Tuple[int, int]], mask: LineMask) -> byte
 
 def blind(data: bytes) -> bytes:
     """Whole lines as a pattern may see them: _mask_lines(data) byte for byte, each mask run only on its lines."""
+    return _blind(data)[0]
+
+
+def _blind(data: bytes, inside: bool = False) -> Tuple[bytes, bool]:
+    """blind() of one block; ``inside`` — the block starts inside a private key (_pem_lines) → (text, inside)."""
+    data, inside = _pem_lines(data, inside)
     low = data.lower()
     for mask in LINE_MASKS:
         spans = _spans(data, _hits(mask, low))
@@ -1683,7 +1726,7 @@ def blind(data: bytes) -> bytes:
             masked = _apply_on(data, spans, mask)
             if masked is not data:
                 data, low = masked, masked.lower()
-    return data
+    return data, inside
 
 
 def _cut(data: bytes) -> int:
@@ -1695,10 +1738,11 @@ def _cut(data: bytes) -> int:
 
 
 def blind_stream(chunks: Iterable[bytes], errors: List[str]) -> Iterator[bytes]:
-    """chunks as blind() sees them, in blocks of whole lines. A line longer than BLIND_LINE_MAX ends the stream
-    (into errors): its secret could fall across two blocks."""
+    """chunks as blind() sees them, in blocks of whole lines; a private key that begins in one block is masked on into
+    the next. A line longer than BLIND_LINE_MAX ends the stream (into errors): its secret could fall across two
+    blocks."""
     pending: List[bytes] = []
-    size = 0
+    size, inside = 0, False
     for chunk in chunks:
         pending.append(chunk)
         size += len(chunk)
@@ -1712,12 +1756,13 @@ def blind_stream(chunks: Iterable[bytes], errors: List[str]) -> Iterator[bytes]:
                 errors.append("строка длиннее %d МБ — дальше файл не читается" % (BLIND_LINE_MAX >> 20))
                 return
         if cut:
-            yield blind(data[:cut])
+            block, inside = _blind(data[:cut], inside)
+            yield block
             data = data[cut:]
         pending, size = [data], len(data)
     data = b"".join(pending)
     if data:
-        yield blind(data)
+        yield _blind(data, inside)[0]
 
 
 def _safe(text: str) -> str:

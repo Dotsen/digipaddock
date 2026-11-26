@@ -2,7 +2,7 @@
   // A PR's diff as files of numbered lines. While the person writes remarks, each line takes a remark of
   // its own — an added or kept line on the new side, a removed one on the old — gathered in `comments` for the
   // decision to send. A cut diff says so and links the whole one.
-  import { COMMENTS_MAX, parseDiff, type DiffLine, type LineComment } from "../lib/diff";
+  import { COMMENTS_MAX, hiddenCodes, parseDiff, splitHidden, type DiffFile, type DiffLine, type LineComment } from "../lib/diff";
   import { t, type Key } from "../lib/i18n.svelte";
 
   let {
@@ -20,6 +20,8 @@
   } = $props();
 
   const files = $derived(parseDiff(text));
+  // the distinct hidden characters of a file's lines: a warning above them, and each marked in its line
+  const hiddenIn = (file: DiffFile) => [...new Set(file.hunks.flatMap((h) => h.lines.flatMap((l) => hiddenCodes(l.text))))];
   const SIGN = { add: "+", del: "−", ctx: " " } as const;
 
   /** Where a remark on this line points. */
@@ -55,6 +57,7 @@
         <code>{file.oldPath && file.oldPath !== file.path ? `${file.oldPath} → ${file.path}` : file.path}</code>
       </header>
       {#if file.binary}<p class="muted note">{t("decision.pr.binary")}</p>{/if}
+      {#if hiddenIn(file).length}<p class="hidden-warn" role="alert">{t("decision.pr.hidden", { codes: hiddenIn(file).join(", ") })}</p>{/if}
       <div class="scroll">
         <table>
           <tbody>
@@ -64,7 +67,7 @@
                 <tr class={line.kind}>
                   <td class="n">{line.old ?? ""}</td>
                   <td class="n">{line.new ?? ""}</td>
-                  <td class="code"><span class="sign" aria-hidden="true">{SIGN[line.kind]}</span>{line.text}</td>
+                  <td class="code"><span class="sign" aria-hidden="true">{SIGN[line.kind]}</span>{#each splitHidden(line.text) as part, pi (pi)}{#if "hidden" in part}<mark class="hid">{part.hidden}</mark>{:else}{part.text}{/if}{/each}</td>
                   {#if commenting}
                     <td class="act">
                       <button
@@ -124,6 +127,8 @@
   td { padding: 0 var(--sp-6); vertical-align: top; }
   .n { color: var(--muted); text-align: right; user-select: none; width: 1%; white-space: nowrap; }
   .code { white-space: pre; }
+  .hidden-warn { margin: 0; padding: var(--sp-4) var(--sp-10); background: var(--warn-bg); color: var(--warn); font-size: var(--fs-md); font-weight: 600; }
+  .hid { background: var(--warn-bg); color: var(--warn); font-size: var(--fs-xs); font-weight: 700; border-radius: var(--r-sm); padding: 0 var(--sp-2); }
   .sign { display: inline-block; width: 1.2em; color: var(--muted); }
   tr.add { background: color-mix(in srgb, var(--good) 12%, transparent); }
   tr.del { background: color-mix(in srgb, var(--crit) 12%, transparent); }

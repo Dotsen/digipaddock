@@ -51,3 +51,29 @@ def test_an_id_first_and_empty_text(env):
     card = env.card(title="Что-то")
     assert _ids(env, card.id.lower()) == [card.id]
     assert _ids(env, "   ") == []
+
+
+# --- the search runs under the board's one lock: its query is bounded ---------------------
+def test_repeated_words_and_alternatives_are_searched_once():
+    assert store.search_words("Голос голос ГОЛОС|голос|аудио голос") == [["голос"], ["голос", "аудио"]]
+    assert store.search_words("а|а б") == [["а"], ["б"]]
+
+
+def test_a_search_is_bounded_in_length_and_words(env):
+    voice = env.card(title="Запись голоса")
+    assert _ids(env, " ".join(["голос"] * 30)) == [voice.id]  # one word, however often it is repeated
+    with pytest.raises(store.Invalid, match=f"at most {store.SEARCH_TEXT_MAX} characters"):
+        env.store.search("г" * (store.SEARCH_TEXT_MAX + 1))
+    words = [f"w{i}" for i in range(store.SEARCH_WORDS_MAX + 1)]
+    for text in (" ".join(words), "|".join(words), " ".join(words[:5]) + " " + "|".join(words[5:])):
+        with pytest.raises(store.Invalid, match=f"at most {store.SEARCH_WORDS_MAX} words"):
+            env.store.search(text)
+    assert env.store.search(" ".join(words[:-1])) == []
+
+
+def test_the_api_refuses_an_unbounded_search(env):
+    from kd.cabinet import api
+
+    with pytest.raises(api.ApiError) as exc:
+        env.call("root", {"op": "card.search", "text": "x" * (store.SEARCH_TEXT_MAX + 1)})
+    assert exc.value.kind == "invalid" and "characters" in str(exc.value)

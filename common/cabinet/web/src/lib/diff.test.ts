@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDiff, remarksText } from "./diff";
+import { hiddenCodes, parseDiff, remarksText, splitHidden } from "./diff";
 
 const DIFF = [
   "diff --git a/common/kd/x.py b/common/kd/x.py",
@@ -121,5 +121,18 @@ describe("parseDiff", () => {
       ["s p.md", "s p.md"],
     ]);
     expect(files[0].hunks[0].lines.map((l) => l.text)).toEqual(["a", "b"]);
+  });
+
+  it("splits a line at its hidden characters and names them by code point", () => {
+    expect(hiddenCodes("plain text, tab	here")).toEqual([]);
+    const line = "if (a) \u202E /* \u202C";
+    expect(splitHidden(line)).toEqual([
+      { text: "if (a) " },
+      { hidden: "U+202E" },
+      { text: " /* " },
+      { hidden: "U+202C" },
+    ]);
+    expect(hiddenCodes("a\u200Bb\u0007c\u2028\u{E0041}")).toEqual(["U+200B", "U+0007", "U+2028", "U+E0041"]);
+    expect(splitHidden("clean")).toEqual([{ text: "clean" }]);
   });
 });

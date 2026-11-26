@@ -15,7 +15,12 @@ the capabilities the wrapper needs, and:
   follows leaves it no capability at all;
 - ``env --chdir`` enters the working directory as the ci user: root's chdir (``WorkingDirectory=``, ``unshare
   --wd``) would follow a link the candidate left in its checkout, through the host's ``/proc/1/root``, out of the
-  unit's read-only mounts.
+  unit's read-only mounts;
+- ``PrivateIPC=`` gives the unit an IPC namespace of its own (SysV shared memory, semaphores and message queues,
+  POSIX message queues) and ``TemporaryFileSystem=`` a ``/dev/shm`` of its own (POSIX shared memory is that
+  directory, which no IPC namespace covers and ``ProtectSystem=`` leaves writable): systemd sets both up before
+  unshare starts, unshare makes only a pid and a mount namespace (a copy of the unit's mounts) and setpriv none, so
+  the command runs in the unit's — two checks at once share no IPC object.
 
 The memory, CPU and time limits are the unit's cgroup's and hold for all of it. The command is its namespace's
 init: a signal it has no handler for never reaches it (pip, npm and a plain Python script ignore the stop's SIGTERM),
@@ -34,8 +39,14 @@ TOOLS = (UNSHARE, SETPRIV, ENV)
 # unshare: the namespaces and the mount of /proc; setpriv: the uid, the gid and groups, the bounding set
 CAPABILITIES = "CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP"
 STOP_S = 15  # from the stop's SIGTERM to its SIGKILL
-# identity and privilege are the wrapper's: a caller's User= would put the unit back in the host's pid namespace
+SHM = "TemporaryFileSystem=/dev/shm:mode=1777,nosuid,nodev"  # as the host's /dev/shm, but the unit's own
+# identity, privilege and the namespaces are the wrapper's: a caller's User= would put the unit back in the host's pid
+# namespace, its IPC settings in a namespace another unit shares
 _WRAPPERS = (
+    "PrivateIPC=",
+    "IPCNamespacePath=",
+    "JoinsNamespaceOf=",
+    "TemporaryFileSystem=",
     "User=",
     "Group=",
     "DynamicUser=",
@@ -95,6 +106,8 @@ def argv(
         f"CapabilityBoundingSet={CAPABILITIES}",
         "NoNewPrivileges=yes",
         f"TimeoutStopSec={STOP_S}",
+        "PrivateIPC=yes",
+        SHM,
         *props,
     ):
         out += ["-p", prop]

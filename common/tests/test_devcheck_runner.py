@@ -249,7 +249,8 @@ def test_child_unit_properties_are_exact(env):
     props = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
     # no User=: the unit starts as root with what the wrapper needs, the ci user is taken inside its own pid namespace
     assert props == ["CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP", "NoNewPrivileges=yes",
-                     "TimeoutStopSec=15", "PrivateNetwork=yes", "PrivateTmp=yes", "ProtectSystem=strict",
+                     "TimeoutStopSec=15", "PrivateIPC=yes", ci_unit.SHM, "PrivateNetwork=yes", "PrivateTmp=yes",
+                     "ProtectSystem=strict",
                      "ProtectHome=yes", f"ReadWritePaths={work}", "CPUQuota=200%",
                      "MemoryMax=3G", "RuntimeMaxSec=1200",
                      "InaccessiblePaths=" + " ".join("-" + p for p in dr.INACCESSIBLE)]

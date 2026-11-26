@@ -40,6 +40,16 @@ describe("markdown", () => {
     expect(good).toContain('target="_blank"');
   });
 
+  it("drops a link a browser reads as another host: a backslash after the first slash, also as an entity", () => {
+    const backslash = String.fromCharCode(92);
+    for (const href of ["/\\evil.example", "/&#92;evil.example", "/&bsol;/evil.example", "//evil.example", "/&#9;/evil.example"]) {
+      const html = renderMarkdown(`[x](${href})`);
+      // marked may percent-encode a literal backslash, which is safe; a raw one or `//` is not
+      expect(html, href).not.toContain('href="/' + backslash);
+      expect(html, href).not.toContain('href="//');
+    }
+  });
+
   it("keeps a link inside the cabinet in the same tab", () => {
     const html = renderMarkdown("[KD-5](/cards/KD-5)");
     expect(html).toContain('href="/cards/KD-5"');

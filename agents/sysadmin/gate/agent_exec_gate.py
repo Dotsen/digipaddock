@@ -16,6 +16,12 @@ week); ``enforce`` refuses with exit 126. A critical command runs once per serve
 ``/var/lib/agent-exec-gate/used``). ``agent-exec-gate snapshot <nonce>`` is the plan window's read-only snapshot
 (what agent-ro may read anyway), allowed in both modes.
 
+A signed plan's steps run once each and in order, in both modes (KD-9483): the same directory journals each step's
+result under ``plan_key`` (the signed decision's id and nonce, the plan's hash, the step); a step that succeeded is
+refused, a failed one may run again, and a step runs only when every earlier step of the plan on this server
+succeeded — one run of a plan at a time (its lock). ``agent-exec-gate step <key>`` answers "ok" or "no" for the
+executor, which checks a predecessor that ran on another server. An unsigned test-zone step keeps no marks.
+
 The policy (``/usr/local/bin/agent-exec-policy`` — kd.exec_policy installed next to the gate) holds in both
 modes, before the signature is checked: rule 1 (self-protection) on every command — a plan step, a critical action,
 a legacy command —, rule 2 (a critical plan step needs its own signature) on plan steps, with the site units of
@@ -46,6 +52,10 @@ try:
     import syslog
 except ImportError:  # Windows: local tests
     syslog = None
+try:
+    import fcntl
+except ImportError:  # Windows: local tests
+    fcntl = None
 
 GATE_JSON = "/etc/agent-exec-gate/gate.json"
 SIGNERS_JSON = "/etc/agent-exec-gate/signers.json"
@@ -59,6 +69,8 @@ PLAN_MAX_TTL = 7 * 86400
 ACTION_MAX_TTL = 900
 RUN_WORD = "agent-exec-gate run"
 SNAPSHOT_WORD = "agent-exec-gate snapshot"
+STEP_WORD = "agent-exec-gate step"  # + " <plan_key>": "ok" when that step of a signed plan succeeded here
+HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 MODES = ("observe", "enforce")
 SAFE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -825,6 +837,103 @@ def take_once(used_dir: str, key: str) -> None:
         handle.write(time.strftime(TIME_FORMAT, time.gmtime()) + "\n")
 
 
+def _plan_base(decision_id: Any, nonce: Any, proposal_sha256: Any) -> str:
+    if not all(isinstance(v, str) and v for v in (decision_id, nonce)) or not isinstance(proposal_sha256, str) \
+            or not HEX64.fullmatch(proposal_sha256):
+        return ""
+    return "plan|%s|%s|%s" % (decision_id, nonce, proposal_sha256)
+
+
+def plan_key(decision_id: Any, nonce: Any, proposal_sha256: Any, step: Any) -> str:
+    """The journal key of step ``step`` of a signed plan (kd.exec_envelope.plan_key): the signed decision's id and
+    nonce and the plan's hash; "" when one is missing — an unsigned step keeps no mark."""
+    base = _plan_base(decision_id, nonce, proposal_sha256)
+    if not base or isinstance(step, bool) or not isinstance(step, int) or step < 1:
+        return ""
+    return hashlib.sha256(("%s|%d" % (base, step)).encode("utf-8")).hexdigest()
+
+
+def plan_lock(decision_id: Any, nonce: Any, proposal_sha256: Any) -> str:
+    """The lock file of a signed plan's runs on this server."""
+    base = _plan_base(decision_id, nonce, proposal_sha256)
+    return hashlib.sha256(base.encode("utf-8")).hexdigest() + ".lock" if base else ""
+
+
+def plan_steps(envelope: Any, alias: Any) -> Optional[Tuple[int, str, List[Tuple[int, str]], str]]:
+    """(the step, its key, the plan's earlier steps on this server with their keys, the plan's lock) of a plan
+    envelope that names its signed decision; None otherwise (an action, an unsigned test-zone step). Total: in
+    observe a step that failed its check keeps the marks too, as an action's once-mark."""
+    if not isinstance(envelope, dict) or envelope.get("kind") != "plan":
+        return None
+    decision, payload, proposal = envelope.get("decision"), envelope.get("payload"), envelope.get("proposal")
+    if not all(isinstance(part, dict) for part in (decision, payload, proposal)):
+        return None
+    step, operations = envelope.get("step"), proposal.get("operations")
+    parts = (decision.get("id"), decision.get("nonce"), payload.get("proposal_sha256"))
+    key = plan_key(*parts, step)
+    if not key or not isinstance(operations, list) or step > len(operations):
+        return None
+    earlier = [(n, plan_key(*parts, n)) for n in range(1, step)
+               if isinstance(operations[n - 1], dict) and operations[n - 1].get("server") == alias]
+    return step, key, earlier, plan_lock(*parts)
+
+
+def step_done(used_dir: str, key: str) -> bool:
+    """The step's mark says it succeeded; OSError other than a missing mark — the caller refuses (fail closed)."""
+    try:
+        with open(os.path.join(used_dir, key), "rb") as handle:
+            return handle.read(64).startswith(b"ok ")
+    except FileNotFoundError:
+        return False
+
+
+def begin_step(used_dir: str, steps: Tuple[int, str, List[Tuple[int, str]], str]) -> Any:
+    """Before a signed plan step: the plan's lock (one run of a plan at a time on a server), no success of this step
+    yet, a success of every earlier step of the plan on this server; the held lock, Deny otherwise."""
+    step, key, earlier, lock = steps
+    handle = None
+    try:
+        os.makedirs(used_dir, mode=0o700, exist_ok=True)
+        handle = open(os.path.join(used_dir, lock), "a")
+        if fcntl is not None:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise Deny("шаг этого плана уже выполняется на этом сервере")
+        if step_done(used_dir, key):
+            raise Deny("шаг %d этого плана уже выполнен на этом сервере: повтор — только новым планом с подписью "
+                       "владельца" % step)
+        for number, earlier_key in earlier:
+            if not step_done(used_dir, earlier_key):
+                raise Deny("шаг %d этого плана на этом сервере ещё не выполнен успешно: сначала он" % number)
+        return handle
+    except Deny:
+        if handle is not None:
+            handle.close()
+        raise
+    except OSError as exc:
+        if handle is not None:
+            handle.close()
+        raise Deny("журнал шагов плана не прочитан (%s)" % exc.__class__.__name__)
+
+
+def finish_step(used_dir: str, key: str, code: int) -> None:
+    """After the run: the step's result, "ok" or its exit code (a failed step may run again), replaced atomically;
+    OSError to the caller."""
+    text = "%s %s\n" % ("ok" if code == 0 else "rc %d" % code, time.strftime(TIME_FORMAT, time.gmtime()))
+    fd, tmp = tempfile.mkstemp(dir=used_dir, prefix=".step-")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        os.replace(tmp, os.path.join(used_dir, key))
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 # --- the policy
 # -------------------------------------------------------------------------------------------
 
@@ -1119,6 +1228,19 @@ def main(argv=None, environ=None, stdin=None, out=None, err=None, now: Callable[
             return 126
         _log("snapshot %s" % nonce)
         return run(snapshot_script(nonce), as_root, SNAPSHOT_TIMEOUT)
+    if raw.startswith(STEP_WORD + " "):
+        # the executor asks before a step whose predecessor ran here: did it succeed (a read of the journal)
+        key = raw[len(STEP_WORD) + 1:]
+        if not HEX64.fullmatch(key):
+            _write(err, "agent-exec-gate: отказ: шагу нужен ключ из 64 hex-символов\n")
+            return 126
+        try:
+            done = step_done(USED_DIR, key)
+        except OSError as exc:
+            _write(err, "agent-exec-gate: отказ: журнал шагов плана не прочитан (%s)\n" % exc.__class__.__name__)
+            return 126
+        _write(out, "ok\n" if done else "no\n")
+        return 0
     scripts_off = os.path.lexists(SCRIPT_OFF)
     if raw != RUN_WORD:
         if not raw:
@@ -1174,7 +1296,26 @@ def main(argv=None, environ=None, stdin=None, out=None, err=None, now: Callable[
             return 126
     # a checked typed step runs its words without a shell; a script, an action and a step observe let
     # through unchecked stay text for bash
-    return run(checked.get("argv") or checked["command"], as_root)
+    command = checked.get("argv") or checked["command"]
+    steps = None if checked.get("test_env") else plan_steps(envelope, gate.get("alias"))
+    if steps is None:
+        return run(command, as_root)
+    try:
+        lock = begin_step(USED_DIR, steps)
+    except Deny as exc:
+        _log("deny (%s): %s" % (exc, _describe(envelope)), syslog.LOG_WARNING if syslog else None)
+        _write(err, "agent-exec-gate: отказ: %s\n" % exc)
+        return 126
+    try:
+        code = run(command, as_root)
+        try:
+            finish_step(USED_DIR, steps[1], code)
+        except OSError as exc:  # the step ran: its code stands; unrecorded, a success could run again
+            _log("step result not recorded (%s): %s" % (exc.__class__.__name__, _describe(envelope)),
+                 syslog.LOG_WARNING if syslog else None)
+        return code
+    finally:
+        lock.close()
 
 
 if __name__ == "__main__":

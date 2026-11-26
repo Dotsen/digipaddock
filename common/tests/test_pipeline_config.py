@@ -24,7 +24,7 @@ def test_who_closes_done_is_no_longer_the_codes(tmp_path):
     """the project's ``done_by`` in the cabinet says it; a defaults file that still names it is refused."""
     old = tmp_path / "pipeline.json"
     old.write_text(json.dumps({"continuations": {}, "doneBy": {"dev": ["digipaddock"]}}), encoding="utf-8")
-    with pytest.raises(ValueError, match="continuations only"):
+    with pytest.raises(ValueError, match="continuations and questions only"):
         pipeline_config.load(str(tmp_path / "none.json"), str(old))
     assert not hasattr(pipeline_config.Config(), "done_by")
 
@@ -32,6 +32,21 @@ def test_who_closes_done_is_no_longer_the_codes(tmp_path):
 def test_the_repo_defaults_load():
     config = pipeline_config.load("/nonexistent/pipeline.json")
     assert (config.mode, config.per_window, config.streak, config.window_s) == ("observe", 6, 3, 3600)
+    # an agent's questions: 20 an hour across its cards, 5 open on one card — far above one question a turn
+    assert (config.questions_window_s, config.questions_per_window, config.questions_open) == (3600, 20, 5)
+    assert config == pipeline_config.Config()  # the code's defaults are the file's
+
+
+def test_question_limits_are_read_and_checked(tmp_path):
+    path = tmp_path / "pipeline.json"
+    path.write_text(json.dumps({"continuations": {}, "questions": {"windowMinutes": 30, "perWindow": 4,
+                                                                   "openPerCard": 2}}), encoding="utf-8")
+    config = pipeline_config.load(str(tmp_path / "none.json"), str(path))
+    assert (config.questions_window_s, config.questions_per_window, config.questions_open) == (1800, 4, 2)
+    for bad in ({"perWindow": 0}, {"openPerCard": True}, {"burst": 3}):
+        path.write_text(json.dumps({"questions": bad}), encoding="utf-8")
+        with pytest.raises(ValueError, match="questions"):
+            pipeline_config.load(str(tmp_path / "none.json"), str(path))
 
 
 def test_chain_plans_are_on_unless_the_mode_file_switches_them_off(tmp_path, defaults):

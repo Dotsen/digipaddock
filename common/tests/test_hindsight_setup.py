@@ -1,5 +1,6 @@
 """hindsight_setup.sh: the agents' memory server; an installed one stays as it is."""
 
+import os
 import re
 import shutil
 import subprocess
@@ -253,6 +254,53 @@ def test_check_covers_the_server():
                   'curl -fsS -m 10 -o /dev/null "$HEALTH"'):
         assert piece in check, piece
     assert "\nHEALTH=http://127.0.0.1:9077/health\n" in _text() and "exit 1" in check
+
+
+def test_check_says_when_the_venv_is_not_roots_alone():
+    """The API and the worker run claude_agent_sdk's bundled claude from the venv with the host's token: check
+    names an entry of the venv another user owns or may write."""
+    check = _function("check")
+    assert "venv_unsafe" in check and "bundled claude" in check
+
+
+def _unsafe(tmp_path, owner):
+    """venv_unsafe of the script over a venv in ``tmp_path``, its owner the test's user in place of root."""
+    opt = tmp_path / "opt"
+    real = opt / "venv-1.1.0" / "lib" / "claude_agent_sdk" / "_bundled"
+    real.mkdir(parents=True)
+    (real / "claude").write_bytes(b"\x7fELF")
+    for path in (opt, *opt.rglob("*")):
+        path.chmod(0o755)
+    (opt / "venv").symlink_to(opt / "venv-1.1.0")
+    body = _function("venv_unsafe").replace("-user root", f"-user {owner}")
+    script = "\n".join(["set -euo pipefail", f"OPT='{opt}'", f"VENV='{opt / 'venv'}'",
+                        "venv_unsafe() {", body, "}", "venv_unsafe"])
+    return opt, lambda: subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.skipif(BASH is None or not hasattr(os, "geteuid"), reason="owners and modes: Linux")
+def test_a_venv_entry_others_may_write_is_named(tmp_path):
+    import pwd
+
+    opt, run = _unsafe(tmp_path, pwd.getpwuid(os.geteuid()).pw_name)
+    proc = run()
+    assert proc.returncode == 0 and proc.stdout == "", proc.stderr  # all the owner's, nothing writable by others
+    claude = opt / "venv-1.1.0" / "lib" / "claude_agent_sdk" / "_bundled" / "claude"
+    claude.chmod(0o775)
+    assert run().stdout.strip() == str(claude)
+    claude.chmod(0o755)
+    (opt / "venv-1.1.0").chmod(0o757)
+    assert run().stdout.strip() == str(opt / "venv-1.1.0")
+    (opt / "venv-1.1.0").chmod(0o755)
+    (opt / "venv").unlink()
+    (opt / "venv").symlink_to(tmp_path)
+    assert "not a venv of" in run().stdout
+
+
+@pytest.mark.skipif(BASH is None or not hasattr(os, "geteuid"), reason="owners and modes: Linux")
+def test_a_venv_of_another_owner_is_named(tmp_path):
+    opt, run = _unsafe(tmp_path, "root" if os.geteuid() != 0 else "nobody")
+    assert run().stdout.strip() == str(opt)  # the first entry not of the expected owner
 
 
 def test_disable_keeps_the_data():

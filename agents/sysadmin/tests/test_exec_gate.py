@@ -643,6 +643,115 @@ def test_unwritable_used_dir_refuses(host, owner, tmp_path):
     assert code == 126 and host.runs.calls == [] and "отказ" in err
 
 
+# --- a signed plan's steps: once each, in order (KD-9483) ----------------------------------------------------------
+
+def step_key(step, proposal=PROPOSAL):
+    return gate.plan_key(D1, NONCE, plan_payload(proposal)["proposal_sha256"], step)
+
+
+def steps_done(host, *steps):
+    """The gate's journal says these steps of PROPOSAL succeeded on this server (a test of a later step)."""
+    host.paths[2].mkdir(exist_ok=True)
+    for step in steps:
+        gate.finish_step(str(host.paths[2]), step_key(step), 0)
+
+
+def test_the_plan_key_mirrors_the_stage():
+    psha = plan_payload()["proposal_sha256"]
+    assert gate.plan_key(D1, NONCE, psha, 2) == exec_envelope.plan_key(D1, NONCE, psha, 2) != step_key(1)
+    assert re.fullmatch(r"[0-9a-f]{64}", step_key(1)) and step_key(1) != gate.once_key(decision_dict())
+    for bad in (("", NONCE, psha, 1), (D1, "", psha, 1), (D1, NONCE, "x" * 64, 1), (D1, NONCE, psha, 0),
+                (D1, NONCE, psha, True), (None, NONCE, psha, 1)):
+        assert gate.plan_key(*bad) == "" == exec_envelope.plan_key(*bad)
+
+
+@pytest.mark.parametrize("mode", ["enforce", "observe"])
+def test_a_plan_step_that_succeeded_is_not_run_again(host, owner, mode):
+    raw = json.dumps(signed_plan(owner, 1)).encode("utf-8")
+    assert host(mode, gate.RUN_WORD, raw)[0] == 0
+    assert (host.paths[2] / step_key(1)).read_text("utf-8").startswith("ok ")
+    for again in ("enforce", "observe"):
+        code, out, err = host(again, gate.RUN_WORD, raw)
+        assert code == 126 and "шаг 1 этого плана уже выполнен" in err and host.runs.calls == [SCRIPT]
+    stripped = signed_plan(owner, 1)
+    stripped["assertion"] = None  # observe lets an unchecked signature through, never a second run
+    code, out, err = host("observe", gate.RUN_WORD, json.dumps(stripped).encode("utf-8"))
+    assert code == 126 and host.runs.calls == [SCRIPT]
+
+
+def test_a_failed_plan_step_may_be_run_again(host, owner):
+    raw = json.dumps(signed_plan(owner, 1)).encode("utf-8")
+    host.runs.code = 1
+    assert host("enforce", gate.RUN_WORD, raw)[0] == 1
+    assert (host.paths[2] / step_key(1)).read_text("utf-8").startswith("rc 1 ")
+    host.runs.code = 0
+    assert host("enforce", gate.RUN_WORD, raw)[0] == 0  # the retry after a failure
+    assert host("enforce", gate.RUN_WORD, raw)[0] == 126  # and no more once it succeeded
+    assert host.runs.calls == [SCRIPT, SCRIPT]
+
+
+def test_a_plan_step_waits_for_the_earlier_steps_of_its_server(host, owner):
+    second = json.dumps(signed_plan(owner, 2)).encode("utf-8")
+    code, out, err = host("enforce", gate.RUN_WORD, second)
+    assert code == 126 and "шаг 1 этого плана" in err and "не выполнен" in err and host.runs.calls == []
+    assert not (host.paths[2] / step_key(2)).exists()
+    host.runs.code = 1
+    host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 1)).encode("utf-8"))
+    assert host("enforce", gate.RUN_WORD, second)[0] == 126  # a failed step 1 does not open step 2
+    host.runs.code = 0
+    host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 1)).encode("utf-8"))
+    assert host("enforce", gate.RUN_WORD, second)[0] == 0
+    third = json.dumps(signed_plan(owner, 3)).encode("utf-8")
+    assert host("enforce", gate.RUN_WORD, third)[0] == 0
+
+
+def test_another_servers_step_is_not_this_gates_to_wait_for(host, owner):
+    # step 1 runs on node-g: its order is the executor's to check (agent-exec-gate step there)
+    proposal = dict(PROPOSAL, operations=[PROPOSAL["operations"][3], PROPOSAL["operations"][0]])
+    code, out, err = host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 2, proposal=proposal)).encode("utf-8"))
+    assert (code, err) == (0, "") and host.runs.calls == [SCRIPT]
+
+
+def test_the_step_word_says_whether_a_step_succeeded(host, owner):
+    for mode in ("enforce", "observe"):
+        assert host(mode, "agent-exec-gate step " + step_key(1)) == (0, "no\n", "")
+    host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 1)).encode("utf-8"))
+    for mode in ("enforce", "observe"):
+        assert host(mode, "agent-exec-gate step " + step_key(1)) == (0, "ok\n", "")
+    assert host("enforce", "agent-exec-gate step " + step_key(2))[1] == "no\n"
+    for bad in ("agent-exec-gate step", "agent-exec-gate step ../x", "agent-exec-gate step " + step_key(1) + " x",
+                "agent-exec-gate step " + step_key(1).upper()):
+        code, out, err = host("observe", bad)
+        assert code == 126 and out == ""
+    assert host.runs.calls == [SCRIPT]
+
+
+def test_a_test_zone_step_keeps_no_marks(host, envs_file):
+    raw = json.dumps(unsigned(zone_proposal(zone_op("app.tool", Z_SPARK)))).encode("utf-8")
+    assert host("enforce", gate.RUN_WORD, raw)[0] == 0
+    assert host("enforce", gate.RUN_WORD, raw)[0] == 0  # no owner's signature to spend: the factory host's rule
+    assert not host.paths[2].exists() or not any(host.paths[2].iterdir())
+
+
+def test_a_plan_step_with_an_unreadable_journal_is_refused(host, owner, tmp_path):
+    (tmp_path / "used").write_text("not a directory")
+    code, out, err = host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 1)).encode("utf-8"))
+    assert code == 126 and host.runs.calls == [] and "журнал" in err
+
+
+@pytest.mark.skipif(os.name != "posix", reason="flock")
+def test_a_plan_runs_one_step_at_a_time_on_a_server(host, owner, tmp_path):
+    import fcntl
+
+    psha = plan_payload()["proposal_sha256"]
+    (tmp_path / "used").mkdir()
+    with open(str(tmp_path / "used" / gate.plan_lock(D1, NONCE, psha)), "w") as held:  # another run holds the plan
+        fcntl.flock(held, fcntl.LOCK_EX)
+        code, out, err = host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 1)).encode("utf-8"))
+    assert code == 126 and "уже выполняется" in err and host.runs.calls == []
+    assert host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 1)).encode("utf-8"))[0] == 0
+
+
 def test_stale_or_missing_gate_files_refuse(host, owner):
     raw = json.dumps(signed_plan(owner, 1)).encode("utf-8")
     host.paths[1].unlink()
@@ -788,6 +897,7 @@ def test_rule2_reads_the_site_units_of_gate_json(host, owner):
 
 
 def test_typed_steps_are_classified_too(host, owner):
+    steps_done(host, 1)
     raw = json.dumps(signed_plan(owner, 2)).encode("utf-8")  # systemctl restart nginx.service: ordinary
     code, out, err = host("enforce", gate.RUN_WORD, raw)
     assert (code, err) == (0, "") and host.runs.calls == [["systemctl", "restart", "nginx.service"]]
@@ -1430,13 +1540,14 @@ DNF_UPGRADE = ["systemd-run", "--unit=kd-package-upgrade", "--collect", "dnf", "
 
 
 def test_a_verified_typed_step_runs_its_argv_not_a_shell(host, owner):
-    code, out, err = host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 2)).encode("utf-8"))
-    assert (code, err) == (0, "") and host.runs.calls == [["systemctl", "restart", "nginx.service"]]
     code, out, err = host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 1)).encode("utf-8"))
-    assert (code, err) == (0, "") and host.runs.calls[-1] == SCRIPT  # a script step stays text for bash
+    assert (code, err) == (0, "") and host.runs.calls == [SCRIPT]  # a script step stays text for bash
+    code, out, err = host("enforce", gate.RUN_WORD, json.dumps(signed_plan(owner, 2)).encode("utf-8"))
+    assert (code, err) == (0, "") and host.runs.calls[-1] == ["systemctl", "restart", "nginx.service"]
 
 
 def test_an_unverified_typed_step_in_observe_runs_as_before(host, owner):
+    steps_done(host, 1)
     env = signed_plan(owner, 2)
     env["assertion"] = None
     code, out, err = host("observe", gate.RUN_WORD, json.dumps(env).encode("utf-8"))
@@ -1523,6 +1634,7 @@ def test_typed_helper_steps_mirror_the_stage(owner, op, words):
     dict(DROP, text="/etc/shadow {\n daily\n}\n"),  # a stanza outside /var/log/
     dict(DROP, text="/var/log/a.log {\n create 0666 root root\n}\n"),
     dict(DROP, dir="/etc/sysctl.d", name="60-kd.conf", text="net.ipv4.ip_forward = 1\n"),  # a critical action's
+    dict(DROP, dir="/etc/sysctl.d", name="60-kd.conf", text="kernel.yama.ptrace_scope = 0\n"),  # a critical action's
     dict(DROP, dir="/etc/cron.d"),
     dict(DROP, name="../x"),
     {"verb": "gate.script", "value": "maybe"},

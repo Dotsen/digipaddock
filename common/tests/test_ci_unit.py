@@ -65,6 +65,9 @@ def test_the_unit_starts_as_root_with_only_what_the_wrapper_needs():
         CAPS,
         "NoNewPrivileges=yes",
         f"TimeoutStopSec={ci_unit.STOP_S}",
+        # SysV IPC, POSIX message queues and /dev/shm are the unit's own: no channel to a parallel check
+        "PrivateIPC=yes",
+        "TemporaryFileSystem=/dev/shm:mode=1777,nosuid,nodev",
         "PrivateNetwork=yes",
     ]
     assert [a for a in argv if a.startswith("--setenv=")] == [
@@ -101,6 +104,10 @@ def test_without_a_working_directory_the_command_follows_setpriv():
         "AmbientCapabilities=CAP_SYS_ADMIN",
         "NoNewPrivileges=no",
         "SecureBits=keep-caps",
+        "PrivateIPC=no",
+        "IPCNamespacePath=/proc/1/ns/ipc",
+        "JoinsNamespaceOf=digipaddock-devcheck-x.service",
+        "TemporaryFileSystem=/dev/shm:ro",
     ],
 )
 def test_identity_and_privilege_are_the_wrappers_alone(prop):
@@ -374,6 +381,47 @@ def test_a_ci_unit_cannot_reach_another_through_proc():
             victim.wait(timeout=30)
         finally:
             shutil.rmtree(base, ignore_errors=True)
+
+
+@pytest.mark.host
+@pytest.mark.skipif(
+    not LIVE, reason="needs root, systemd, unshare and setpriv: the Linux host"
+)
+def test_the_dropped_command_has_the_units_own_ipc_and_shm():
+    """PrivateIPC= gives the unit (unshare, root) an IPC namespace; unshare makes only a pid and a mount namespace
+    and setpriv none, so the ci user's command is in the unit's — and sees the unit's own /dev/shm."""
+    user = _live_user()
+    if user is None:
+        pytest.skip("no non-root user with a group of its name")
+    tag = uuid.uuid4().hex[:12]
+    base = tempfile.mkdtemp(prefix="kd-ci-unit-", dir="/run")
+    os.chmod(base, 0o755)
+    work = os.path.join(base, "probe")
+    os.mkdir(work)
+    os.chown(work, user.pw_uid, user.pw_gid)
+    deps = dr.Deps(cache=base, units=None, own=None, seal=None, owner=None, locker=None, ci_user=user.pw_name)
+    marker = f"kd-test-ci-shm-{tag}"
+    try:
+        probe = subprocess.run(
+            _named(
+                deps._unit(ID3, work, ["/bin/sh", "-c", f"readlink /proc/self/ns/ipc; id -u; "
+                                                        f"echo x > /dev/shm/{marker} && echo wrote"], 30),
+                f"kd-test-ci-ipc-{tag}",
+            ),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        lines = probe.stdout.splitlines()
+        assert probe.returncode == 0, probe.stdout + probe.stderr
+        assert lines[1] == str(user.pw_uid) and lines[2] == "wrote"
+        assert lines[0] != os.readlink("/proc/self/ns/ipc")  # not the host's IPC namespace
+        assert not os.path.exists(f"/dev/shm/{marker}")  # its /dev/shm was its own, gone with it
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+        if os.path.exists(f"/dev/shm/{marker}"):
+            os.unlink(f"/dev/shm/{marker}")
 
 
 def test_the_installer_checks_the_wrappers_tools():

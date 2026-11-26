@@ -184,11 +184,19 @@ def test_assign_refuses_a_spec_the_target_does_not_have(assignee, spec, why):
 
 
 def test_set_project_only_from_routes():
-    c = card()
+    c = card(status="Inbox")
     assert bb.plan(req("set-project", c, project="admin"), ROUTING, c).changes["project"] == "admin"
     for bad in ["digipaddock", "secrets", "admin\n", ["admin"]]:
         with pytest.raises(bb.Refused):
             bb.plan(req("set-project", c, project=bad), ROUTING, c)
+
+
+@pytest.mark.parametrize("status", ["To Do", "In Progress", "Review", "Blocked", "Done", "Cancelled"])
+def test_set_project_moves_only_an_inbox_card(status):
+    # the owner started the card in its project: its repository, its route, who sees it
+    c = card(status=status)
+    with pytest.raises(bb.Refused, match="only in Inbox"):
+        bb.plan(req("set-project", c, project="admin"), ROUTING, c)
 
 
 def test_set_priority_only_configured_values():
@@ -214,6 +222,35 @@ def test_set_labels_takes_the_incident_label_and_nothing_like_it():
     for bad in ("P-0", "P-", "P-12a", "Prod", "P-463,P-1", "P-1234567890"):
         with pytest.raises(bb.Refused):
             bb.plan(req("set-labels", c, add=[bad], remove=[]), ROUTING, c)
+
+
+def test_set_labels_adds_a_spec_label_only_of_the_assignees_registry():
+    c = card(assignee="@dev", labels=["spec:docs"])
+    edit = bb.plan(req("set-labels", c, add=["spec:reviewer"], remove=["spec:docs"]), ROUTING, c, specs=SPECS)
+    assert (edit.changes["labels_add"], edit.changes["labels_remove"]) == (["spec:reviewer"], ["spec:docs"])
+    nobody = card()  # no assignee yet: a specialization some agent holds
+    assert bb.plan(req("set-labels", nobody, add=["spec:docs"], remove=[]), ROUTING, nobody,
+                   specs=SPECS).changes["labels_add"] == ["spec:docs"]
+    # a label nobody's specialization names is still dropped without the registry (spec_mismatch's fix)
+    odd = card(assignee="@dev", labels=["spec:made-up"])
+    assert bb.plan(req("set-labels", odd, add=[], remove=["spec:made-up"]), ROUTING, odd).changes[
+        "labels_remove"] == ["spec:made-up"]
+
+
+@pytest.mark.parametrize("over, add, remove, why", [
+    ({"assignee": "@dev"}, ["spec:made-up"], [], "not a specialization of @dev"),
+    ({"assignee": "@sysadmin"}, ["spec:reviewer"], [], "not a specialization of @sysadmin"),
+    ({}, ["spec:made-up"], [], "no agent's specialization"),
+    ({"assignee": "@dev"}, ["spec:Reviewer"], [], "invalid spec"),
+    ({"assignee": "@dev", "labels": ["spec:docs"]}, ["spec:reviewer"], [], "one spec: label"),
+    ({"assignee": "@dev"}, ["spec:docs", "spec:reviewer"], [], "one spec: label"),
+])
+def test_set_labels_refuses_a_spec_label_the_registry_does_not_know(over, add, remove, why):
+    c = card(**over)
+    with pytest.raises(bb.Refused, match=why):
+        bb.plan(req("set-labels", c, add=add, remove=remove), ROUTING, c, specs=SPECS)
+    with pytest.raises(bb.Refused, match="no specialization registry"):
+        bb.plan(req("set-labels", c, add=add, remove=remove), ROUTING, c)
 
 
 def test_duplicate_label_does_not_become_a_dependency():

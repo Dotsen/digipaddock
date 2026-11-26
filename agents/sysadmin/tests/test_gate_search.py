@@ -442,6 +442,15 @@ LINE_KINDS = [sample for samples in MASK_SAMPLES.values() for sample in samples]
 ]
 
 
+# A private key's lines: the BEGIN line, body lines, the END line with text around them (fake samples).
+PEM_KINDS = [
+    b"-----BEGIN PRIVATE KEY-----",  # privacy-scan: allow (fake sample)
+    b"key: -----BEGIN EC PRIVATE KEY----- ZmFrZQ",  # privacy-scan: allow (fake sample)
+    b"ZmFrZWJvZHk", b"-----END PRIVATE KEY-----", b"x -----END EC PRIVATE KEY----- password=x",
+]
+LINE_KINDS += PEM_KINDS
+
+
 def test_blind_is_the_line_masks_on_random_mixes(monkeypatch):
     rng = random.Random(9481)
     monkeypatch.setattr(gate, "BLIND_BLOCK", 16)
@@ -470,6 +479,57 @@ def test_blind_stream_stops_at_an_endless_line(monkeypatch):
     errors = []
     out = b"".join(gate.blind_stream([b"ok\n"] + [b"x" * 10] * 20, errors))
     assert out == b"ok\n" and errors and "дальше файл не читается" in errors[0]
+
+
+# --- a private key's body in what grep sees (KD-9483) ---------------------------------------------
+# PEM_RE masks a key from its BEGIN line on; grep sees one line at a time, so a body line it matches came out
+# without that line. Every line of a key is masked in the text grep reads, and the file keeps its line count.
+
+PEM_LOG = (b"Oct  6 02:35 app: loaded\n"
+           b"Oct  6 02:36 app: key -----BEGIN RSA PRIVATE KEY-----\n"  # privacy-scan: allow (fake sample)
+           b"ZmFrZWJvZHlsaW5lb25l\n"
+           b"ZmFrZWJvZHlsaW5ldHdv\n"
+           b"-----END RSA PRIVATE KEY----- done\n"
+           b"Oct  6 02:37 app: after\n")
+PEM_SEEN = (b"Oct  6 02:35 app: loaded\n"
+            b"Oct  6 02:36 app: key -----BEGIN PRIVATE KEY-----***-----END PRIVATE KEY-----\n"
+            b"***\n"
+            b"***\n"
+            b"*** done\n"
+            b"Oct  6 02:37 app: after\n")
+
+
+@pytest.mark.parametrize("text, seen", [
+    (PEM_LOG, PEM_SEEN),
+    # a key with no END runs to the end, as PEM_RE masks it
+    (b"a\n-----BEGIN PRIVATE KEY-----\nZmFrZQ\nZmFrZQ", b"a\n" + gate._PEM_MASKED + b"\n***\n***"),  # privacy-scan: allow (fake sample)
+    # BEGIN and END on one line, then another key
+    (b"x -----BEGIN PRIVATE KEY-----ZmFrZQ-----END PRIVATE KEY----- y\n" + PEM_LOG,  # privacy-scan: allow (fake sample)
+     b"x " + gate._PEM_MASKED + b" y\n" + PEM_SEEN),
+])
+def test_blind_masks_every_line_of_a_private_key_and_keeps_the_line_count(text, seen):
+    assert gate.blind(text) == seen == gate._mask_lines(text, [0])
+    assert seen.count(b"\n") == text.count(b"\n") and b"ZmFrZ" not in seen
+    assert gate.redact(seen) == seen  # what grep prints passes the output masks unchanged
+
+
+def test_blind_stream_keeps_a_key_open_across_its_blocks(monkeypatch):
+    monkeypatch.setattr(gate, "BLIND_BLOCK", 16)
+    data = b"filler line\n" * 3 + PEM_LOG + b"x\n" + PEM_LOG
+    for size in (1, 5, 16, 40):
+        out = b"".join(gate.blind_stream([data[i:i + size] for i in range(0, len(data), size)], []))
+        assert out == gate.blind(data) == b"filler line\n" * 3 + PEM_SEEN + b"x\n" + PEM_SEEN, size
+
+
+@WITH_GREP
+def test_grep_never_prints_a_line_of_a_private_keys_body(tmp_path):
+    log = tmp_path / "app.log"
+    log.write_bytes(PEM_LOG)
+    assert _grep(log, "-n", "-e", "ZmFrZ").returncode == 1
+    assert _grep(log, "-n", "-e", "key|done").output == b"2:Oct  6 02:36 app: key " + gate._PEM_MASKED + \
+        b"\n5:*** done\n"
+    assert _grep(log, "-c", "-e", "^").output == b"6\n"
+    assert _grep(log, "-n", "-e", "after").output == b"6:Oct  6 02:37 app: after\n"
 
 
 @pytest.mark.parametrize("path, referrer, agent", [

@@ -4,6 +4,7 @@ checked before and after; nothing outside the catalog runs."""
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 from kd import factory_ops, operation_runner
@@ -132,10 +133,22 @@ def test_revision_changed_under_the_run_is_no_success(tmp_path):
     assert result["component"]["code"] == 0
 
 
+def test_an_overlay_switched_under_the_run_is_no_success(tmp_path):
+    """The signature covers the code and the overlay: an overlay-only release under the run is a moved tree."""
+    tmp = _tree(tmp_path)
+    (tmp / "repo" / "DEPLOY_REVISION").write_text("1111111\n")
+
+    def switch(argv):
+        (tmp / "repo" / "DEPLOY_REVISION").write_text("2222222\n")
+
+    result = _run(tmp, Box(on_call=switch))
+    assert result["state"] == "failed" and result["reason"] == "revision_changed"
+
+
 def test_refused_authorization_runs_nothing(tmp_path):
     asked = []
 
-    def authorize(operation_id, agents):
+    def authorize(operation_id, agents, tree):
         asked.append(list(agents))
         return "grant_revoked"
 
@@ -158,6 +171,37 @@ def test_a_script_that_cannot_start_is_a_known_failure(tmp_path):
 def test_no_masks_no_output(tmp_path):
     result = _run(_tree(tmp_path), Box(outputs={("install",): "secret"}), mask=lambda s: None)
     assert result["component"]["tail"] == operation_runner.UNMASKED
+
+
+def _loud(lines: int) -> list:
+    """A real child that writes ``lines`` numbered lines, the first of them a secret's name and value."""
+    code = ("import sys\nw = sys.stdout.buffer.write\nw(b'DB_PASSWORD=hunter2 ' + b'y' * 300 + b'\\n')\n"
+            f"for n in range({lines}):\n    w(b'line %d\\n' % n)\n")
+    return [sys.executable, "-I", "-c", code]
+
+
+def test_a_steps_output_is_read_up_to_a_bound_and_says_it_was_cut(monkeypatch, capsys):
+    """The runner never holds a step's whole output: the last OUTPUT_MAX bytes from a whole line on, and a line
+    that says how much went before."""
+    monkeypatch.setattr(operation_runner, "OUTPUT_MAX", 4096)
+    seen = []
+
+    def mask(text):
+        seen.append(text)
+        return text.replace("hunter2", "***")
+
+    code, out = operation_runner._capture(_loud(20000), mask)
+    assert code == 0
+    assert out.endswith("line 19999\n") and len(out.encode()) <= 4096 + 200
+    first, rest = out.split("\n", 1)
+    assert first.startswith(operation_runner.CUT.split("{", 1)[0]) and rest.startswith("line ")  # a whole line
+    assert "hunter2" not in "".join(seen) and "line 19999" in capsys.readouterr().out
+
+
+def test_a_short_output_is_kept_whole(capsys):
+    code, out = operation_runner._capture(_loud(3), lambda s: s.replace("hunter2", "***"))
+    assert code == 0 and out.startswith("DB_PASSWORD=hunter2") and out.endswith("line 2\n")
+    assert "***" in capsys.readouterr().out
 
 
 def test_the_tail_is_cut_after_masking(tmp_path):

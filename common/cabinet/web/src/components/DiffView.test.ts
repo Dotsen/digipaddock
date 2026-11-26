@@ -48,4 +48,14 @@ describe("DiffView", () => {
     expect(plus.length).toBe(3);
     expect(plus.every((b) => b.hasAttribute("disabled"))).toBe(true);
   });
+
+  it("warns about hidden characters and shows their code points in the line", () => {
+    const text = TEXT.replace("+b = 3", "+b = 3 // \u202E");
+    render(DiffView, { text, truncated: false, url: "", commenting: false, comments: [] });
+    expect(screen.getByRole("alert").textContent).toContain("U+202E");
+    expect(screen.getByText("U+202E", { selector: "mark" })).toBeTruthy();
+    cleanup();
+    render(DiffView, { text: TEXT, truncated: false, url: "", commenting: false, comments: [] });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

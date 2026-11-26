@@ -298,6 +298,22 @@ def published(store, pull: Mapping) -> None:
     )
 
 
+def plan_pulls(store, parent_id: str) -> list:
+    """The plan's open pull requests, oldest first: those whose title names the plan's card, and every one a stage
+    published into the plan (a ``stage_pulls`` row published on the plan's card), whatever card its title names
+    now — a title is the agent's to change, and a pull request renamed away would leave a stage unread."""
+    titled = store.prs(card=parent_id, state="open")
+    known = {(p["repo"], p["number"]) for p in titled}
+    staged = store._conn.execute(
+        "SELECT DISTINCT s.repo, s.number FROM stage_pulls s JOIN events e ON e.card=? AND e.kind='pr.published'"
+        " AND json_extract(e.payload, '$.repo')=s.repo AND json_extract(e.payload, '$.number')=s.number",
+        (parent_id,),
+    ).fetchall()
+    renamed = [store.pr(r[0], r[1], diff=False) for r in staged if (r[0], r[1]) not in known]
+    found = titled + [p for p in renamed if p is not None and p["state"] == "open"]
+    return sorted(found, key=lambda p: (p["updated"], p["repo"], p["number"]))
+
+
 def _target(store, pull: Mapping) -> str:
     found = store._conn.execute(
         "SELECT target FROM stage_pulls WHERE repo=? AND number=?",
@@ -342,9 +358,7 @@ def _handin(ctx, record) -> Optional[dict]:
         "INSERT INTO stage_reviews (card, parent, state, created, updated) VALUES (?,?,?,?,?)",
         (record.id, parent_id, "skipped", now, now),
     ).lastrowid
-    for pull in s.prs(
-        card=parent_id, state="open"
-    ):  # the plan's pull request in each repository it touches
+    for pull in plan_pulls(s, parent_id):  # the plan's pull request in each repository it touches
         base = _passed_head(s, parent_id, pull["repo"], pull["number"])
         s._conn.execute(
             "INSERT INTO stage_review_parts (review, repo, number, project, head, base, target, state, updated)"
@@ -788,7 +802,7 @@ def _on_reviewed_heads(ctx, record, row: Mapping) -> None:
     """Every open pull request of the plan stands on the head this hand-in was made on — nothing was published
     into any of them, and none was opened, since the reviewers read."""
     handed = {(p["repo"], p["number"]): p for p in row["parts"]}
-    for pull in ctx.store.prs(card=row["parent"], state="open"):
+    for pull in plan_pulls(ctx.store, row["parent"]):
         part = handed.pop((pull["repo"], pull["number"]), None)
         if part is None or part["head"] != pull["head"]:
             raise api.ApiError(

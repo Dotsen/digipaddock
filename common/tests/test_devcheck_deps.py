@@ -229,7 +229,8 @@ def test_the_deps_unit_has_network_and_writes_only_its_directory(tmp_path):
     props = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
     # KD-9473: no User= — another check's tests would reach this build (with network) through /proc/<pid>/cwd
     assert props == ["CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP", "NoNewPrivileges=yes",
-                     "TimeoutStopSec=15", "PrivateTmp=yes", "ProtectSystem=strict", "ProtectHome=yes",
+                     "TimeoutStopSec=15", "PrivateIPC=yes", ci_unit.SHM, "PrivateTmp=yes", "ProtectSystem=strict",
+                     "ProtectHome=yes",
                      f"ReadWritePaths={new}", "CPUQuota=200%", "MemoryMax=3G",
                      f"RuntimeMaxSec={dr.DEPS_MAX_S}", "InaccessiblePaths=" + " ".join("-" + p for p in dr.INACCESSIBLE)]
     assert not any(p.startswith(("PrivateNetwork", "IPAddressDeny")) for p in props)

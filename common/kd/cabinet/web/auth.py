@@ -115,9 +115,9 @@ async def password_login(request: Request):
     key = f"{user}|{deps.client_ip(request)}"
     await _limited(request, key)
     # the second factor's misses count for the account from every address (step-up's counter): a known password and
-    # many addresses no longer try a million codes (review 04.11.2026)
+    # many addresses no longer try a million codes (review 04.11.2026). Its lock is read only after the password:
+    # a 429 before it would say that the password is right
     totp_key = f"totp|{user}"
-    await _limited(request, totp_key)
     person = service.users.get(user)
     # argon2 runs for every attempt, a person's or nobody's: the time never says who exists or has a password
     password_ok = service.users.verify_password(user, password)
@@ -128,7 +128,9 @@ async def password_login(request: Request):
         and password_ok
         and service.users.has_second_factor(user)["totp"]
     )
-    if ok:  # the code is taken once: a write, under the lock
+    if ok and service.users.too_many(totp_key, service.now()):
+        ok = False  # locked: the same 401 as a wrong password, and the code is not tried
+    elif ok:  # the code is taken once: a write, under the lock
         code = _text(body, "totp", required=False)
         ok = await service.locked(
             lambda: service.users.totp_verify(user, code, service.cfg.secret, service.now())
@@ -146,7 +148,7 @@ async def passkey_options(request: Request):
     service = deps.svc(request)
     options_json, value = passkeys.authentication_options(service.cfg)
     login_id = secrets.token_urlsafe(16)
-    service.challenges.put("login", login_id, value)
+    service.login_challenges.put("login", login_id, value)
     return {"options": json.loads(options_json), "login_id": login_id}
 
 
@@ -157,7 +159,7 @@ async def passkey_login(request: Request):
     body = await deps.json_body(request)
     key = f"passkey|{deps.client_ip(request)}"
     await _limited(request, key)
-    value = service.challenges.pop("login", str(body.get("login_id", "")))
+    value = service.login_challenges.pop("login", str(body.get("login_id", "")))
     try:
         if value is None:
             raise passkeys.PasskeyError("no such login")

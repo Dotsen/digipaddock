@@ -126,6 +126,17 @@ def test_assign_with_spec_is_one_audited_write(env):
     assert rc == 2 and "not a specialization of @dev" in err and len(env.writes()) == 1
 
 
+def test_set_labels_checks_a_spec_label_against_the_registry(env):
+    card = env.cab.card(assignee="@dev")
+    rc, _, err = env.main("set-labels", "--card", card.id, "--revision", str(card.revision), "--add", "spec:made-up",
+                          "--reason", "x")
+    assert rc == 2 and "not a specialization of @dev" in err and env.writes() == []
+    rc, out, err = env.main("set-labels", "--card", card.id, "--revision", str(card.revision), "--add",
+                            "spec:reviewer", "--reason", "ревью")
+    assert rc == 0, err
+    assert "spec:reviewer" in env.record(card.id).labels
+
+
 def test_specs_lists_the_installed_specializations_per_agent(env):
     rc, out, _ = env.main("specs")
     assert rc == 0 and out == (

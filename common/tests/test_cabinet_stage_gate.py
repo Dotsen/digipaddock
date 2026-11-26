@@ -12,6 +12,7 @@ from chain_env import (
     cabinet,
     close,
     READY,
+    REPO,
     call,
     done_work,
     handin,
@@ -328,6 +329,36 @@ def test_no_pass_on_a_review_of_an_older_head(cab, plan):
     parent, a, _ = plan
     _, seq = reviewed(cab, a, H1)
     publish(cab, parent.id, H2)
+    refused(
+        cab,
+        "boss.stage-pass",
+        a,
+        "the pull request moved",
+        reason="x",
+        source={"card": a.id, "seq": seq},
+    )
+
+
+def _renamed(cab, parent, head):
+    """The plan's pull request published on ``head`` with another card in its title."""
+    other = cab.card(project="digipaddock", assignee="@dev", status="In Progress")
+    publish(cab, parent.id, head, card=other.id, title=f"{other.id}: a change")
+    assert cab.store.pr(REPO, 7, diff=False)["card"] == other.id
+    return other
+
+
+def test_a_plans_pull_request_renamed_to_another_card_is_still_reviewed(cab, plan):
+    parent, a, _ = plan
+    publish(cab, parent.id, H1)
+    _renamed(cab, parent, H2)
+    row = handin(cab, a)  # the stage's commits are on the renamed pull request
+    assert (row["state"], row["head"]) == ("reviewing", H2) and row["job"]
+
+
+def test_no_pass_when_a_renamed_pull_request_moved_past_the_reviewed_head(cab, plan):
+    parent, a, _ = plan
+    _, seq = reviewed(cab, a, H1)
+    _renamed(cab, parent, H2)
     refused(
         cab,
         "boss.stage-pass",

@@ -5,12 +5,17 @@ takes it into its baseline instead of opening incidents (dangerous objects still
 One ssh call over the exec key takes the three parts the monitor compares — the security snapshot, the listeners and
 the WireGuard peers — each followed by a marker line with its exit code. A window that cannot open (no card, the
 cabinet down, no snapshot) never stops the step: its changes are then checked as usual, and the card hears why.
+
+A window hands over only the objects the step's kind may change (``scope``): what else the server changed meanwhile
+is no step's and is checked as usual (KD-9483). A script and a critical action are the owner's exact text, which may
+change anything; a step of the test zone carries no owner's signature and a kind that changes nothing the monitor
+watches has nothing to hand over: neither opens a window.
 """
 
 import secrets
 import sys
 import uuid
-from typing import Callable, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Callable, Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple
 
 from kd import exec_envelope
 from kd.cabinet import client as cabinet_client
@@ -28,6 +33,43 @@ PARTS = (
     ("wgpeers", "if command -v wg >/dev/null 2>&1; then wg show all allowed-ips; fi"),
 )
 CABINET_ERRORS = (cabinet_client.CabinetError, OSError, ValueError, KeyError, TypeError)
+
+# What a step's kind may change of what the monitor watches: a section takes each of its objects, "<section>:<item>"
+# one object. A package brings its system users, cron files and unit links and starts its services; a service's
+# start, restart or reload changes its listeners and peers; a cron line is root's crontab (Debian's spool path, then
+# RHEL's). The dangerous objects stay out whatever the scope (the monitor's seccheck.dangerous).
+ALL = frozenset({"*"})
+_PACKAGES = frozenset({"users", "shadow", "cron", "units", "ports"})
+_SERVICE = frozenset({"ports", "wgpeers"})
+SCOPES = {
+    "script": ALL,
+    "package.install": _PACKAGES,
+    "package.upgrade": _PACKAGES,
+    "service.start": _SERVICE,
+    "service.restart": _SERVICE,
+    "service.reload": _SERVICE,
+    "cron.line": frozenset(
+        {"cron:/var/spool/cron/crontabs/root", "cron:/var/spool/cron/root"}
+    ),
+}
+
+
+def scope(extra) -> FrozenSet[str]:
+    """The objects a step's window may hand over (``SCOPES``; ALL for a critical action); empty — the step opens no
+    window: no card, a step of the test zone, or a kind that changes nothing the monitor watches."""
+    if not extra.get("task_id") or extra.get("test_zone"):
+        return frozenset()
+    if extra.get("kind") == "critical":
+        return ALL
+    operation = extra.get("operation")
+    return SCOPES.get(
+        operation.get("verb") if isinstance(operation, dict) else None, frozenset()
+    )
+
+
+def within(key: str, allowed: FrozenSet[str]) -> bool:
+    """A ``section:item`` object is in a step's scope."""
+    return "*" in allowed or key in allowed or key.partition(":")[0] in allowed
 
 
 def _script(nonce: str) -> str:
@@ -119,6 +161,7 @@ class Opened(NamedTuple):
     server: object
     before: Dict[str, str]
     errors: Set[str]
+    scope: FrozenSet[str] = ALL
 
 
 def _step(extra) -> str:
@@ -164,7 +207,7 @@ class Windows:
 
     def skipped(self, server, extra, notify, reason: str, err=None) -> None:
         """No window for this step (a group short of time): the card hears why, as for one that did not open."""
-        if extra.get("task_id"):
+        if scope(extra):
             self._failed(notify, server, reason, err)
 
     def _close(self, wid, err, changes=None, errors=(), failed="") -> None:
@@ -188,10 +231,12 @@ class Windows:
     def begin(
         self, server, extra, runner, notify, run="", err=None
     ) -> Optional[Opened]:
-        """The window of one server's step, or None — no card, or it could not open (then the card hears why)."""
-        card = extra.get("task_id")
-        if not card:
+        """The window of one server's step, or None — nothing to hand over (``scope``), or it could not open (then
+        the card hears why)."""
+        allowed = scope(extra)
+        if not allowed:
             return None
+        card = extra["task_id"]
         wid = uuid.uuid4().hex[
             :16
         ]  # named here: a signal inside the open call still closes it (review 9)
@@ -228,13 +273,14 @@ class Windows:
             self._close(wid, err, failed=reason)
             self._failed(notify, server, reason, err)
             return None
-        return Opened(wid, server, before, errors)
+        return Opened(wid, server, before, errors, allowed)
 
     def end(
         self, opened: Optional[Opened], runner, failed: str = "", err=None, notify=None
     ) -> None:
-        """After the step: the snapshot after it and the difference; ``failed`` — the step was cut, no snapshot (the
-        step's own result says so). A difference that could not be taken is told to the card (review 4)."""
+        """After the step: the snapshot after it and the difference within the step's scope; ``failed`` — the step
+        was cut, no snapshot (the step's own result says so). A difference that could not be taken is told to the
+        card (review 4)."""
         if opened is None:
             return
         if failed:
@@ -242,7 +288,13 @@ class Windows:
             return
         after, errors, reason = capture(opened.server, runner)
         if not reason:
-            changes = diff(opened.before, opened.errors, after, errors)
+            changes = {
+                key: change
+                for key, change in diff(
+                    opened.before, opened.errors, after, errors
+                ).items()
+                if within(key, opened.scope)
+            }
             if len(changes) > CHANGES_MAX:
                 reason = f"изменений больше {CHANGES_MAX}"
         if reason:

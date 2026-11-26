@@ -118,7 +118,7 @@ them — never taken from a chat message a model read as «yes».
 
 ![A sysadmin plan in the card's thread: steps, effect, risk and rollback](images/cabinet/card-plan.png)
 
-![Signing the plan: the decision named, the approval's term, then the passkey or a TOTP code](images/cabinet/card-plan-sign.png)
+![Signing the plan: the decision named, the approval's term, then the passkey](images/cabinet/card-plan-sign.png)
 
 Details: [security model: what the owner approves](security-model.md#what-the-owner-approves).
 

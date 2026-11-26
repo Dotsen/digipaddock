@@ -18,6 +18,12 @@ group systemd-journal, behind the agent's ``host`` capability channel. The chann
 - ``sys`` — fixed reads of host state (df, free, uptime, ss, ps, ip).
 
 Every call: at most ``LIMIT_BYTES`` of output, ``TIMEOUT`` seconds per program.
+
+No output is masked: the catalog is the boundary (its units and roots hold no secret), so the read gateway's
+refusals that guard its masks (KD-9481) have nothing to guard here (KD-9483). ``systemctl show --value`` prints what
+``show -p`` prints with the names; entries are formatted here from their fields, with no json output; ``cat`` takes
+no option and ``sys ps`` is one fixed form; private and audit records are dropped before ``-n`` is counted and the
+exit code does not depend on a match, so ``-g`` answers nothing about a dropped record.
 """
 
 from __future__ import annotations

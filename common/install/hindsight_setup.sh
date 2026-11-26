@@ -66,6 +66,22 @@ put_plain() {
   cmp -s "$1" "$2" || install -o root -g root -m "$3" "$1" "$2"
 }
 
+# The first entry of the venv the API and the worker run (as the base user, with the host's Claude token) that is
+# not root's or that a group or others may write: its code — claude_agent_sdk's bundled claude, which gets that token,
+# among it — must be root's alone, like /opt/digipaddock-claude (KD-9474). Nothing printed: all root's.
+venv_unsafe() {
+  local real found
+  real=$(readlink -f -- "$VENV") || { echo "$VENV"; return 0; }
+  case $real in
+    "$OPT"/venv-*) ;;
+    *) echo "$VENV -> $real (not a venv of $OPT)"; return 0 ;;
+  esac
+  # the folder and the link themselves, then everything below the venv (a link's own mode is no write)
+  found=$(find "$OPT" "$VENV" -maxdepth 0 \( ! -user root -o \( ! -type l -perm /022 \) \) -print -quit)
+  [ -n "$found" ] || found=$(find "$real" -xdev \( ! -user root -o \( ! -type l -perm /022 \) \) -print -quit)
+  [ -z "$found" ] || echo "$found"
+}
+
 problems=()
 check() {
   bash "$TREE/common/install/prereq.sh" check --hindsight >/dev/null \
@@ -82,6 +98,9 @@ check() {
     local have
     have=$("$VENV/bin/python" -I -c 'import importlib.metadata as m; print(m.version("hindsight-api"))' 2>/dev/null || true)
     [ "$have" = "$api" ] || problems+=("hindsight-api ${have:-?}, the version catalog has $api")
+    local unsafe
+    unsafe=$(venv_unsafe 2>&1 | head -n 2 | paste -sd' ' -) || unsafe=${unsafe:-$VENV: not checked}
+    [ -z "$unsafe" ] || problems+=("$unsafe: not root's or writable by others — the venv (its bundled claude gets the host's token) must be root's alone")
   fi
   if [ ! -f "$ENV" ]; then
     problems+=("no $ENV")

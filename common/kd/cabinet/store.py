@@ -174,6 +174,29 @@ def norm(text) -> str:
     return _SPACES.sub(" ", folded).strip()
 
 
+# a search runs one scan of every card per word and alternative under the board's one lock: a query is bounded
+SEARCH_TEXT_MAX = 200  # characters, before and after normalization
+SEARCH_WORDS_MAX = 10  # different words, each alternative of ``a|b`` counted (each is one more scan)
+
+
+def search_words(text) -> List[List[str]]:
+    """The words of a search, each the list of its alternatives (``a|b``), normalized (``norm``), with a repeated
+    word or alternative dropped; ``Invalid`` for a text or a word count past the bounds."""
+    if not isinstance(text, str) or len(text) > SEARCH_TEXT_MAX:
+        raise Invalid(f"a search is at most {SEARCH_TEXT_MAX} characters")
+    folded = norm(text)
+    if len(folded) > SEARCH_TEXT_MAX:
+        raise Invalid(f"a search is at most {SEARCH_TEXT_MAX} characters")
+    words = {}
+    for word in folded.split():
+        alternatives = tuple(dict.fromkeys(alt for alt in word.split("|") if alt))
+        if alternatives:
+            words.setdefault(alternatives, None)
+    if sum(len(word) for word in words) > SEARCH_WORDS_MAX:
+        raise Invalid(f"a search is at most {SEARCH_WORDS_MAX} words")
+    return [list(word) for word in words]
+
+
 def actor_of(name: str) -> str:
     """The actor form of a board name: ``@owner`` -> ``user:owner``, ``@dev`` -> ``agent:dev``."""
     if name == "@owner":
@@ -355,7 +378,8 @@ class Store:
         """Cards whose title, description or notes hold every word of ``text`` (Unicode-normalized —
         NFKC, any case of any script, ё as е, spaces folded; a word matches inside a longer one, "голос" finds
         "Голосовые"; ``a|b`` — either). Title matches come first, then the newest. A card id (any case), a bare
-        number or ``#number`` — that card of this prefix first."""
+        number or ``#number`` — that card of this prefix first. ``Invalid`` past the bounds of ``search_words``."""
+        words = search_words(text)
         card_id = ids.canonical(text.strip().upper())
         if re.fullmatch(r"#?[1-9][0-9]{0,5}", card_id):
             card_id = f"{self.prefix}-{card_id.lstrip('#')}"
@@ -365,8 +389,6 @@ class Store:
             exact = self._conn.execute(
                 "SELECT * FROM cards WHERE id=?", (card_id,)
             ).fetchone()
-        words = [[alt for alt in word.split("|") if alt] for word in norm(text).split()]
-        words = [w for w in words if w]
         if not words:
             return [self._record(exact)] if exact else []
         where, args, rank = [], [], []

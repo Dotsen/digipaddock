@@ -196,8 +196,8 @@ def execute(
     cabinet's answer — a create that returned an existing card says so.
 
     ``audit_extra`` adds fields to both audit records (the promote page: proposal id and decision);
-    ``specs`` is the ``@agent`` -> specializations map, or ``specs_loader`` produces it only when an
-    ``assign`` involves a specialization — ``--spec`` or a ``spec:`` label on the card.
+    ``specs`` is the ``@agent`` -> specializations map, or ``specs_loader`` produces it only when the request
+    involves a specialization (``boss_board.needs_specs``).
     ``grant``: a subtask's promote under the owner's grant (``kd.delegation``).
     """
     routing = load_routing(client, registry_path)
@@ -206,8 +206,7 @@ def execute(
         card = load_card(client, request["task"])
         if request["op"] == "unblock":
             deps = {d: load_card(client, d) for d in card.dependencies if _CARD.fullmatch(d)}
-    if specs is None and specs_loader is not None and request["op"] == "assign" and (
-            request.get("spec") or any(v.startswith(boss_board.SPEC_PREFIX) for v in card.labels)):
+    if specs is None and specs_loader is not None and boss_board.needs_specs(request, card):
         specs = specs_loader()
     try:
         boss_board.plan(request, routing, card, deps, specs=specs)

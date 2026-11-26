@@ -40,6 +40,32 @@ export function remarksText(text: string, comments: LineComment[]): string {
   return [text.trim(), lines].filter(Boolean).join("\n\n");
 }
 
+// Characters a reader cannot see but a compiler or a browser acts on: bidi controls that reorder what is
+// shown, zero-width and tag characters, other control and format characters (the tab and a line's CR excepted).
+// The same set as the dev agent's file-name quoting (`forge._shown`).
+const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+const SEEN = new Set(["\t", "\r"]);
+const codeOf = (char: string) => "U+" + (char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+
+/** A line cut at its hidden characters: the plain pieces and, between them, each hidden one as its code point. */
+export function splitHidden(text: string): Array<{ text: string } | { hidden: string }> {
+  const parts: Array<{ text: string } | { hidden: string }> = [];
+  let last = 0;
+  for (const match of text.matchAll(HIDDEN)) {
+    if (SEEN.has(match[0])) continue;
+    const at = match.index ?? 0;
+    if (at > last) parts.push({ text: text.slice(last, at) });
+    parts.push({ hidden: codeOf(match[0]) });
+    last = at + match[0].length;
+  }
+  if (last < text.length || !parts.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
+/** The code points of a text's hidden characters, in order. */
+export const hiddenCodes = (text: string): string[] =>
+  splitHidden(text).flatMap((part) => ("hidden" in part ? [part.hidden] : []));
+
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const QUOTED = /^"(?:[^"\\]|\\.)*"$/;
 const ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };

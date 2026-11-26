@@ -1,7 +1,8 @@
 """Plan windows in the monitor: what a step of the sysadmin's approved plan changed on a server goes into
 the baseline instead of opening incidents.
 
-The executor opens a window in the cabinet around the step and closes it with the objects the step changed. While a
+The executor opens a window in the cabinet around the step and closes it with the objects the step changed among
+those its kind may change (sysadmin/plan_window.scope; a test-zone step opens none). While a
 window is open the tick does not compare that server's snapshot, listeners and peers (``mark``; the cabinet silent —
 nothing is skipped). A closed window (``apply_closed``, under tick.lock) is taken object by object: a dangerous change
 (``seccheck.dangerous``: keys, sudoers, groups, a uid 0 user, a weaker sshd, ld.so.preload, a firewall down) stays out

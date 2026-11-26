@@ -5,8 +5,9 @@ roles drained by now, with the operation id and the batch number only; the reque
 in it — is the host's own root file ``<id>.request.json``. The runner checks the
 deployed tree is still the requested revision, waits for a release under way (``digipaddock-release.service``) to end, checks
 the revision again (that release may have moved the tree: an older revision is never installed), asks the cabinet
-whether the operation's grant still allows these roles (``operation.authorize``: refused or unanswered — nothing is
-installed), and for each role
+whether the operation's grant still allows these roles on the tree it read — the code's and the overlay's revision
+(``operation.authorize``: refused or unanswered — nothing is installed; from then on that tree is the one checked),
+and for each role
 in order: ``new_agent.sh --verify`` — a role that matches is ``unchanged`` and is not installed —
 else ``--install``, ``--check`` and ``--verify`` again; the role's slots on the session host must stay as they were.
 The first role that fails stops the rest (``skipped``); its result keeps the failed stage, the batch and the
@@ -23,7 +24,8 @@ tree's own catalog (``common/coordination/factory.json``) to its fixed argv — 
 restart of a ``digipaddock-`` unit — after the same revision, release and authorization checks. It runs that argv, then the
 mode's check when the script succeeded, and checks the revision again after them (a tree switched under the run is
 ``revision_changed``, never a success). Their exit codes and the tail of their output, masked with the gate's rules
-(no masks — no output), are the batch result's ``component``; the full masked output goes to the unit's journal.
+(no masks — no output), are the batch result's ``component``; the masked output — its last ``OUTPUT_MAX`` bytes,
+read as it comes — goes to the unit's journal.
 """
 
 import json
@@ -34,6 +36,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
+from kd import factory_ops
 from kd.session_host import operation, protocol
 
 DEPLOYED = Path("/opt/digipaddock")  # the link a release switches, never the tree it points at now
@@ -42,16 +45,14 @@ RELEASE_WAIT = 900
 POLL = 5.0
 ERROR_MAX = 300
 TAIL_MAX = 1500  # characters of masked output a component's result (or a failed role's) keeps
-OUTPUT_MAX = 1 << 20  # bytes of a script's output read at all (masked whole, then cut)
+OUTPUT_MAX = 1 << 20  # bytes of a script's output kept at all: its last ones, masked whole, then cut
+CHUNK = 1 << 16
 UNMASKED = "(вывод скрыт: маски шлюза недоступны)"
+CUT = "(начало вывода отброшено: {n} байт)"
 
 
 class RunnerError(Exception):
     """The operation cannot be run at all (no request): nothing is written."""
-
-
-def _matches(revision: str, deployed: str) -> bool:
-    return bool(revision and deployed) and (deployed.startswith(revision) or revision.startswith(deployed))
 
 
 def _agent(state: str, stage: str = "", error: str = "") -> dict:
@@ -69,7 +70,7 @@ def run(operation_id: str, *, state_dir: str, repo: Path, run_cmd: Optional[Call
         host_slots: Callable[[], Dict[str, int]], release_active: Callable[[], bool],
         sleep: Callable[[float], None] = time.sleep, new_agent: Optional[str] = None,
         host_setup: Optional[str] = None, batch: int,
-        authorize: Optional[Callable[[str, list], str]] = None,
+        authorize: Optional[Callable[[str, list, str], str]] = None,
         capture: Optional[Callable[[list], Tuple[int, str]]] = None,
         mask: Optional[Callable[[str], Optional[str]]] = None) -> dict:
     if not protocol.HEX32.fullmatch(operation_id or ""):
@@ -95,12 +96,16 @@ def run(operation_id: str, *, state_dir: str, repo: Path, run_cmd: Optional[Call
         operation.write_json(os.path.join(ops_dir, out_name), result)
         return result
 
+    # the host's request names the code's commit; the cabinet confirms the whole tree (the overlay's too) at
+    # authorize, and from then on the run is bound to that tree
+    expected, seen = str(request.get("revision", "")), [""]
+
     def moved() -> bool:
         try:
-            deployed = (repo / "REVISION").read_text(encoding="utf-8").strip()
-        except OSError:
-            deployed = ""
-        if _matches(str(request.get("revision", "")), deployed):
+            seen[0] = factory_ops.tree_revision(repo)
+        except (OSError, ValueError):
+            seen[0] = ""
+        if factory_ops.names_tree(expected, seen[0]):
             return False
         for name in names:
             agents[name] = _agent("skipped", "", "revision_moved")
@@ -117,12 +122,13 @@ def run(operation_id: str, *, state_dir: str, repo: Path, run_cmd: Optional[Call
     if moved():
         return done("failed", "revision_moved")
     # the host asked the cabinet before it started this unit, but a release wait may have taken minutes since:
-    # the grant is asked once more right before the first install
-    refused = authorize(operation_id, names) if authorize is not None else ""
+    # the grant is asked once more right before the first install, with the tree read just now
+    refused = authorize(operation_id, names, seen[0]) if authorize is not None else ""
     if refused:
         for name in names:
             agents[name] = _agent("skipped", "", refused)
         return done("failed", refused)
+    expected = seen[0]
     if request.get("kind") == protocol.COMPONENT:
         result["agents"] = {}  # a component installs no role: the batch's drained roles are only paused
         state, reason, ran = _component(request, repo, capture or _capture, mask or _mask, moved)
@@ -176,9 +182,7 @@ def _tail(text: str, mask: Callable[[str], Optional[str]]) -> str:
 def _component(request: dict, repo: Path, capture: Callable[[list], Tuple[int, str]],
                mask: Callable[[str], Optional[str]], moved: Callable[[], bool]) -> Tuple[str, str, dict]:
     """(state, reason, component) of a component's run: its argv from the deployed catalog, then its check."""
-    from kd import factory_ops
-
-    ran = {"code": None, "tail": "", "check": None, "check_tail": ""}
+    ran ={"code": None, "tail": "", "check": None, "check_tail": ""}
     try:
         catalog = factory_ops.load_catalog(str(repo / "common" / "coordination" / "factory.json"))
         mode = catalog.mode(str(request.get("component") or ""), str(request.get("mode") or ""))
@@ -210,14 +214,28 @@ def _component(request: dict, repo: Path, capture: Callable[[list], Tuple[int, s
 
 
 def _capture(argv: list, mask: Optional[Callable[[str], Optional[str]]] = None) -> Tuple[int, str]:
-    """A fixed argv, never a shell: its exit code and its output (stdout and stderr together, read up to
-    ``OUTPUT_MAX``); only the masked output goes to the unit's journal (no masks — the placeholder)."""
-    proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          check=False)
-    out = proc.stdout[-OUTPUT_MAX:].decode("utf-8", "replace")
+    """A fixed argv, never a shell: its exit code and its output (stdout and stderr together). The output is read
+    as it comes and only its last ``OUTPUT_MAX`` bytes are kept — from a whole line on, so the masks see every line
+    whole — after a line that says how much went before; only the masked output goes to the unit's journal (no
+    masks — the placeholder)."""
+    kept, total = bytearray(), 0
+    with subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT) as proc:
+        for chunk in iter(lambda: proc.stdout.read(CHUNK), b""):
+            total += len(chunk)
+            kept += chunk
+            if len(kept) > OUTPUT_MAX:
+                del kept[:len(kept) - OUTPUT_MAX]
+        code = proc.wait()
+    if total > len(kept):
+        line = kept.find(b"\n")
+        del kept[:line + 1 if line >= 0 else len(kept)]  # a line cut in the middle is dropped whole
+        out = CUT.format(n=total - len(kept)) + "\n" + kept.decode("utf-8", "replace")
+    else:
+        out = kept.decode("utf-8", "replace")
     masked = (mask or _mask)(out)
     print(masked if masked is not None else UNMASKED, flush=True)
-    return proc.returncode, out
+    return code, out
 
 
 def _mask(text: str) -> Optional[str]:
@@ -232,14 +250,15 @@ def _release_active() -> bool:
     return out in ("active", "activating", "deactivating", "reloading")
 
 
-def _authorize(operation_id: str, agents: list) -> str:
-    """The cabinet's ``operation.authorize`` for this batch: "" when allowed, else why (a reason word); no answer is
-    a refusal too — nothing is installed on a grant nobody could check."""
+def _authorize(operation_id: str, agents: list, tree: str) -> str:
+    """The cabinet's ``operation.authorize`` for this batch on ``tree`` (the code's and the overlay's revision the
+    runner read): "" when allowed, else why (a reason word); no answer is a refusal too — nothing is installed on a
+    grant nobody could check."""
     from kd.cabinet import client as cabinet_client
 
     try:
         answer = cabinet_client.Client().call({"op": "operation.authorize", "operation": operation_id,
-                                               "agents": list(agents)})
+                                               "agents": list(agents), "tree": tree})
     except (cabinet_client.CabinetError, OSError, ValueError):
         return "authorize_unavailable"
     if not isinstance(answer, dict) or not isinstance(answer.get("allowed"), bool):

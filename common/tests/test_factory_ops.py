@@ -211,6 +211,52 @@ def test_component_request_other_mode_or_component_refused(tmp_path):
         _ccheck(g, the_card, mode="disable")
 
 
+def test_a_grant_binds_the_overlay_of_its_tree_too(tmp_path):
+    """A release is the code and the deployment's overlay: an overlay-only release ends the signature too."""
+    the_card, g = cgrant(tmp_path, cstep(revision=f"{REV[:7]}+1234567"))
+    assert _ccheck(g, the_card, revision=f"{REV[:7]}+1234567")["mode"] == "install"
+    assert _ccheck(g, the_card, revision=f"{REV}+1234567")["mode"] == "install"  # short or full: one commit
+    for other in (f"{REV[:7]}+7654321", REV[:7]):  # another overlay, or none
+        with pytest.raises(admin_grant.GrantError, match="new plan for this revision"):
+            _ccheck(g, the_card, revision=other)
+
+
+def test_a_code_only_grant_does_not_cover_a_tree_with_an_overlay(tmp_path):
+    the_card, g = cgrant(tmp_path)  # signed on a host with no overlay
+    assert _ccheck(g, the_card, revision=REV)["mode"] == "install"
+    with pytest.raises(admin_grant.GrantError, match="new plan for this revision"):
+        _ccheck(g, the_card, revision=f"{REV[:7]}+1234567")
+
+
+@pytest.mark.parametrize("bad", ["+1234567", f"{REV[:7]}+", f"{REV[:7]}+12", f"{REV[:7]}+1234567+1234567",
+                                 f"{REV[:7]} 1234567"])
+def test_a_tree_revision_is_a_commit_and_an_optional_overlay_commit(bad):
+    with pytest.raises(factory_ops.ProposalError, match="revision"):
+        factory_ops.proposal(raw(operations=[cstep(revision=bad)]), catalog=ccatalog(), agents_known=AGENTS)
+
+
+def test_tree_revision_reads_the_code_and_the_overlay(tmp_path):
+    (tmp_path / "REVISION").write_text("abc1234\n")
+    assert factory_ops.tree_revision(tmp_path) == "abc1234"  # a host with no overlay
+    (tmp_path / "DEPLOY_REVISION").write_text("def5678\n")
+    assert factory_ops.tree_revision(tmp_path) == "abc1234+def5678"
+    (tmp_path / "DEPLOY_REVISION").write_text("not a commit\n")
+    with pytest.raises(ValueError):
+        factory_ops.tree_revision(tmp_path)
+    (tmp_path / "REVISION").unlink()
+    with pytest.raises(OSError):
+        factory_ops.tree_revision(tmp_path)
+
+
+def test_names_tree_takes_the_code_commit_alone():
+    """A caller that knows only the code's commit (the release tool) names the tree by it."""
+    assert factory_ops.names_tree("abc1234", "abc1234+def5678")
+    assert factory_ops.names_tree("abc1234+def5678", "abc1234+def5678")
+    assert not factory_ops.names_tree("abc1234+0000000", "abc1234+def5678")
+    assert not factory_ops.names_tree("abc1235", "abc1234+def5678")
+    assert factory_ops.short("a" * 40 + "+" + "b" * 40) == "a" * 12 + "+" + "b" * 12
+
+
 def test_at_revision_moves_only_component_steps():
     prop = factory_ops.proposal(raw(operations=[cstep(), step()]), catalog=ccatalog(), agents_known=AGENTS)
     moved = factory_ops.at_revision(prop, "f" * 40)

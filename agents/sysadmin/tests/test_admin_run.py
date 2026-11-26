@@ -525,12 +525,14 @@ def test_a_rule_grant_runs_the_steps_of_its_test_environment(tmp_path, enabled_a
     rule_grant(env)
     for number, command in enumerate(APP_COMMANDS, 1):
         runner = Runner()
-        code, _, err, _, _, _ = run(env, ["--task", "KD-123", "--op", str(number)], runner=runner, envelopes=True)
+        code, _, err, _, _, log = run(env, ["--task", "KD-123", "--op", str(number)], runner=runner, envelopes=True)
         assert code == 0, err
         envelope = json.loads(runner.feeds[0][0])
         # no signature to send: the target's own list is what lets the step through
         assert envelope["assertion"] is None and envelope["command"] == command
         assert envelope["decision"]["user"] == "rule:test-env"
+        # no plan window either: an unsigned step hands nothing to the monitor's baseline (KD-9483)
+        assert [r for r in log if r["event"] == "start"][-1]["test_zone"] is True
 
 
 def test_a_rule_grant_stops_when_the_catalog_drops_the_mark(tmp_path, enabled_all, monkeypatch):
@@ -565,5 +567,79 @@ def test_an_owners_grant_is_not_bound_to_the_zone(tmp_path, enabled_all, monkeyp
     env = make_env(tmp_path, enabled_all, card=APP_CARD)
     app_catalog(tmp_path, monkeypatch)  # no test mark at all
     grant(env, proposal=APP_PLAN)
-    code, _, err, calls, _, _ = run(env, ["--task", "KD-123", "--op", "1"])
+    code, _, err, calls, _, log = run(env, ["--task", "KD-123", "--op", "1"])
     assert code == 0 and len(calls) == 1, err
+    assert "test_zone" not in log[0]
+
+
+# --- the order of a signed plan's steps across servers (KD-9483) ------------------------------------------------
+
+TWO_CARD = CARD.replace("  - 'server:node-c'\n", "  - 'server:node-c'\n  - 'server:node-g'\n")
+TWO_PLAN = dict(PROPOSAL, operations=[{"server": "node-g", "verb": "package.refresh", **EXPLAIN},
+                                      PROPOSAL["operations"][1]])
+D, NONCE = "d1" * 16, "ab" * 16
+
+
+class Gates(Runner):
+    """The targets: ``agent-exec-gate step <key>`` answers ``answer``; anything else is the step itself."""
+
+    def __init__(self, answer=b"ok\n"):
+        super().__init__()
+        self.answer = answer
+
+    def __call__(self, argv, timeout, limit, kill_on_limit, feed=None):
+        super().__call__(argv, timeout, limit, kill_on_limit, feed)
+        if argv[-1].startswith(exec_envelope.STEP_RUN + " "):
+            if isinstance(self.answer, Exception):
+                raise self.answer
+            return Result(0, self.answer, False, False)
+        return self.result
+
+
+@pytest.fixture
+def signed(monkeypatch):
+    """The grant names a signed decision (its id and nonce): the targets' gates journal its steps."""
+    monkeypatch.setattr(exec_envelope, "decision_of",
+                        lambda grant: exec_envelope.Decision(D, "owner", "2026-11-07T10:05:00Z", NONCE, {}, (), None))
+
+
+def test_a_step_after_another_servers_step_asks_that_servers_gate(tmp_path, enabled_all, signed):
+    env = make_env(tmp_path, enabled_all, card=TWO_CARD)
+    g = grant(env, proposal=TWO_PLAN)
+    runner = Gates(b"no\n")
+    code, _, err, calls, sent, log = run(env, ["--task", "KD-123", "--op", "2"], runner=runner, envelopes=True)
+    assert code == 2 and len(calls) == 1 and sent == []
+    assert "operation 1 on node-g has not succeeded" in err and "may be run again" in err
+    assert [r["event"] for r in log] == ["admin_refused"]
+    node_g = inventory.get("node-g", enabled_path=env / "enabled")
+    assert calls[0][-1] == f"{exec_envelope.STEP_RUN} {exec_envelope.plan_key(D, NONCE, g.proposal_sha256, 1)}"
+    assert node_g.host in " ".join(calls[0])
+    runner = Gates(b"ok\n")
+    code, _, err, calls, _, _ = run(env, ["--task", "KD-123", "--op", "2"], runner=runner, envelopes=True)
+    assert code == 0 and len(calls) == 2, err
+    assert calls[1][-1] == exec_envelope.GATE_RUN and json.loads(runner.feeds[1][0])["step"] == 2
+
+
+@pytest.mark.parametrize("answer", [b"", b"ok\nno\n", OSError("ssh")])
+def test_an_unconfirmed_earlier_step_refuses(tmp_path, enabled_all, signed, answer):
+    env = make_env(tmp_path, enabled_all, card=TWO_CARD)
+    grant(env, proposal=TWO_PLAN)
+    code, _, err, calls, _, _ = run(env, ["--task", "KD-123", "--op", "2"], runner=Gates(answer), envelopes=True)
+    assert code == 2 and len(calls) == 1 and "has not succeeded" in err
+
+
+def test_the_order_on_one_server_is_that_servers_gate(env, signed):
+    store_proposal(env)
+    grant(env)
+    runner = Gates(b"no\n")
+    code, _, err, calls, _, _ = run(env, ["--task", "KD-123", "--op", "2"], runner=runner, envelopes=True)
+    assert code == 0 and len(calls) == 1 and calls[0][-1] == exec_envelope.GATE_RUN, err
+
+
+def test_an_unsigned_grant_or_no_envelopes_ask_nothing(tmp_path, enabled_all, monkeypatch):
+    env = make_env(tmp_path, enabled_all, card=TWO_CARD)
+    grant(env, proposal=TWO_PLAN)  # the test grant names no signed decision: its target's gate verifies nothing
+    for envelopes in (True, False):
+        code, _, err, calls, _, _ = run(env, ["--task", "KD-123", "--op", "2"], runner=Gates(b"no\n"),
+                                        envelopes=envelopes)
+        assert code == 0 and len(calls) == 1, err
