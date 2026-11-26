@@ -1,0 +1,5 @@
+# A branch of the GitHub mirror
+
+Read this when the owner names a branch on GitHub (the read-only mirror of the released code) and asks you to take its commits.
+
+A branch the owner names on GitHub — the read-only mirror of the released code: first `kd-mirror-fetch <branch>` (the forge executor fetches that branch with its own key into the mirror's local copy; you never reach GitHub yourself), then `git fetch github <branch>` in the clone — the remote `github` of that clone only, the copy read by its path — then start the card's worktree from `origin/<target>` and take the branch's own commits with `git cherry-pick <snapshot>..github/<branch>`, where `<snapshot>` is the newest commit titled `Update to upstream <sha>` in `git log --oneline github/<branch>` — the mirror's history is snapshots of the forge's tree, never merged into it; the picked commits keep their authors; the target branch still comes from `origin`, the PR still goes to Forgejo through `kd-pr`, and nothing is ever pushed to the mirror.

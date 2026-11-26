@@ -46,6 +46,8 @@ CHAT_WAKE = ("[chat] a message for you in your cabinet chat — read it with kd-
              "posted there")
 MONITOR_WAKE = ("[monitor] a message for you in your «Монитор» thread — read it with kd-task chat; your turn's text is "
                 "the answer, posted there")
+# Each wake of "Monitor" is a new conversation: the agent's own message the person most likely answers comes as data
+MONITOR_LAST = ". Your last message there before it: #{seq} — kd-task chat --message {seq} reads it whole"
 _PATH = ("queued", "delivered", "started")
 
 
@@ -164,6 +166,10 @@ def _item_session(ctx, item):
         if not isinstance(item["runtime_session_id"], str) or not UUID.fullmatch(item["runtime_session_id"]):
             raise _invalid("invalid runtime session id")
         fields["runtime_session_id"] = item["runtime_session_id"]
+        if item["runtime_session_id"] != session["runtime_session_id"]:
+            # a new Claude conversation (a resume keeps its id): its cumulative usage starts from zero, so its
+            # first total counts whole — never as a difference from another conversation's (usage.py)
+            fields["usage_total"] = {}
     # the cabinet model the process runs on ("" — the agent's own); or a subscription model's ref
     if "model" in item:
         model = item["model"]
@@ -460,6 +466,15 @@ def _session_continue(ctx, principal, request):
     if card is not None:
         text = (f"[session] {card.id}: {ended}; continue where you left off"
                 f" — re-read the card with kd-task view {card.id} and its thread")
+    elif ctx.store.agent_space(session["thread"]) == "monitor":
+        # "Monitor" resumes nothing: this wake starts a new conversation, so the wake that did not finish comes
+        # with it as data (a continue that failed hands its own text on — the same wake, not one inside another)
+        if turn_failed and last[0]["kind"] == "continue":
+            text = last[0]["text"]
+        else:
+            unfinished = f"; the wake it did not finish: {last[0]['text']}" if turn_failed else ""
+            text = (f"[session] monitor: {ended}{unfinished} — this is a new conversation: re-read this thread "
+                    "with kd-task chat and handle it")
     else:
         text = f"[session] chat: {ended}; continue where you left off — re-read your chat with kd-task chat"
     command = ctx.store.enqueue(
@@ -609,10 +624,19 @@ def _agent_message(ctx, principal, request):
 
 
 def chat_wake(ctx, agent: str, thread: int, seq: int, actor: str, space: str = "chat") -> dict:
-    """The agent's wake for a person's message in its chat or "Monitor": one per message (its key)."""
+    """The agent's wake for a person's message in its chat or "Monitor": one per message (its key). "Monitor"
+    resumes no conversation, so its wake names the agent's own last text there before the message."""
+    text = WAKES[space]
+    if space == "monitor":
+        row = ctx.store._conn.execute(
+            "SELECT MAX(seq) FROM messages WHERE thread=? AND seq<? AND author=? AND kind='text'",
+            (thread, seq, f"agent:{agent}"),
+        ).fetchone()
+        if row[0] is not None:
+            text += MONITOR_LAST.format(seq=row[0])
     return ctx.store.enqueue(
         {"key": f"chat:{thread}:{seq}", "agent": agent, "thread": thread, "card": "",
-         "kind": "chat", "text": WAKES[space], "initiator": actor}
+         "kind": "chat", "text": text, "initiator": actor}
     )
 
 

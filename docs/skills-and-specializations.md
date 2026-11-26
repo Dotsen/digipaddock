@@ -34,6 +34,8 @@ The factory installs each agent's available texts under its configured agent dir
 <agents_root>/<agent>/playbooks/skill/<name>.md
 ```
 
+An agent's own playbooks, `agents/<name>/playbooks/*.md` (for example the developer's `merge-and-release.md`), are a separate thing: role text read on demand, installed beside `CLAUDE.md` as `<agents_root>/<agent>/playbooks/<file>.md`, outside the specialization registry and its versions.
+
 Edit the repository source and use the normal installation process. Editing only an installed copy creates drift and can refuse the next turn. Names, result fields and compatibility changes also need a registry update; changing a source text changes its recorded SHA-256 even if its version number is unchanged.
 
 ## Implemented skills

@@ -86,6 +86,11 @@ def _section(text: str, title: str) -> str:
     return next(s.body for s in parse_document(text).sections if s.title == title)
 
 
+def _dev_playbook(name: str) -> str:
+    """One of dev's playbooks as installed (KD-9461: the occasional procedures of dev are read on demand)."""
+    return agent_text.render_playbook((ROOT / "agents/dev/playbooks" / name).read_text("utf-8"), FIXTURE_HOST)
+
+
 @pytest.mark.parametrize("agent", AGENTS)
 def test_render_is_deterministic(agent):
     first = _agent_text(agent)
@@ -131,7 +136,8 @@ def test_common_template_has_the_owner_is_not_a_transport_rule():
                        "approved brief", "information only"):
             assert phrase in section, (agent, phrase)
     assert "kd-diag" not in _section(_agent_text("analyst"), "Before you ask the owner")
-    tools = _section(_agent_text("dev"), "Tools")
+    assert "playbooks/probes.md" in _section(_agent_text("dev"), "Tools")
+    tools = _dev_playbook("probes.md")
     assert "kd-diag check" in tools and "a 200 proves only that request" in tools
     assert "401/403" in tools and "is not «a key is needed»" in tools
     # both read the cabinet's push path through the catalog query
@@ -171,7 +177,7 @@ def test_analyst_checks_the_whole_brief_before_every_handoff():
 def test_the_councils_writer_answers_every_finding_minor_ones_too(agent):
     """the owner reads, round by round, what became of every finding — the writer answers a minor one as
     well; only a critical or a major one without an answer holds the handoff."""
-    text = _agent_text(agent)
+    text = _agent_text(agent) if agent == "analyst" else _dev_playbook("council.md")  # dev: read on demand
     assert "A `minor` finding needs no answer" not in text
     rule = next(ln for ln in text.splitlines() if "kd-work council-reply KD-<n> --finding r1.f1=fixed" in ln)
     assert "Every finding of the round gets one answer" in rule
@@ -879,7 +885,7 @@ def test_every_boss_board_form_the_coordinators_texts_name_exists():
 def test_dev_runs_probes_through_the_session_exit():
     """The autonomy design, piece 2: dev learns from its session whether it holds a probe exit, lets the client take
     the proxy from the environment, and never sends a probe to another role."""
-    tools = _section(_agent_text("dev"), "Tools")
+    tools = _dev_playbook("probes.md")
     for phrase in ("printenv KD_EGRESS KD_EGRESS_HOSTS", "from the environment",
                    "never point a client at a tunnel port", "capability_missing: probe exit for"):
         assert phrase in tools, phrase
@@ -919,10 +925,11 @@ def test_dev_installs_locked_dependencies_itself():
     """the project's locked dependencies are dev's to install — one command, no package scripts; a new
     dependency is still a change of the lock file in a pull request."""
     text = _agent_text("dev")
-    tools = _section(text, "Tools")
+    tools = _dev_playbook("pr-checks.md")
     for phrase in ("`kd-deps install`", "`composer.lock`", "`package-lock.json`", "no install scripts",
                    "must be ignored by git"):
         assert phrase in tools, phrase
+    assert "`kd-deps install`" in _section(text, "Workflow")
     assert "never ask the owner to install them" in _section(text, "Workflow")
     assert "a project's locked dependencies only through `kd-deps install`" in text
 
@@ -930,7 +937,7 @@ def test_dev_installs_locked_dependencies_itself():
 def test_dev_accepts_on_the_stand_before_review():
     """a criterion that names a stand is checked on the stand by dev — HTTP through its exit, a server's
     file through help — and only what needs the owner's own hands goes to him."""
-    workflow = _section(_agent_text("dev"), "Workflow")
+    workflow = _dev_playbook("merge-and-release.md")
     for phrase in ("A criterion that names a stand", "a script with `requests`", "`server_read` help",
                    "only what needs his own hands", "never a table of checks"):
         assert phrase in workflow, phrase
@@ -956,7 +963,7 @@ def test_a_rollout_on_a_test_environment_is_answered_with_its_results():
                    "what each step showed", "word for word", "the one card you work outside your thread"):
         assert phrase in board, phrase
     assert 'any other environment: answer `kd-work assist reply <id> --state done --evidence "план на KD-<m>"' in board
-    workflow = _section(_agent_text("dev"), "Workflow")
+    workflow = _dev_playbook("merge-and-release.md")
     for phrase in ("The answer carries the results", "runs without the owner", "no line to the owner",
                    "a one-time link the sheet asked for is in the answer"):
         assert phrase in workflow, phrase

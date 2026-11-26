@@ -34,7 +34,7 @@ KD-<n> — {{host.cabinet_origin}}/cards/KD-<n>
 3. **Verification** — name the expected HTTP status, log line, or tool output.
 4. **Rollback** — describe how to restore the previous state.
 
-<Keep shell, SQL and commands for the owner out of the sheet. Steps the catalog cannot express belong in the project's deployment or tools (CLAUDE.md, Workflow 8). After merge and deploy, hand the sheet to the sysadmin yourself. The owner signs the sysadmin plan where required.>
+<Keep shell, SQL and commands for the owner out of the sheet. Steps the catalog cannot express belong in the project's deployment or tools (`playbooks/merge-and-release.md`). After merge and deploy, hand the sheet to the sysadmin yourself. The owner signs the sysadmin plan where required.>
 
 ## Cage
 <List the changed cage files or say “No” in the owner's language. The cage covers every changed file except `docs/**`, `tasks/**`, `**/tests/**`, and plain `*.md` outside `agents/*/CLAUDE.md` and `agents/*/playbooks/**`. `kd-pr` computes the list from the diff against the live target branch, appends `Cage (computed): …`, and rejects a body that says `No` or `нет` when the computed list has entries.>

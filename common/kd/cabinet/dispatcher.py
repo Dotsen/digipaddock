@@ -6,8 +6,10 @@ outside the lock and writes the answer back: delivered, a retry after the next b
 away, or failed (refused by the host, still undelivered after a day, or a card's command outside its card's thread —
 the session a delivery names is the thread's, its context the command's own fields, never its text). The
 host is idempotent by command id, so
-a command sent again after a lost answer runs once. A delivered command that has not started (it waits at the
-host for a slot or behind a turn) is checked again each tick, and the host gives it back when its card moved on.
+a command sent again after a lost answer runs once. Every delivery carries the session's runtime id for the host
+to resume, except one to an agent's "Monitor": each of its wakes starts a new Claude conversation (the host still
+writes a wake that comes while the process lives into that process). A delivered command that has not started
+(it waits at the host for a slot or behind a turn) is checked again each tick, and the host gives it back when its card moved on.
 A new ``command.queued`` event wakes the loop at once. An ``urgent`` command (the wake of an approved
 critical command) goes with ``urgent`` true, and once more without it to a host that does not know the field yet.
 A card's command of a project with a memory bank names it as ``memory``, the same way. A card's command on
@@ -136,6 +138,7 @@ def _prepare(svc, command: dict, now: datetime) -> Optional[dict]:
     session = store.session_for(command["thread"], command["agent"])
     if command["kind"] == "stop":
         return {"op": "stop", "session": session["id"], "command": command["id"]}
+    space = store.agent_space(command["thread"])
     request = {
         "op": "deliver",
         "command": command["id"],
@@ -144,11 +147,12 @@ def _prepare(svc, command: dict, now: datetime) -> Optional[dict]:
         "thread": command["thread"],
         "card": command["card"],
         "text": command["text"],
-        "resume": session["runtime_session_id"],
+        # "Monitor" resumes nothing: a wake after its process closed is a new Claude conversation, whatever
+        # its earlier wakes held — they reach it as data (the wake, kd-task chat), not as weeks of context
+        "resume": "" if space == "monitor" else session["runtime_session_id"],
     }
     if command["kind"] == "urgent":
         request["urgent"] = True  # the host starts it at once, over the agent's slots
-    space = store.agent_space(command["thread"])
     if space not in ("", "chat"):
         request["space"] = space  # the session of the agent's "Monitor" launches as that thread's
     if command["card"]:

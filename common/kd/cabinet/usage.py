@@ -2,10 +2,12 @@
 ``usage_log``.
 
 Claude reports a resumed session's model usage cumulatively (``modelUsage`` on every ``result``), so a turn's
-own usage is the difference from the session's last total (``sessions.usage_total``). A total that is smaller in
-any field, or lacks a model the last one had, belongs to a new chain (a fresh Claude session behind the same
-cabinet session) and counts whole. A report that never reached the cabinet is counted by the next one: its total
-contains it. A job is one fresh Claude session: its total is its usage.
+own usage is the difference from the session's last total (``sessions.usage_total``). A new Claude conversation
+behind the same cabinet session — every wake of an agent's "Monitor", a fresh retry — reports a new runtime id,
+which resets that total (``sessions_api``): its first total counts whole (a resume keeps the id). A total that is
+smaller in any field, or lacks a model the last one had, belongs to a new chain as well and counts whole. A report
+that never reached the cabinet is counted by the next one: its total contains it. A job is one fresh Claude
+session: its total is its usage.
 
 A session or a job on a cabinet model reports its usage under the model's slug, and what the process
 reported as cost is not money (Claude Code prices what it believes the model is): with ``prices`` — the model's row

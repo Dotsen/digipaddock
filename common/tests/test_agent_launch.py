@@ -1504,6 +1504,8 @@ def test_session_context_of_the_monitor_names_its_thread(tmp_path, policies):
     note = _note(run)
     assert f"This session ({SESSION_ID}, thread 13) is boss's «Монитор» thread" in note
     assert "kd-task chat reads and answers this thread" in note and "cabinet chat, not a card" not in note
+    # KD-9459: no wake here resumes the earlier ones — what they did is read, not remembered
+    assert "Each wake here starts a new conversation" in note and "never assume you remember it" in note
     env = run.claude_env
     assert (env["KD_SESSION_THREAD"], env["KD_SESSION_CARD"], env["KD_SESSION_SPACE"]) == ("13", "", "monitor")
 

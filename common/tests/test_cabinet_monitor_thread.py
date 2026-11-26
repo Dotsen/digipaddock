@@ -4,7 +4,7 @@ own session answers there; its unread replies and pushes are counted apart from 
 import pytest
 
 from kd import session_config
-from kd.cabinet import api, chats, dispatcher, notify, schema, sessions_api, users
+from kd.cabinet import api, chats, dispatcher, notify, schema, sessions_api, usage, users
 from cabinet_env import CabinetEnv
 
 HOSTED = session_config.HostConfig({"analyst": 1}, 600)
@@ -211,3 +211,95 @@ def test_dispatcher_names_the_space_and_an_old_host_gets_it_without(env):
     assert request["space"] == "monitor" and "space" not in dispatcher._prepare(svc, plain, now)
     old = dispatcher.HostRefused("invalid", "unknown field for deliver")
     assert "space" not in dispatcher._ordinary(request, old) and dispatcher._ordinary(request, ValueError()) is None
+
+
+SID = "0b9c3f1e-1111-2222-3333-444455556666"
+
+
+def test_a_monitor_delivery_never_resumes_while_the_chat_and_a_card_do(env):
+    """KD-9459: each wake in "Monitor" is a new Claude conversation — the board sends no resume id for it, though the
+    session keeps the last one; the chat and a card's thread resume theirs."""
+    from datetime import datetime
+
+    card = env.card(assignee="@analyst")
+    commands = {space: _enqueue(env, f"r-{space}", **({"space": space} if space else {"card": card.id}))
+                for space in ("monitor", "chat", "")}
+    for command in commands.values():
+        env.store.session_update(env.store.session_for(command["thread"], "analyst")["id"], runtime_session_id=SID)
+    svc = type("Svc", (), {"ctx": env.ctx})()
+    resume = {}
+    for space, command in commands.items():
+        now = datetime.fromisoformat(command["created"].replace("Z", "+00:00"))
+        resume[space] = dispatcher._prepare(svc, command, now)["resume"]
+    assert resume == {"monitor": "", "chat": SID, "": SID}
+
+
+def test_continue_of_a_failed_monitor_turn_repeats_the_wake_it_did_not_finish(env):
+    """"Monitor" resumes nothing, so the continue of a failed turn is a new conversation: its wake carries the wake
+    that did not finish. A continue that failed too hands the same wake on, not a wake inside a wake."""
+    command = _enqueue(env, "c1", space="monitor")
+    session = env.store.session_for(command["thread"], "analyst")
+    env.store.session_update(session["id"], state="idle")
+    env.store.command_state(command["id"], "failed", session=session["id"], error="turn failed")
+    request = {"op": "user.session.continue", "session": session["id"]}
+    first = api.dispatch(env.ctx, person("owner"), request)["command"]
+    assert first["kind"] == "continue" and first["text"].startswith("[session] monitor: your previous turn failed")
+    assert "[монитор] P-7 открыта" in first["text"] and "kd-task chat" in first["text"]
+    env.store.command_state(first["id"], "failed", session=session["id"], error="turn failed")
+    # the continue's key is the session's moment: a later failure is a later moment
+    env.store._conn.execute("UPDATE sessions SET updated='2099-01-01T00:00:00Z' WHERE id=?", (session["id"],))
+    again = api.dispatch(env.ctx, person("owner"), request)["command"]
+    assert again["id"] != first["id"] and again["text"] == first["text"]
+
+
+M = "claude-sonnet-5-5"
+
+
+def _usage(n):
+    return {"models": {M: {"in": 10 * n, "out": 100 * n, "cache_read": 1000 * n, "cache_write": 500 * n,
+                           "cost": 0.1 * n}}, "requests": n}
+
+
+def _wake_turn(env, key, runtime, n):
+    command = _enqueue(env, key, space="monitor")
+    session = env.store.session_for(command["thread"], "analyst")
+    env.store.command_state(command["id"], "delivered", session=session["id"])
+    env.call("root", {"op": "host.report", "items": [
+        {"type": "session", "session": session["id"], "state": "working", "runtime_session_id": runtime},
+        {"type": "turn", "session": session["id"], "command": command["id"], "phase": "started"},
+        {"type": "turn", "session": session["id"], "command": command["id"], "phase": "ended", "ok": True,
+         "usage": _usage(n)},
+    ]})
+    return session
+
+
+def test_a_fresh_monitor_conversation_is_counted_whole_and_once(env):
+    """KD-9459: a new Claude session behind the same "Monitor" session starts its own cumulative total — counted
+    whole though it is larger in every field than the last one's; a wake that went into the same conversation
+    counts only what it added. The monitor category holds every turn."""
+    other = "7d2e4a10-aaaa-bbbb-cccc-ddddeeeeffff"
+    _wake_turn(env, "u1", SID, 2)
+    _wake_turn(env, "u2", other, 3)  # a new conversation, larger than the first in every field
+    session = _wake_turn(env, "u3", other, 5)  # the same conversation went on: 5 − 3
+    rows = env.store._conn.execute("SELECT output, cost, runtime FROM usage_log ORDER BY id").fetchall()
+    assert [(r["output"], r["runtime"]) for r in rows] == [(200, SID), (300, other), (200, other)]
+    assert sum(r["cost"] for r in rows) == pytest.approx(0.7)
+    assert env.store.session(session["id"])["usage"]["out"] == 700
+    [category] = usage.categories(env.store, "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z")
+    assert (category["turns"], category["output"]) == (3, 700)
+
+
+def test_a_message_in_monitor_wakes_with_the_agents_last_message_before_it(env):
+    """KD-9459: the wake comes into a new conversation — it names the agent's own last message in "Monitor", the
+    one the person most likely answers, so it is read as data, not remembered."""
+    monitor = env.store.agent_thread("analyst", "monitor")
+    report = env.store.add_thread_message(monitor, author="agent:analyst", kind="text", body="P-7: диск 95%")
+    env.store.add_thread_message(monitor, author="agent:analyst", kind="tool_call", body="ssh-ro web df")
+    api.dispatch(env.ctx, person("owner"),
+                 {"op": "user.agent.message", "agent": "analyst", "space": "monitor", "text": "почисти"})
+    api.dispatch(env.ctx, person("owner"), {"op": "user.agent.message", "agent": "analyst", "text": "привет"})
+    wakes = {c["thread"]: c["text"] for c in env.store.commands(agent="analyst")}
+    seq = report["seq"]
+    assert wakes[monitor] == (sessions_api.MONITOR_WAKE + sessions_api.MONITOR_LAST.format(seq=seq))
+    assert f"#{seq}" in wakes[monitor] and f"kd-task chat --message {seq}" in wakes[monitor]
+    assert wakes[env.store.agent_thread("analyst")] == sessions_api.CHAT_WAKE  # the chat resumes: nothing added
