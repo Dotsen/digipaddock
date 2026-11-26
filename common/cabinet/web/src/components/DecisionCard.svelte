@@ -87,8 +87,9 @@
         : t(outcome),
   );
   // one approval: merge, or merge and release with the tick where the project is released from here (the owner,
-  // 19.10: approve-only is not offered; the API still takes it)
-  let releaseToo = $state(false);
+  // 19.10: approve-only is not offered; the API still takes it); the tick is on by default and may be taken off (the
+  // owner, 26.11: stage only — prod has its own signed button)
+  let releaseToo = $state(true);
   let comments = $state<LineComment[]>([]);
   let signMode = $state<PrMode | undefined>(undefined);
 

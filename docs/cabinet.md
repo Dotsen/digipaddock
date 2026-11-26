@@ -68,7 +68,7 @@ Decisions live in the card's thread and in the Inbox:
 | Allow the coordinator to split a goal | coordinator | «Allow», signed; «Revoke» on the same decision stops new subtasks |
 | A sysadmin plan; a critical command | sysadmin | signed with a passkey, once per task or per exact command |
 | A factory step (a reinstall, a component install) | developer | signed with a passkey |
-| A pull request | developer | «Approve and merge», optionally «and release», signed with a passkey on its exact head; «Remarks» return it with text |
+| A pull request | developer | «Approve and merge» with «and release to stage» ticked by default (untick it to merge only; prod has its own signed button), signed with a passkey on its exact head; «Remarks» return it with text |
 | An agent's question | any agent | the answer in the thread — a form of choices, text, files or a voice message |
 
 A signature is checked again by the executor that acts on it, never taken from the page.

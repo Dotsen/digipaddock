@@ -450,8 +450,9 @@ describe("DecisionCard: a pull request", () => {
     expect(buttons()).not.toContain("Одобрить, merge и release");
     expect(buttons()).not.toContain("Задать вопрос");
     expect(buttons()).not.toContain("Подписать");
+    // the owner, 26.11 (KD-9458): the release to stage is ticked by default and may be unticked
     const tick = screen.getByRole("checkbox", { name: "и выкатить на stage" }) as HTMLInputElement;
-    expect(tick.checked).toBe(false);
+    expect(tick.checked).toBe(true);
     cleanup();
     render(DecisionCard, { item: prItem({}, { release: false }) });
     expect(buttons()).toContain("Одобрить и merge");
@@ -481,18 +482,23 @@ describe("DecisionCard: a pull request", () => {
     expect(document.body.textContent).not.toContain("Подпись перенесена");
   });
 
-  it("the button signs merge, or merge and release with the tick, with a passkey only", async () => {
+  it("the button signs merge and release with the tick, or merge with it unticked, with a passkey only", async () => {
     session.signedIn(me({ "*": ["*"] }));
     render(DecisionCard, { item: prItem() });
     await fireEvent.click(screen.getByRole("button", { name: "Одобрить и merge" }));
     const dialog = screen.getByRole("dialog");
-    expect(dialog.textContent).toContain("одобрение и merge");
+    expect(dialog.textContent).toContain("одобрение, merge и release");
     expect(dialog.textContent).not.toContain("Ввести код TOTP");
     cleanup();
     render(DecisionCard, { item: prItem() });
     await fireEvent.click(screen.getByRole("checkbox", { name: "и выкатить на stage" }));
     await fireEvent.click(screen.getByRole("button", { name: "Одобрить и merge" }));
-    expect(screen.getByRole("dialog").textContent).toContain("одобрение, merge и release");
+    expect(screen.getByRole("dialog").textContent).toContain("одобрение и merge");
+    cleanup();
+    // no release from here: the button signs merge whatever the tick holds
+    render(DecisionCard, { item: prItem({}, { release: false }) });
+    await fireEvent.click(screen.getByRole("button", { name: "Одобрить и merge" }));
+    expect(screen.getByRole("dialog").textContent).toContain("одобрение и merge");
   });
 
   it("a moved PR offers no approval, only remarks", () => {
