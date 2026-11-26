@@ -1,0 +1,15 @@
+# Typed steps: a cron line, a sysctl or logrotate file, the script switch, a reboot
+
+Read this before you write a plan step `cron.line`, `file.drop` or `gate.script`, or a critical action `system.reboot` (KD-9345). `cron.line` and `file.drop` are never proposed on {{host.stage_alias}}.
+
+## Plan steps (`kd-admin-propose`)
+
+- `{"server": "<alias>", "verb": "cron.line", "mark": "KD-<n>", "action": "set", "line": "*/5 * * * * /usr/local/bin/x.sh", …}` — one line of root's crontab, marked with the card (` # kd:KD-<n>`): `set` adds it or replaces the card's earlier line, `"action": "remove"` (without `line`) takes it away; every other line stays. The line is one schedule (five fields or `@daily` and the like) and one command, with no `%` but as `\%` (cron cuts the command at a bare `%` and feeds the rest to it as input: `date +\%F`); that command passes the same rules as a script (the critical classifier and the denylist) — a reboot or a firewall change in it is refused. The crontab before the card's first change is kept in `/root/kd-<n>/crontab.before`.
+- `{"server": "<alias>", "verb": "file.drop", "dir": "/etc/sysctl.d", "name": "60-kd.conf", "mark": "KD-<n>", "action": "set", "text": "vm.swappiness = 10\n", …}` — one file of `/etc/sysctl.d` (a name ending in `.conf`; loaded at once with `sysctl -p`) or `/etc/logrotate.d`; `"action": "remove"` (without `text`) deletes it. The earlier file is kept in `/root/kd-<n>/<name>.before`. A sysctl file is only `key = value` lines with each key written out in full (no `*`), without `kernel.core_pattern`, `kernel.modprobe` and other keys that make the kernel start a program, and without `net.*` keys or the kernel's protections (`kernel.yama.*`, `fs.protected_*`, `kernel.kptr_restrict`, `kernel.unprivileged_*` and their kin) — such a change is a critical action (`kd-admin-propose-action`); a logrotate file rotates only logs under `/var/log/` (every path of every stanza; no segment starting with a dot) and has no script blocks (`postrotate` …), no `compresscmd`, `mail` or `include`, and no `create`, `su`, `olddir`, `createolddir` or `copy` (use `copytruncate`, or leave the new file to the service). What does not fit — an application's logs under its own tree, a `create` with an owner — is a `script` step.
+- `{"server": "<alias>", "verb": "gate.script", "value": "off", …}` — the server stops taking `script` steps (its gate refuses them in both modes; typed steps and critical actions go on); `"value": "on"` returns them. Propose `off` only where the owner decided it; while it is off, a change no typed step expresses needs a plan with `gate.script` `on` first.
+
+The server runs a typed step's own words, without a shell.
+
+## A reboot (`kd-admin-propose-action`)
+
+`"verb": "system.reboot"` in place of `"command"`. The command is formed for you — the server's helper first writes `ip -4/-6 rule`, `wg show`, `ss -tlnpu`, the running services and containers into `/root/kd-<n>/before-reboot-<UTC time>/`, then runs `systemctl reboot`; compare with them after the server is back (`ssh-ro`).

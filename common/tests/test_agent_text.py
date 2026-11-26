@@ -143,7 +143,9 @@ def test_common_template_has_the_owner_is_not_a_transport_rule():
     # both read the cabinet's push path through the catalog query
     assert "`cabinet-push`" in tools
     sysadmin = _section(_agent_text("sysadmin"), "Tools")
-    assert "kd-diag check <target> --card KD-<n>" in sysadmin and "`cabinet-push`" in sysadmin
+    assert "kd-diag check <target> --card KD-<n>" in sysadmin and "`playbooks/factory-host.md`" in sysadmin
+    assert "`cabinet-push`" in agent_text.render_playbook(
+        (ROOT / "agents/sysadmin/playbooks/factory-host.md").read_text("utf-8"), FIXTURE_HOST)
     boss = _section(_agent_text("boss"), "Tools")
     assert "waits (`queued`) for a free slot" in boss and "4 — every slot" not in boss
 

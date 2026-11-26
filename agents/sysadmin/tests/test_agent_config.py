@@ -38,6 +38,40 @@ def _section(name):
 PLAYBOOK = (SYSADMIN / "playbooks/security.example.md").read_text(encoding="utf-8")  # security.md: overlay
 
 
+def _playbook(name):
+    """One of the role's own playbooks as installed: the occasional references the instruction only points to."""
+    return agent_text.render_playbook((SYSADMIN / "playbooks" / name).read_text(encoding="utf-8"), naming.load_host())
+
+
+def test_the_occasional_references_are_playbooks_the_instruction_points_to():
+    """The instruction keeps each rule and names the playbook with its details; with the deployment's own server
+    table in place of the example it must still fit under the limit (it did not: the release of 2026-11-26 could
+    not install the role)."""
+    for name, section in (("typed-steps.md", "Tools"), ("factory-host.md", "Tools"), ("factory-host.md", "Kill switches"),
+                          ("monitor.md", "Monitor events"), ("monitor.md", "Security")):
+        assert f"`playbooks/{name}`" in _section(section), (name, section)
+        assert "{{" not in _playbook(name)
+    typed = _playbook("typed-steps.md")
+    for form in ('"verb": "cron.line"', '"verb": "file.drop"', '"verb": "gate.script"', '"verb": "system.reboot"',
+                 "with no `%` but as `\\%`", "`kernel.yama.*`", "no script blocks (`postrotate` …)",
+                 "/root/kd-<n>/crontab.before", "before-reboot-<UTC time>"):
+        assert form in typed, form
+    tools = _section("Tools")
+    assert "`cron.line` and `file.drop` never on example-stage" in tools
+    assert "Prefer a typed step to a `script` step whenever one fits" in tools
+    monitor = _playbook("monitor.md")
+    for phrase in ("`kd-monitor revoke P-<n> [P-m … | P-a..P-b]", "«ошибка: ключ ещё разрешён на …»",
+                   "`cron.line` root's crontab", "open no window"):
+        assert phrase in monitor, phrase
+    security = _section("Security")
+    assert "never propose `accept` for it" in security and "You never open or close a window yourself" in security
+    # the room a deployment's own server table needs beyond the example's
+    assert len(CLAUDE_MD.encode("utf-8")) + DEPLOYMENT_ROOM <= agent_text.MAX_TEXT_BYTES
+
+
+DEPLOYMENT_ROOM = 10 * 1024  # bytes: a table of 14 servers is 7.5 KiB larger than servers.example.md
+
+
 def test_modes_cannot_skip_approval():
     # dontAsk refuses what default would ask the owner
     assert PERMS["defaultMode"] == "dontAsk"
@@ -216,9 +250,10 @@ def test_claude_md_knows_kill_switches_but_never_runs_them():
     # The channel grants files replace the capability sudoers
     for switch in ("`rm /etc/digipaddock/cap/sysadmin/exec.json`", "`rm /etc/digipaddock/cap/sysadmin/self.json`",
                    "`systemctl stop digipaddock-cap.target`", "`: > /etc/digipaddock/servers.enabled`"):
-        assert switch in CLAUDE_MD, switch
+        assert switch in _playbook("factory-host.md"), switch  # the list is read on demand
     assert "sudoers.d/kd-sysadmin-capabilities" not in CLAUDE_MD and "/etc/sudoers.d/digi-exec" not in CLAUDE_MD
-    assert "never run them yourself" in CLAUDE_MD
+    assert "sudoers.d" not in _playbook("factory-host.md")
+    assert "never run them yourself" in CLAUDE_MD and "`playbooks/factory-host.md`" in _section("Kill switches")
     # the playbook names the same switches (global review 15.10.2026: it named a sudoers file no installer creates)
     for switch in ("`rm /etc/digipaddock/cap/sysadmin/exec.json`", "`systemctl stop digipaddock-cap.target`",
                    "`: > /etc/digipaddock/servers.enabled`"):
@@ -397,15 +432,17 @@ def test_monitor_fixed_review_round_rules():
     "did not help" is found by the label P-<n> in Review; "already closed" — Done at once; a repeated fixed — only
     after a new fix; the Finish line in Board — Review through fixed, Done on "closed"."""
     events = _section("Monitor events")
-    for phrase in ("only when `ssh-ro` shows that the checked value itself is back to normal",
-                   "`mem` (PSI avg300, swap over 5 min) wait ~10 minutes after the fix",
-                   "`oom` is refused: it counts the last 24 h and closes by itself",
+    for phrase in ("`oom` is refused: it counts the last 24 h and closes by itself",
                    "the events carry no card number", "the card with the label `P-<n>` in Review",
                    "`kd-task list -s Review -p admin -l P-<n>`",
                    "If `fixed` is refused (`oom`, `sec:*`, `logins`), do not send the card to Review",
+                   "`playbooks/monitor.md`: read it before the first `fixed` of a session"):
+        assert phrase in events, phrase
+    for phrase in ("only when `ssh-ro` shows that the checked value itself is back to normal",
+                   "`mem` (PSI avg300, swap over 5 min) wait ~10 minutes after the fix",
                    "If `fixed` answers that the problem is already closed, close the card right away",
                    "Run `fixed` again only after a new fix, never just to get another recheck"):
-        assert phrase in events, phrase
+        assert phrase in _playbook("monitor.md"), phrase  # when to mark and what the answers mean: on demand
     finish = next(line for line in _section("Board").splitlines() if "Finish:" in line)
     assert '--final-summary "<outcome>"`, then `kd-work finish KD-<n> --outcome done' in finish
     assert ("a card with a `P-<n>` label goes to Review via `kd-monitor fixed P-<n> KD-<m>` and `--outcome review` first "
