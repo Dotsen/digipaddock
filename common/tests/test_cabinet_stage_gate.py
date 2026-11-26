@@ -834,6 +834,18 @@ def test_the_stages_agent_cannot_close_it_past_the_gate(cab, plan):
     assert why and "a stage of a chain plan" in why and "--outcome review" in why
 
 
+def test_the_stages_agent_cannot_close_it_past_the_gate_in_observe_either(cab, plan):
+    """The kill switch sends the pipeline to observe; the chain stage stays closed by its gate (KD-9479)."""
+    _, a, _ = plan
+    cab.store._conn.execute("UPDATE projects SET done_by='dev' WHERE id='digipaddock'")
+    pipeline(cab, mode="observe")
+    cab.store.edit_card(a.id, None, {"status": "In Progress"}, actor="agent:dev")
+    with pytest.raises(api.ApiError) as exc:
+        cab.call("digi", {"op": "worker.edit", "agent": "dev", "card": a.id, "status": "Done"})
+    assert exc.value.kind == "refused" and "a stage of a chain plan" in str(exc.value)
+    assert cab.store.card(a.id).status == "In Progress"
+
+
 def test_the_agent_of_a_plain_stage_closes_it_as_before(tmp_path):
     cab = cabinet(tmp_path, chain=False)
     _, kids = started(cab, (A, B))

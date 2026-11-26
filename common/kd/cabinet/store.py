@@ -11,6 +11,7 @@ import json
 import re
 import sqlite3
 import secrets
+import sys
 import unicodedata
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -92,6 +93,10 @@ JOINED_SQL = "(state='delivered' AND substr(reason, 1, 7)='merged:')"
 # the wakes a queued lead carried the first time it was sent, under its id: a send again carries the same ones
 # (the host answers a command id it has from its cache, whatever the text); gone when the lead leaves the queue
 JOIN_KEY = "dispatch.join:"
+# A command the cabinet queues itself whose key a row with other content holds already (one written before the op
+# boundary reserved the cabinet's keys) goes under the key with this suffix — a character no caller's key may hold —
+# instead of failing the write it belongs to (KD-9479)
+KEY_TAKEN_SUFFIX = "!"
 SERVER_LABEL = "server:"  # the old board's server label is a card_servers row here
 SPACE_OF = {kind: space for space, kind in schema.AGENT_SPACES.items()}  # an agent thread's kind → its space
 # The coordinator's "Monitor" is its work log (the board watch's attention ticks): no unread replies and no
@@ -1474,19 +1479,21 @@ class Store:
          "queue_position", "queued_since"}  # its place in the agent's queue for a slot, since when
     )
 
-    def enqueue(self, spec: Mapping) -> dict:
+    def enqueue(self, spec: Mapping, *, strict: bool = False) -> dict:
         """One command for an agent: the same ``key`` again, or the same text for the same agent and thread
-        while the first is not yet running, is the command already written (nothing new)."""
+        while the first is not yet running, is the command already written (nothing new). The key in use with other
+        content is a ``Conflict`` for a caller's own key (``strict``, the op boundary); the cabinet's own command
+        goes under ``KEY_TAKEN_SUFFIX`` then, so the write it belongs to is never rolled back by it."""
         with self._tx():
-            return self._enqueue_in_tx(spec)
+            return self._enqueue_in_tx(spec, strict=strict)
 
-    def _enqueue_in_tx(self, spec: Mapping) -> dict:
-        command = self._enqueue_row(spec)
+    def _enqueue_in_tx(self, spec: Mapping, *, strict: bool = False) -> dict:
+        command = self._enqueue_row(spec, strict)
         if all(c["id"] != command["id"] for c in self._tx_commands):
             self._tx_commands.append(command)
         return command
 
-    def _enqueue_row(self, spec: Mapping) -> dict:
+    def _enqueue_row(self, spec: Mapping, strict: bool) -> dict:
         if spec.get("kind") not in schema.COMMAND_KINDS:
             raise Invalid(f"unknown command kind {spec.get('kind')!r}")
         if not spec.get("key") or not spec.get("agent") or not spec.get("text"):
@@ -1499,7 +1506,11 @@ class Store:
             if (known["agent"], known["thread"], known["card"], known["kind"], known["text"]) != (
                 spec["agent"], thread["id"], card, spec["kind"], spec["text"]
             ):
-                raise Conflict(f"command key {spec['key']} is in use with other content")
+                if strict or spec["key"].endswith(KEY_TAKEN_SUFFIX):
+                    raise Conflict(f"command key {spec['key']} is in use with other content")
+                print(f"cabinet: command key {spec['key']} is in use with other content (command {known['id']},"
+                      f" @{known['agent']}): queued under {spec['key']}{KEY_TAKEN_SUFFIX}", file=sys.stderr)
+                return self._enqueue_row({**spec, "key": spec["key"] + KEY_TAKEN_SUFFIX}, True)
             return known
         row = self._conn.execute(
             f"SELECT id FROM commands WHERE agent=? AND thread=? AND text=? AND state IN ('queued','delivered')"

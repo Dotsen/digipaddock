@@ -17,9 +17,10 @@ hindsight_client_for() {
   key=$(grep '^HINDSIGHT_API_TENANT_API_KEY=' /etc/hindsight/coding-agent.env | cut -d= -f2- || true)
   [ -n "$key" ] || { echo "no HINDSIGHT_API_TENANT_API_KEY in /etc/hindsight/coding-agent.env" >&2; return 1; }
   if ! runuser -u "$u" -- bash -c 'cat ~/.hindsight/coding-agents/package.json 2>/dev/null' | grep -q "\"version\": \"$HINDSIGHT_PLUGIN_VERSION\""; then
-    # npx not from /tmp (a foreign node_modules of www-data/runner); claude in PATH — for `claude mcp add --scope user`;
-    # the parameters — through env, the body — in single quotes, the home — $HOME (sudo -H)
-    sudo -u "$u" -H env HINDSIGHT_PLUGIN_VERSION="$HINDSIGHT_PLUGIN_VERSION" bash -o pipefail -c 'd=$(mktemp -d -p "$HOME" .npx-XXXXXX) && cd "$d" && PATH=$HOME/.local/bin:$PATH npx -y @vectorize-io/hindsight-coding-agents@$HINDSIGHT_PLUGIN_VERSION install claude-code --server self-hosted --api-url http://127.0.0.1:9077; rc=$?; cd /; rm -rf "$d"; exit $rc' \
+    # npx not from /tmp (a foreign node_modules of www-data/runner); claude in PATH — for `claude mcp add --scope user`:
+    # root's (KD-9474), never one of the home; the parameters — through env, the body — in single quotes, the home —
+    # $HOME (sudo -H)
+    sudo -u "$u" -H env HINDSIGHT_PLUGIN_VERSION="$HINDSIGHT_PLUGIN_VERSION" bash -o pipefail -c 'd=$(mktemp -d -p "$HOME" .npx-XXXXXX) && cd "$d" && PATH=/opt/digipaddock-claude:$PATH npx -y @vectorize-io/hindsight-coding-agents@$HINDSIGHT_PLUGIN_VERSION install claude-code --server self-hosted --api-url http://127.0.0.1:9077; rc=$?; cd /; rm -rf "$d"; exit $rc' \
       || echo "warning: the Hindsight plugin for $u did not install (network/npm) — retry later" >&2
   fi
   # the whole config from the reference file + the key; the key — in the environment, not in argv; the user itself writes, atomically, 0600

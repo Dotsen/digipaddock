@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -I
 """kd-notes add <text> — one entry into the agent's shared notes (``memory/notes.md``), appended under an exclusive
 lock: two sessions of the agent never lose each other's entry, and nothing rewrites the file. A session's
 own plan, progress, branch and next steps go to its own notes (``memory/tasks/<card>.md`` or

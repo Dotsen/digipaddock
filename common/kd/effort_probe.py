@@ -39,7 +39,7 @@ from pathlib import Path, PurePosixPath
 from statistics import median
 from typing import Any
 
-from kd import agents, ids, launch, naming
+from kd import agents, claude_code, ids, launch, naming
 from kd.manifest import EFFORTS, check_model
 
 CABINET_DB = "/var/lib/digipaddock/cabinet/cabinet.db"
@@ -316,7 +316,7 @@ def _within(path: str, root: str) -> bool:
 
 def argv(settings: str, folder: str, model: str, effort: str) -> list[str]:
     return [
-        "claude", "--settings", settings, "--add-dir", folder, "--model", model, "--effort", effort,
+        claude_code.BINARY, "--settings", settings, "--add-dir", folder, "--model", model, "--effort", effort,
         "--strict-mcp-config", "-p", "--output-format", "stream-json", "--verbose",
     ]
 
@@ -417,13 +417,13 @@ def _subprocess(argv_: list[str], stdin: str, cwd: str, env: dict[str, str], tim
 
 
 def supports_effort(runner: Runner, cwd: str, env: dict[str, str]) -> bool:
-    code, lines = runner(["claude", "--help"], "", cwd, env, 60)
+    code, lines = runner([claude_code.BINARY, "--help"], "", cwd, env, 60)
     return code == 0 and any("--effort" in line for line in lines)
 
 
 def environment(name: str, home: str) -> dict[str, str]:
-    """agent-launch's environment for the agent, without the session note."""
-    path = f"{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+    """agent-launch's environment for the agent, without the session note: root's claude, nothing of the home."""
+    path = claude_code.PATH
     agent_bin = f"/etc/digipaddock/agent-bin/{name}"
     if os.path.isdir(agent_bin) and not os.path.islink(agent_bin) and os.stat(agent_bin).st_uid == 0:
         path = f"{agent_bin}:{path}"

@@ -592,19 +592,47 @@ def test_wake_now_after_a_shorter_time_still_delivers_the_held_wake(cab):
     assert len(due(cab, record)) == 1 and held(cab, record) == []
 
 
-def test_the_agents_own_defer_in_place_of_the_owners_releases_what_his_held(cab):
+def test_the_agents_defer_does_not_replace_the_owners_or_release_what_his_held(cab):
+    """The owner's (or BOSS's) defer is stronger than the agent's own (KD-9479)."""
     record = card(cab)
     asked = _waiting_for_an_answer(cab, record)
     owner(cab, "user.card.defer", card=record.id, until=TWO_HOURS_MSK)
     _answer(cab, asked)
-    defers.place(
+    kept = defers.place(
         cab.ctx,
         cab.store.card(record.id),
         until="2026-10-14T11:00:00Z",
         source="agent",
         by="agent:dev",
     )
-    assert len(due(cab, record)) == 1 and held(cab, record) == []
+    assert (kept["source"], kept["until"]) == ("owner", "2026-10-14T12:00:00Z")
+    assert defers.active(cab.store, record.id)["id"] == kept["id"]
+    assert due(cab, record) == [] and len(held(cab, record)) == 1
+
+
+@pytest.mark.parametrize("by", ["owner", "boss"])
+def test_an_agents_wait_until_under_a_stronger_defer_keeps_it_and_wakes_once_at_its_time(cab, by):
+    """The owner put the card off; a turn of its agent (woken by something else) ends with wait_until ten minutes
+    ahead: his defer stands, the held answer stays held, and the agent wakes once, at his time (KD-9479)."""
+    record = card(cab)
+    asked = _waiting_for_an_answer(cab, record)
+    if by == "owner":
+        owner(cab, "user.card.defer", card=record.id, until=TWO_HOURS_MSK)
+    else:
+        boss(cab, task=record.id, until=TWO_HOURS_MSK, reason="ждём окна")
+    _answer(cab, asked)
+    command = deferred(cab, record, until="2026-10-14T10:30:00Z")
+    row = defers.active(cab.store, record.id)
+    assert (row["source"], row["until"]) == (by, "2026-10-14T12:00:00Z")
+    state = cab.store._conn.execute("SELECT state FROM turn_outcomes WHERE command=?", (command,)).fetchone()[0]
+    assert state == "final" and due(cab, record) == [] and len(held(cab, record)) == 1
+    at(cab, "2026-10-14T10:31:00Z")  # the agent's own moment: its wake waits for the stronger defer's time
+    sweep(cab)
+    assert due(cab, record) == []
+    at(cab, "2026-10-14T12:00:30Z")
+    sweep(cab)
+    sweep(cab)
+    assert len(due(cab, record)) == 1 and defers.active(cab.store, record.id) is None
 
 
 def test_the_owners_refusal_names_the_moment_not_the_flag(cab):

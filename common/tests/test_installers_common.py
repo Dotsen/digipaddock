@@ -122,7 +122,7 @@ def test_stage_setup_links_only_the_session_launcher():
 def test_stage_setup_installs_no_bun():
     text = _read("install/stage_setup.sh")
     assert "bun" not in text.lower() and "unzip" not in text  # unzip was the Bun installer's
-    assert '[ -x "/home/$base/.local/bin/claude" ] || { echo "Claude Code did not install" >&2; exit 1; }' in text
+    assert 'bash "$REPO/common/install/claude_setup.sh" install' in text  # root's Claude Code (KD-9474)
 
 
 def test_render_host_units_are_in_the_tree():
@@ -350,7 +350,7 @@ def _launch_code() -> str:
 
 
 # claude starts through kd.secret_fd, which hands it the credential by a pipe
-EXEC_CLAUDE = "exec /usr/bin/python3 -I /opt/digipaddock/common/kd/secret_fd.py claude"
+EXEC_CLAUDE = "exec /usr/bin/python3 -I /opt/digipaddock/common/kd/secret_fd.py /opt/digipaddock-claude/claude"
 
 
 def test_agent_launch_runs_only_the_strict_session():
@@ -362,7 +362,7 @@ def test_agent_launch_runs_only_the_strict_session():
     assert "/usr/bin/python3 -I -c" in text and "agents.user_of(sys.argv[1])" in text
     assert '[[ $user == "$(id -un)" ]]' in text  # run as the agent's own user, never hopping to it
     assert text.index("dir=/srv/digipaddock-agents/$name") < text.index('cd "$dir"') < text.index('cd "$dir/work"')
-    assert "/home/digi" not in text and "export PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" in text
+    assert "/home/digi" not in text and "export PATH=/opt/digipaddock-claude:/usr/local/bin:/usr/bin:/bin" in text
     assert "bun" not in text.lower()  # Bun ran only the Telegram plugin
     assert text.count(EXEC_CLAUDE) == 1 and text.count("exec ") == 1
     launch = re.sub(r"\\\n\s*", "", text[text.index(EXEC_CLAUDE):])
@@ -467,7 +467,7 @@ def test_agent_launch_venv_after_base_path():
     block = text[text.index("venv=/opt/digipaddock-venv/$name"):]
     assert "! -L $venv" in block and '$(stat -c %u "$venv/bin") = 0' in block
     assert "export PATH=$venv/bin:$PATH" in block
-    assert (text.index("export PATH=$HOME/.local/bin:")
+    assert (text.index("export PATH=/opt/digipaddock-claude:")
             < text.index("venv=/opt/digipaddock-venv/$name") < text.index(EXEC_CLAUDE))
 
 
@@ -592,7 +592,8 @@ def test_stage_setup_installs_hindsight_client_for_every_agent_user():
     # the key — through the process environment, not through runuser's argv (other users see it in ps); the user itself
     # writes the config
     assert 'KD_KEY="$key" KD_CONFIG="$config" runuser -u "$u" -- python3 -' in lib and 'env KD_KEY=' not in lib
-    assert "command -v node" in lib and "PATH=$HOME/.local/bin" in lib  # claude needs npx for claude mcp add
+    # claude on PATH for the plugin's claude mcp add: root's, never the home's (KD-9474)
+    assert "command -v node" in lib and "PATH=/opt/digipaddock-claude:$PATH npx" in lib and ".local/bin" not in lib
     assert 'mktemp -d -p "$HOME"' in lib  # npx not from /tmp: a foreign node_modules
     assert "[ -f /etc/hindsight/coding-agent.env ] || return 0" in lib
     # stage_setup: the block at the end (a network failure does not break the units), for agent and every user from agents.json

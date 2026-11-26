@@ -75,7 +75,7 @@ def test_run_with_a_fake_runner(tmp_path):
     rows = boss_probe.run(instructions=instructions, out=out, model="claude-sonnet-5-5", grader="grader", repeats=2,
                           runner=fake, home=str(tmp_path))
     boss = fake.calls[1][0]
-    assert boss[:2] == ["claude", "-p"] and boss[boss.index("--model") + 1] == "claude-sonnet-5-5"
+    assert boss[:2] == ["/opt/digipaddock-claude/claude", "-p"] and boss[boss.index("--model") + 1] == "claude-sonnet-5-5"
     assert boss[boss.index("--tools") + 1] == "" and boss[boss.index("--system-prompt") + 1] == "# BOSS\nYou coordinate.\n"
     assert "--strict-mcp-config" in boss and boss_probe.QUESTION in fake.calls[1][1]
     assert "$ kd-task view KD-9041" in fake.calls[1][1]

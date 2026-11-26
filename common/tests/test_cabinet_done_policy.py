@@ -1,6 +1,6 @@
 """An agent closes its card only on a project that names it (the project's ``done_by``),
-and only with nothing open — children, dependencies, decisions, its PR; the owner's acceptance and observe
-stay as before."""
+and only with nothing open — children, dependencies, decisions, its PR — in either mode of the pipeline; the
+owner's acceptance stays as before."""
 
 import pytest
 from cabinet_env import CabinetEnv
@@ -101,12 +101,32 @@ def test_a_condition_opened_during_the_turn_refuses_at_its_end(cab):
     assert problem["kind"] == "outcome_refused" and f"children {part.id}" in problem["detail"]["reason"]
 
 
-def test_observe_keeps_the_old_done(cab):
+def test_observe_holds_an_agents_done_to_the_policy_too(cab):
+    """The kill switch (``pipeline_setup.sh disable``) stops continuations, not the closing policy: in observe an
+    agent still closes only a card of a project that names it, with nothing open on it (KD-9479)."""
     cab.ctx.pipeline = lambda: pipeline_config.Config(mode="observe")
     record = card(cab)
-    child(cab, record)
-    edit_done(cab, record)
-    assert cab.store.card(record.id).status == "Done"
+    part = child(cab, record)
+    assert f"children {part.id}" in edit_refused(cab, record)
+    begin(cab, record)
+    assert f"children {part.id}" in refused(cab, record, outcome="done", note="all done")
+    cab.store.update_project("digipaddock", actor="root", done_by="sysadmin")
+    other = card(cab)
+    assert edit_refused(cab, other) == "Done on digipaddock is the owner's acceptance: finish with --outcome review"
+    assert {cab.store.card(c.id).status for c in (record, other)} == {"In Progress"}
+
+
+def test_observe_refuses_at_the_turns_end_a_done_the_policy_does_not_allow(cab):
+    """A Done recorded while the policy allowed it is checked again when the turn ends, in observe too."""
+    cab.ctx.pipeline = lambda: pipeline_config.Config(mode="observe")
+    record = card(cab)
+    command, session = begin(cab, record)
+    finish(cab, record, outcome="done", note="all done")
+    cab.store.update_project("digipaddock", actor="root", done_by="")
+    end(cab, command, session)
+    assert cab.store.card(record.id).status == "In Progress"
+    row = outcome_of(cab, command)
+    assert row["state"] == "final" and "the owner's acceptance" in row["reason"]
 
 
 def test_owner_acceptance_is_unchanged(cab):

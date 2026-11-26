@@ -83,7 +83,9 @@ runtime=${facts[1]-}
 [[ $runtime == generated ]] || { echo "agent-launch: --session needs the generated runtime ($name)" >&2; exit 2; }
 [[ $user == "$(id -un)" ]] || { echo "agent-launch: --session runs only as the agent's own user" >&2; exit 2; }
 dir=/srv/digipaddock-agents/$name
-export PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+# KD-9474: claude is root's (/opt/digipaddock-claude, kd.claude_code), never a copy in the agent's home: the
+# home is the agent's to write, and the binary gets the host's token. Nothing of the home is on PATH.
+export PATH=/opt/digipaddock-claude:/usr/local/bin:/usr/bin:/bin
 # Test tools (pytest>=8, vermin): the venv root builds for the agent with its installer (dev: develop_setup.sh of
 # git.develop), /opt/digipaddock-venv/<name>, never a shared one. Only a root directory, not a link: python3 comes
 # from PATH, and an interpreter the agent replaced would take it out of the sandbox.
@@ -101,8 +103,11 @@ export KD_AGENT=$name
 export BASH_DEFAULT_TIMEOUT_MS=660000 BASH_MAX_TIMEOUT_MS=660000
 # nobody reads a recap after idle time: it is a wasted model call
 export CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0
-# the Claude Code version is pinned: updated by hand after a run on a test agent
+# the Claude Code version is pinned (common/install/versions.json): an update would only write into the home
 export DISABLE_AUTOUPDATER=1
+# KD-9482: git — Claude Code's own, which runs outside the sandbox, and the agent's — finds no repository above the
+# agent's folder (kd.launch refuses one at the top of work/) and reads no system config; no installer writes one
+export GIT_CEILING_DIRECTORIES=$dir GIT_CONFIG_NOSYSTEM=1
 # A probe exit (the autonomy design, piece 2) is Claude Code's upstream proxy by the settings env, and Claude Code
 # keeps a launch-environment proxy over it: an inherited one would carry the exit's names past the exit.
 [[ -z $egress ]] || unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy ALL_PROXY all_proxy
@@ -168,7 +173,10 @@ fi
 resume_args=()
 [[ -z $resume ]] || resume_args=(--resume "$resume")
 # KD-9216: the unit's credential (the host's token, an API key) goes to claude through a pipe, never in its environ,
-# which the agent's own Read could open in /proc; kd.secret_fd moves what claude reads from a descriptor and execs it
-exec /usr/bin/python3 -I /opt/digipaddock/common/kd/secret_fd.py claude --settings "${plan[3]}" --add-dir "$dir" "${model_args[@]}" "${effort_args[@]}" \
+# which the agent's own Read could open in /proc; kd.secret_fd moves what claude reads from a descriptor and execs it,
+# by its absolute path, only when root alone may change it (KD-9474: no fallback to any other claude)
+[[ -f /opt/digipaddock-claude/claude ]] \
+  || { echo "agent-launch: no Claude Code at /opt/digipaddock-claude/claude — root installs it: claude_setup.sh install" >&2; exit 1; }
+exec /usr/bin/python3 -I /opt/digipaddock/common/kd/secret_fd.py /opt/digipaddock-claude/claude --settings "${plan[3]}" --add-dir "$dir" "${model_args[@]}" "${effort_args[@]}" \
   -p --input-format stream-json --output-format stream-json --verbose \
   --append-system-prompt "$SESSION_NOTE" "${resume_args[@]}"

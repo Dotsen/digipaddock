@@ -5,7 +5,8 @@ Who puts it off: the card's agent — its own card in work, as the outcome of it
 wait_until --until <moment>``, up to 7 days; the outcome waits on a ``time`` wait, so the card is not «nobody's»); the
 owner — any card not closed, up to 90 days (``user.card.defer``); BOSS — any card not closed, up to 7 days, with its
 reason, and the owner hears of it (``boss.defer``). A moment names its time zone and is at least 10 minutes away. A
-new defer replaces the active one.
+new defer replaces the active one, except that the agent's own never replaces an owner's or BOSS's: that one
+stands, and the agent's time wait wakes it no earlier than that defer's time.
 
 Until the time an owner's or BOSS's defer holds the agent's wakes of the card that came from closed waits — answers
 and continuations (``store`` queues them with ``next_try`` at the time): they go out at the time, or at once with the
@@ -161,11 +162,15 @@ def place(
     streak: int = 1,
 ) -> dict:
     """The card put off until ``until`` (a UTC stamp ``parse_until`` made), in place of its active defer; an
-    owner's or BOSS's holds the agent's queued wakes of the card until then. The wakes the replaced defer held move
-    to the new one's time — earlier or later — or go now when the new one is the agent's own, which holds none."""
+    owner's or BOSS's holds the agent's queued wakes of the card until then, and the wakes the replaced defer held
+    move to the new one's time — earlier or later. The agent's own defer is the weaker: in place of another agent
+    defer only — under an owner's or BOSS's it replaces nothing and releases nothing, and that defer is returned
+    as it stands (the agent's turn keeps its time wait, whose wake that defer holds like any other)."""
     s = ctx.store
     with s.transaction():
         old = active(s, record.id)
+        if old is not None and source == "agent" and old["source"] != "agent":
+            return old
         defer_id, now = secrets.token_hex(16), s._clock()
         if old is not None:
             _end(s, old, "replaced", "replaced")
@@ -173,13 +178,7 @@ def place(
                 s._conn.execute(
                     f"UPDATE commands SET next_try=?, updated=? WHERE card=? AND state='queued' AND next_try=? "
                     f"AND kind IN ({','.join('?' * len(HELD))})",
-                    (
-                        until if source != "agent" else now,
-                        now,
-                        record.id,
-                        old["until"],
-                        *HELD,
-                    ),
+                    (until, now, record.id, old["until"], *HELD),
                 )
         s._conn.execute(
             "INSERT INTO defers (id, card, until, source, by, reason, command, streak, created) VALUES (?,?,?,?,?,?,?,?,?)",

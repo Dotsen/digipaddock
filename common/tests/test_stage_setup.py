@@ -18,11 +18,13 @@ def _text(name="stage_setup.sh"):
     return (INSTALL / name).read_text(encoding="utf-8")
 
 
-def test_stage_setup_pins_claude_code_from_the_catalog():
+def test_stage_setup_installs_roots_claude_code_of_the_catalog():
+    # KD-9474: root's one install for every agent (claude_setup.sh: the pinned build, its sha256), never the base
+    # user's home and never the vendor's install script
     text = _text()
-    assert 'claude_version=$(/usr/bin/python3 -I "$REPO/common/kd/install_catalog.py" version claude_code)' in text
-    assert "install.sh | bash -s '$claude_version'" in text
-    assert "install.sh | bash'" not in text  # never «the latest»
+    assert 'bash "$REPO/common/install/claude_setup.sh" install' in text
+    assert "install.sh" not in text and ".local/bin/claude" not in text
+    assert "DISABLE_AUTOUPDATER=1 /opt/digipaddock-claude/claude --version" in text
 
 
 def test_stage_setup_check_changes_nothing():
@@ -41,15 +43,13 @@ def test_stage_setup_check_changes_nothing():
     assert '[ -z "$check" ] || [ -z "$prefix$commands$cards$origin" ] || usage' in text
 
 
-def test_another_claude_code_version_is_a_warning_of_the_check():
-    """The full run never changes an installed version, so a failing check would run it
-    (and restart the cabinet) on every bootstrap during the window of a new version's probes. No claude fails."""
+def test_claude_code_is_not_the_foundations_check():
+    """A new pinned build fails claude_setup.sh check, a step of its own; were it the foundation's, the fix would
+    run stage_setup.sh again and install the cabinet anew."""
     text = _text()
     block = text[text.index("stage_check() {"):text.index('if [ -n "$check" ]; then')]
-    assert '[ -n "$have" ] || problems+=("no Claude Code for $base' in block
-    assert re.search(r'\[ "\$have" = "\$claude_version" \] \|\| \[ -z "\$have" \] \\\n\s+\|\| echo "warning: '
-                     r'Claude Code for \$base', block)
-    assert 'problems+=("Claude Code for $base' not in block
+    assert "Claude Code" not in block.replace("# Claude Code is claude_setup.sh's own check", "")
+    assert "claude_setup.sh" not in block.replace("# Claude Code is claude_setup.sh's own check", "")
 
 
 def test_origin_defaults_to_host_json():

@@ -1100,6 +1100,33 @@ def test_finish_review_past_the_findings_is_refused(env, how):
     assert env.store.card(card_id).status == "In Progress"
 
 
+def _edit_review(env, card_id):
+    return env.call("digi", {"op": "worker.edit", "agent": "dev", "card": card_id, "status": "Review"})
+
+
+def test_kd_task_edit_to_review_past_the_findings_is_refused_like_the_finish(env):
+    """Both ways into Review pass the same guards (KD-9479): ``kd-task edit --status Review`` is not a way around
+    the council's findings."""
+    enforce(env)
+    card_id, council_id = _needs_writer(env)
+
+    why = _refused(lambda: _edit_review(env, card_id))
+
+    assert f"{card_id} has unanswered council findings: r1.f1" in why
+    assert env.store.card(card_id).status == "In Progress"
+    assert councils.row(env.store, council_id)["state"] == "needs_writer"
+
+
+def test_kd_task_edit_to_review_past_the_findings_is_a_problem_in_observe(env):
+    card_id, council_id = _needs_writer(env)
+
+    _edit_review(env, card_id)
+
+    assert env.store.card(card_id).status == "Review"
+    [problem] = [p for p in problems.open_for(env.store, card_id) if p["kind"] == "council_unanswered"]
+    assert (problem["agent"], problem["detail"]["findings"]) == ("dev", ["r1.f1"])
+
+
 def test_finish_review_past_the_findings_is_a_problem_in_observe(env):
     card_id, council_id = _needs_writer(env)
     _turn(env, card_id)

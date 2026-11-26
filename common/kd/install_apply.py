@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Callable, Protocol, Sequence
 
-from kd import agents, cap_grants, cap_units, launch, session_config, specializations
+from kd import agents, cap_grants, cap_units, claude_code, launch, session_config, specializations
 from kd.board_grant import BACKLOG_DIR, BOARD_RESOURCE, FLOOR as FLOOR_TEMPLATE
 from kd.manifest import SERVICE_USERS, ManifestError, load_manifest
 from kd.install_plan import (
@@ -1193,6 +1193,14 @@ trust.chmod(0o600)
                 continue
             if not _acl_tree_clean(path, other):
                 raise ApplyError(f"named ACL outside the policy: {path}")
+        # the Claude Code the agent runs is root's one install of the pinned build (KD-9474); a copy an older
+        # install left in the home differs too, so the release's reinstall of the role removes it
+        claude = claude_code.problems()
+        if claude:
+            raise ApplyError("; ".join(claude))
+        for left in (".local/bin/claude", ".local/share/claude"):
+            if os.path.lexists(f"/home/{user}/{left}"):
+                raise ApplyError(f"/home/{user}/{left}: Claude Code of an older install — add_user.sh removes it")
         account = pwd.getpwnam(user)
         home_info = _safe_path(f"/home/{user}").stat()
         if (

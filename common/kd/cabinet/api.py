@@ -1250,10 +1250,10 @@ def _worker(op):
 
             # a brief is not handed in past its council's findings
             council_rounds.gate(ctx, ctx.store.card(card.id), agent, "handin", plan.changes)
-        if body.get("status") == outcomes.DONE and ctx.pipeline().enforcing:  # the closing policy
-            why = outcomes.done_refusal(ctx, ctx.store.card(card.id), agent)
-            if why:
-                raise ApiError("refused", why)
+        if body.get("status") in (outcomes.REVIEW, outcomes.DONE):
+            # the same guards as kd-work finish --outcome review|done: the council's findings, open help, an
+            # aggregate's stages, the closing policy
+            outcomes.hand_in(ctx, ctx.store.card(card.id), agent, body["status"])
         activity = None
         if op == "edit":
             labels = [v for v in card.labels if v not in plan.changes.get("labels_remove", ())]

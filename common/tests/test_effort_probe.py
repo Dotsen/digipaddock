@@ -198,7 +198,7 @@ class FakeClaude:
 
     def __call__(self, argv, stdin, cwd, env, timeout):
         self.calls.append((argv, stdin, cwd, env, timeout))
-        if argv == ["claude", "--help"]:
+        if argv == ["/opt/digipaddock-claude/claude", "--help"]:
             return 0, self.help.splitlines()
         return 0, _stream(answer=f"ответ {argv[argv.index('--effort') + 1]}")
 
@@ -213,7 +213,7 @@ def test_run_starts_one_isolated_session_per_card_effort_and_repeat(tmp_path):
     )
     assert len(rows) == 12 and len(fake.calls) == 13
     argv, stdin, cwd, env, timeout = fake.calls[1]
-    assert argv[0] == "claude" and argv[argv.index("--model") + 1] == "claude-opus-5-5"
+    assert argv[0] == "/opt/digipaddock-claude/claude" and argv[argv.index("--model") + 1] == "claude-opus-5-5"
     assert argv[argv.index("--add-dir") + 1] == FOLDER and argv[-4:] == ["-p", "--output-format", "stream-json", "--verbose"]
     assert "--strict-mcp-config" in argv and "--mcp-config" not in argv  # no MCP server at all
     assert "--dangerously-skip-permissions" not in argv and "--resume" not in argv

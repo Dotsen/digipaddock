@@ -25,7 +25,8 @@ def test_argv_runs_claude_once_on_the_model_with_the_kinds_key():
     assert "--setenv=ANTHROPIC_BASE_URL=https://openrouter.ai/api" in a and "--setenv=ANTHROPIC_API_KEY=" in a
     assert "--setenv=ANTHROPIC_MODEL=anthropic/claude-sonnet-4.5" in a
     assert not any("claude.env" in part or "CLAUDE_CODE_OAUTH" in part for part in a)
-    tail = a[a.index("/home/digi/.local/bin/claude"):]
+    tail = a[a.index("/opt/digipaddock-claude/claude"):]  # root's binary, never a home's (KD-9474)
+    assert not any(".local" in part for part in a)
     assert tail[1:3] == ["-p", probe.PROMPT]
     assert tail[tail.index("--model") + 1] == "anthropic/claude-sonnet-4.5"
     assert tail[tail.index("--max-turns") + 1] == "1" and tail[tail.index("--output-format") + 1] == "json"
@@ -196,7 +197,8 @@ def test_a_subscription_spec_probes_that_alias_on_the_host_token():
     a = probe.argv(probe.unit(PID), "digi", spec)
     assert "EnvironmentFile=/etc/digipaddock/claude.env" in a
     assert not any(part.startswith("--setenv=ANTHROPIC_") for part in a)
-    tail = a[a.index("/home/digi/.local/bin/claude"):]
+    tail = a[a.index("/opt/digipaddock-claude/claude"):]  # root's binary, never a home's (KD-9474)
+    assert not any(".local" in part for part in a)
     assert tail[tail.index("--model") + 1] == "opus"
 
 

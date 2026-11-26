@@ -99,14 +99,15 @@ def test_board_grant_is_computed_before_any_change():
     assert "python3 -I -B -c" in TEXT  # isolated: no PYTHONPATH, user site or bytecode written into the code tree
 
 
-def test_claude_same_version_as_agent_and_no_bun():
-    assert 'runuser -u "$base" -- "/home/$base/.local/bin/claude" --version' in TEXT
-    assert "install.sh | bash -s '$v'" in TEXT
+def test_claude_is_roots_one_install_and_the_home_copy_goes():
+    # KD-9474: the binary that gets the host's token is root's (claude_setup.sh), never installed into the home
+    assert 'bash "$REPO/common/install/claude_setup.sh" install' in TEXT
+    assert "install.sh" not in TEXT and "curl" not in TEXT
+    remove = "runuser -u \"$u\" -- bash -c 'cd ~ && rm -f -- .local/bin/claude && rm -rf -- .local/share/claude'"
+    assert remove in TEXT  # by its owner: root never writes in an agent's home
+    assert TEXT.index('claude_setup.sh" install') < TEXT.index(remove)
     assert "bun" not in TEXT.lower()  # Bun ran only the Telegram plugin
-    assert "env DISABLE_AUTOUPDATER=1" in TEXT
-    # the version is compared after the installation: install.sh may have installed the wrong one
-    got = TEXT.index('got=$(runuser -u "$u" -- "/home/$u/.local/bin/claude" --version')
-    assert TEXT.index("install.sh | bash -s '$v'") < got < TEXT.index('[ "$got" = "$v" ] ||')
+    assert "env DISABLE_AUTOUPDATER=1 /opt/digipaddock-claude/claude --version" in TEXT
 
 
 def test_add_user_installs_no_telegram_plugin():
@@ -351,6 +352,7 @@ apt-get() { log "apt-get $*"; }
 bash() {
   case "$1" in
     */common/install/cabinet_setup.sh) log "cabinet ${*:2}"; return 0 ;;
+    */common/install/claude_setup.sh) log "claude ${*:2}"; return 0 ;;
   esac
   command bash "$@"
 }
@@ -361,7 +363,6 @@ runuser() {
   case "$1" in
     bash) if [ "$2" = -euc ]; then log "walk $who ${*:5}"; return 0; fi ;;
     find) log "find $who ${*:2} from $PWD"; printf '%s\n' "$KD_FOUND"; return 0 ;;
-    */claude) if [ "${2:-}" = --version ]; then echo "2.1.0 (Claude Code)"; return 0; fi ;;
   esac
   log "runuser $who $1"
 }
@@ -466,6 +467,19 @@ def test_agent_user_joins_the_cabinet_group_except_on_revoke(tmp_path):
     proc, _ = machine.run("--revoke")
     assert proc.returncode == 0, proc.stderr
     assert not any(step.startswith("cabinet ") for step in machine.all_steps)
+
+
+@needs_bash
+def test_prepare_installs_roots_claude_and_clears_the_home_copy_as_its_owner(tmp_path):
+    machine = Machine(tmp_path, "digi-boss", grant=f"read {BACKLOG}")
+    proc, _ = machine.run("--prepare")
+    assert proc.returncode == 0, proc.stderr
+    steps = machine.all_steps
+    assert steps.count("claude install") == 1
+    assert steps.index("claude install") < steps.index("runuser digi-boss bash")  # then the home copy, by the user
+    for mode in ("--grant", "--revoke"):
+        proc, _ = machine.run(mode)
+        assert proc.returncode == 0 and "claude install" not in machine.all_steps, mode
 
 
 @needs_bash

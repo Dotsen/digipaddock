@@ -232,11 +232,20 @@ def _ps_value_next(arg: str) -> bool:
     return first == len(letters) - 1
 
 
+# A width the agent picks (a format's ":N", --cols/--columns/--width) cuts a command line where it likes:
+# "https://user:pass@host" cut before "@", or a bearer token cut short, is no longer a secret the masks recognise
+# (review 26.11.2026), and moving the cut a character at a time would print a password piece by piece.
+PS_WIDTH = re.compile(r":\d|^--(cols|columns|width)(=|$)", re.ASCII)
+
+
 def _ps(args: List[str]) -> List[str]:
     value_next = False
     for arg in args:
         if not PS_ARG.match(arg):
             raise Deny("ps: недопустимый аргумент: " + arg)
+        if PS_WIDTH.search(arg):
+            raise Deny("ps: ширина столбца запрещена (" + arg + ") — обрезанная командная строка прячет пароль от "
+                       "маски; уберите :N, --cols, --columns, --width")
         if value_next:
             value_next = False
             continue
@@ -314,12 +323,26 @@ SYSTEMCTL_VERBS = {"status", "show", "cat", "is-active", "is-failed", "is-enable
                    "list-units", "list-timers", "list-unit-files", "list-sockets", "list-dependencies"}
 
 
+def _no_json(name: str, opts: Opts) -> None:
+    """The journal's json outputs print a field with a non-printable byte (a colour code is enough) as an array of
+    numbers: "password=x" becomes [112,97,…], which no mask reads (review 26.11.2026)."""
+    if any(opt in ("-o", "--output") and (value or "").startswith("json") for opt, value in opts):
+        raise Deny(name + ": вывод json запрещён — сообщение с непечатным байтом json печатает массивом чисел, "
+                          "маска его не читает; используйте -o short-iso, verbose или cat")
+
+
 def _systemctl(args: List[str]) -> List[str]:
-    _, positional = parse_opts(
+    opts, positional = parse_opts(
         args, "alqr", "pPnto",
         ("--all", "--full", "--quiet", "--no-pager", "--no-legend", "--plain", "--value", "--failed",
          "--recursive", "--reverse", "--after", "--before"),
         ("--property", "--lines", "--type", "--state", "--output"))
+    # --value and -P print a property's value without "Name=": the mask of a unit's environment keys on
+    # "Environment=", so its values would come out under the name masks only (review 26.11.2026)
+    if any(opt in ("--value", "-P") for opt, _ in opts):
+        raise Deny("systemctl: --value и -P запрещены — значение без имени свойства маска не узнаёт; "
+                   "читайте systemctl show -p <Свойство> <юнит>: строка Свойство=значение")
+    _no_json("systemctl", opts)
     if not positional or positional[0] not in SYSTEMCTL_VERBS:
         raise Deny("systemctl: только просмотр: " + ", ".join(sorted(SYSTEMCTL_VERBS)))
     for unit in positional[1:]:
@@ -334,19 +357,35 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 JOURNAL_LINES = re.compile(r"^(\+?\d+|all)$", re.ASCII)
 
 
+# never allowed: --vacuum-*, --rotate, --flush, --(smart-)relinquish-var, --sync, --setup-keys,
+# --update-catalog, --cursor-file, --file, -D/--directory, --root, --image, -f/--follow, -M/--machine
+JOURNAL_OPTIONS = dict(
+    flags="abekmqrxlN", valued="unpoSUtgFc",
+    long_flags=("--no-pager", "--all", "--full", "--no-full", "--reverse", "--merge", "--utc", "--no-hostname",
+                "--catalog", "--quiet", "--dmesg", "--list-boots", "--disk-usage", "--pager-end", "--system",
+                "--fields", "--show-cursor"),
+    long_valued=("--unit", "--user-unit", "--priority", "--output", "--since", "--until", "--identifier", "--grep",
+                 "--field", "--cursor", "--after-cursor", "--facility", "--output-fields", "--case-sensitive",
+                 "--exclude-identifier"),
+    long_optional=("--boot", "--lines"),
+    numbers=True)
+# journalctl -g matches the raw journal, so the gate splits its output into entries and drops every entry the masks
+# change (run_journal_grep): only outputs where an entry's further lines are indented, or an entry is one line.
+JOURNAL_GREP_OUTPUTS = frozenset({"short", "short-full", "short-iso", "short-iso-precise", "short-precise",
+                                  "short-monotonic", "short-unix", "short-delta", "with-unit", "verbose"})
+
+
 def _journalctl(args: List[str]) -> List[str]:
-    # never allowed: --vacuum-*, --rotate, --flush, --(smart-)relinquish-var, --sync, --setup-keys,
-    # --update-catalog, --cursor-file, --file, -D/--directory, --root, --image, -f/--follow, -M/--machine
-    opts, positional = parse_opts(
-        args, "abekmqrxlN", "unpoSUtgFc",
-        ("--no-pager", "--all", "--full", "--no-full", "--reverse", "--merge", "--utc", "--no-hostname",
-         "--catalog", "--quiet", "--dmesg", "--list-boots", "--disk-usage", "--pager-end", "--system",
-         "--fields", "--show-cursor"),
-        ("--unit", "--user-unit", "--priority", "--output", "--since", "--until", "--identifier", "--grep",
-         "--field", "--cursor", "--after-cursor", "--facility", "--output-fields", "--case-sensitive",
-         "--exclude-identifier"),
-        ("--boot", "--lines"),
-        numbers=True)
+    opts, positional = parse_opts(args, **JOURNAL_OPTIONS)
+    _no_json("journalctl", opts)
+    if any(opt in ("-g", "--grep") for opt, _ in opts):
+        if any(opt == "--show-cursor" for opt, _ in opts):
+            raise Deny("journalctl: -g с --show-cursor нельзя — курсор назвал бы последнюю совпавшую запись, "
+                       "даже скрытую")
+        outputs = [value for opt, value in opts if opt in ("-o", "--output")]
+        if outputs and outputs[-1] not in JOURNAL_GREP_OUTPUTS:
+            raise Deny("journalctl: -g только с выводом " + ", ".join(sorted(JOURNAL_GREP_OUTPUTS))
+                       + " — шлюз делит его на записи и убирает те, где маска скрыла секрет")
     for opt, value in opts:
         if value is None:
             continue
@@ -368,6 +407,33 @@ def _journalctl(args: List[str]) -> List[str]:
         if not JOURNAL_MATCH.match(word):
             raise Deny("journalctl: недопустимый аргумент: " + word)
     return list(args)
+
+
+def journal_grep(args: Sequence[str]) -> Optional[Tuple[List[str], Optional[int], bool]]:
+    """journalctl -g as the gate runs it: (journalctl's arguments, how many entries to keep — None for all, whether
+    to turn the kept entries back into time order); None without -g.
+
+    The gate keeps its own -n window: journalctl's window of the last N raw matches would hold the entries the gate
+    drops, and which of them fell in it would say whether a secret matched. So journalctl gets --lines=all (it wins
+    over -n and -e, being the last), the newest first when the newest N are wanted, and -q (no "-- No entries --",
+    which would tell a dropped match from none)."""
+    opts, _ = parse_opts(args, **JOURNAL_OPTIONS)
+    if not any(opt in ("-g", "--grep") for opt, _ in opts):
+        return None
+    lines = [value for opt, value in opts if opt in ("-n", "--lines")]
+    count, oldest = None, False
+    if lines:
+        last = "10" if lines[-1] is None else lines[-1]  # a bare --lines is 10
+        if last != "all":
+            count, oldest = int(last.lstrip("+")), last.startswith("+")
+    elif any(opt in ("-e", "--pager-end") for opt, _ in opts):
+        count = 1000  # -e implies -n 1000
+    extra = [] if count is None else ["--lines=all"] + ([] if oldest else ["--reverse"])
+    extra.append("-q")
+    reverse = any(opt in ("-r", "--reverse") for opt, _ in opts)
+    words = list(args)
+    at = words.index("--") if "--" in words else len(words)  # "--" is never a value here: _journalctl refuses it
+    return words[:at] + extra + words[at:], count, count is not None and not oldest and not reverse
 
 
 def _last(args: List[str]) -> List[str]:
@@ -628,8 +694,24 @@ def _find(args: List[str]) -> List[str]:
     return list(args)
 
 
+_CAT = _files("cat", "AbeEnsTtuv")
+CAT_RESHAPE = "AeTtv"
+
+
+def _cat(args: List[str]) -> List[str]:
+    """cat without the forms that print non-printing characters as text: "password<Tab>= x" shown as
+    "password^I= x", or a UTF-8 byte 0xA0 as "M- " (a space inside a value), is no longer a pair the masks recognise
+    (review 26.11.2026)."""
+    opts, _ = parse_opts(args, "AbeEnsTtuv")
+    shaped = sorted({opt for opt, _ in opts if opt[1:] in CAT_RESHAPE})
+    if shaped:
+        raise Deny("cat: " + ", ".join(shaped) + " запрещено — ^I вместо табуляции и M- вместо байтов меняют текст "
+                   "так, что маска не узнаёт секрет; можно -n, -b, -s, -E")
+    return _CAT(args)
+
+
 VALIDATORS.update({
-    "cat": _files("cat", "AbeEnsTtuv"),
+    "cat": _cat,
     "head": _files("head", "qvz", "n", ("--quiet", "--verbose", "--zero-terminated"), ("--lines",),
                    counts=True),
     "tail": _files("tail", "qvz", "n", ("--quiet", "--verbose", "--zero-terminated"), ("--lines",),
@@ -656,7 +738,8 @@ VALIDATORS.update({
 # --- search in files: grep, zgrep, zcat -------------------------------------------
 # The output window is the same 1 MB, but grep searches the whole file: a line past the first megabyte is found;
 # to read on — grep -A N or tail -n +N. A closed list of options; -r/-R/-d/-D/-f/-P/--include/--exclude and the
-# rest are refused.
+# rest are refused. grep never reads a file itself: the gateway feeds it the masked text (run_grep), so a pattern, a
+# count or a file name answers nothing about a hidden value.
 
 # there is no -o/--only-matching: the masks do not recognize a fragment without "name=", "://user:" or "Bearer"
 GREP_FLAGS = "FEinchHlvwxas"
@@ -830,7 +913,7 @@ def _tail(args: List[str]) -> List[str]:
 
 
 VALIDATORS.update({"grep": _grep, "zgrep": _zgrep, "zcat": _zcat, "tail": _tail})
-RUN_AS = {"zcat": "gzip", "zgrep": "grep"}  # zgrep is grep over decompression inside the gateway (run_zgrep), without the zgrep script
+RUN_AS = {"zcat": "gzip", "zgrep": "grep"}  # zgrep is grep over decompression inside the gateway (run_grep), without the zgrep script
 
 
 # --- MySQL ---------------------------------------------------------------------
@@ -1182,17 +1265,47 @@ def _gunzip(path: str, errors: List[str]) -> Iterator[bytes]:
         errors.append("%s: ошибка распаковки: %s" % (path, exc))
 
 
-def run_zgrep(command: List[str], timeout: float = TIMEOUT, limit: int = LIMIT,
-              env: Optional[Dict[str, str]] = None) -> Result:
-    """zgrep without the zgrep script (CVE-2022-1271): the gateway itself decompresses each file into grep's stdin.
+def _read(path: str, errors: List[str]) -> Iterator[bytes]:
+    """A file in chunks; one that cannot be opened, a directory or not a regular file goes to errors as grep says it."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))  # a FIFO must not hang the open
+    except OSError as exc:
+        errors.append("%s: %s" % (path, exc.strerror))
+        return
+    try:
+        mode = os.fstat(fd).st_mode
+        if stat.S_ISDIR(mode):
+            errors.append("%s: Is a directory" % path)
+            return
+        if not stat.S_ISREG(mode):
+            errors.append("%s: не обычный файл" % path)
+            return
+        while True:
+            piece = os.read(fd, 65536)
+            if not piece:
+                return
+            yield piece
+    except OSError as exc:
+        errors.append("%s: %s" % (path, exc.strerror))
+    finally:
+        os.close(fd)
 
-    command is materialize() of the zgrep plan: grep, options, "--", files. The file name goes through --label; with
-    several files and no -h — with -H, as zgrep does. The timeout and the output limit are shared by all files. Exit
-    code: 2 — a failure in at least one file, otherwise 0 if anything matched anywhere, otherwise 1."""
+
+def run_grep(command: List[str], name: str = "grep", timeout: float = TIMEOUT, limit: int = LIMIT,
+             env: Optional[Dict[str, str]] = None) -> Result:
+    """grep and zgrep over the masked text: the gateway reads each file itself (zgrep: decompresses it, without the
+    zgrep script, CVE-2022-1271), masks it as it would mask its output (blind_stream) and feeds that into grep's stdin.
+
+    So a pattern never tests a hidden value: grep -c, -l, -v and a line found or not answer the same whatever the
+    secret is (review 26.11.2026). command is materialize() of the plan: grep, options, "--", files. The file name
+    goes through --label; with several files and no -h — with -H, as grep and zgrep do. The timeout and the output
+    limit are shared by all files. Exit code: 2 — a failure in at least one file, otherwise 0 if anything matched
+    anywhere, otherwise 1."""
     opts, files = _grep_parse(command[1:])
     prefix = command[:len(command) - len(files) - 1]  # without "--" and the files
     if len(files) > 1 and not any(opt in ("-h", "--no-filename") for opt, _ in opts):
         prefix = prefix + ["-H"]
+    quiet = any(opt in ("-s", "--no-messages") for opt, _ in opts)
     deadline = time.monotonic() + timeout
     output: List[bytes] = []
     size, codes, truncated, timed_out = 0, [], False, False
@@ -1202,9 +1315,11 @@ def run_zgrep(command: List[str], timeout: float = TIMEOUT, limit: int = LIMIT,
             timed_out = True
             break
         errors: List[str] = []
+        source = _gunzip(path, errors) if name == "zgrep" else _read(path, errors)
         result = run_limited(prefix + ["--label=" + path], timeout=left, limit=limit - size, env=env,
-                             feed=_gunzip(path, errors))
-        piece = result.output + "".join("zgrep: " + e + "\n" for e in errors).encode("utf-8", "replace")
+                             feed=blind_stream(source, errors))
+        said = [] if quiet and name == "grep" else errors
+        piece = result.output + "".join(name + ": " + e + "\n" for e in said).encode("utf-8", "replace")
         piece = piece[:limit - size]
         output.append(piece)
         size += len(piece)
@@ -1217,6 +1332,81 @@ def run_zgrep(command: List[str], timeout: float = TIMEOUT, limit: int = LIMIT,
             break
     code = 2 if any(c not in (0, 1) for c in codes) else 0 if 0 in codes else 1
     return Result(code, b"".join(output), truncated, timed_out)
+
+
+NO_ENTRIES = b"-- No entries --"
+
+
+def _would_mask(entry: bytes) -> bool:
+    """The output masks would hide something in entry (the cheap search first: most entries have no hint)."""
+    if PEM_MARK not in entry and b"://" not in entry and not _hinted_lines(entry):  # PEM_RE, EDGE_END_RE, the rest
+        return False
+    return redact_counted(entry)[1] > 0
+
+
+def run_journal_grep(command: List[str], count: Optional[int], flip: bool, timeout: float = TIMEOUT,
+                     limit: int = LIMIT, env: Optional[Dict[str, str]] = None) -> Result:
+    """journalctl -g whose answer says nothing about a masked value (review 26.11.2026).
+
+    journalctl matches its pattern against the raw journal, so an entry the masks would change is never a result:
+    whether it matched would say whether its secret fits the pattern. The output (command is journal_grep's) is split
+    into entries — a line indented or starting with "-- " (a catalog text) belongs to the entry above — and the rest
+    are kept, up to count of them (journal_grep asked for the newest first when the newest are wanted; flip turns
+    them back into time order) and up to limit bytes. Exit code: journalctl's own failure if it ended by itself with
+    one, otherwise 0 when an entry is kept and 1 when none is — the same whether nothing matched or only hidden
+    entries did."""
+    proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            env=env, start_new_session=True)
+    kept: List[bytes] = []
+    state = {"size": 0, "truncated": False, "done": False}
+
+    def keep(entry: bytes) -> None:
+        if count is not None and len(kept) >= count:
+            state["done"] = True
+        elif not _would_mask(entry):
+            if state["size"] + len(entry) > limit:
+                state["truncated"] = state["done"] = True
+                return
+            kept.append(entry)
+            state["size"] += len(entry)
+            state["done"] = count is not None and len(kept) >= count
+
+    def pump() -> None:
+        entry: List[bytes] = []
+        for line in iter(proc.stdout.readline, b""):
+            if line.startswith(NO_ENTRIES):  # it would tell "nothing matched" from "only hidden entries matched"
+                continue
+            if entry and line[:1] not in (b" ", b"\t") and not line.startswith(b"-- "):
+                keep(b"".join(entry))
+                entry = []
+                if state["done"]:
+                    return
+            entry.append(line)
+        if entry:
+            keep(b"".join(entry))
+
+    reader = threading.Thread(target=pump)
+    reader.daemon = True
+    reader.start()
+    deadline = time.monotonic() + timeout
+    timed_out = ran_out = False
+    try:
+        while reader.is_alive():
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            reader.join(0.1)
+        if not timed_out and not state["done"]:
+            try:
+                proc.wait(timeout=max(deadline - time.monotonic(), 0.1))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+        ran_out = proc.poll() is not None and not state["done"]  # journalctl ended by itself
+    finally:
+        _stop(proc)
+    reader.join(5)
+    code = proc.returncode if ran_out and proc.returncode not in (0, 1) else 0 if kept else 1
+    return Result(code, b"".join(kept[::-1] if flip else kept), bool(state["truncated"]), timed_out)
 
 
 # --- masking secrets in the output ------------------------------------------------
@@ -1268,21 +1458,35 @@ KV_RE = re.compile(
 
 
 # A unit's environment (systemctl show / systemctl cat: Environment=A=1 "B=two words"): every value is masked, its name
-# stays — the masks by name would leave a secret under a plain name (review 04.11.2026).
-ENV_LINE_RE = re.compile(rb"^([ \t]*Environment=)([^\n]*)$", re.M)
+# stays — the masks by name would leave a secret under a plain name (review 04.11.2026). systemctl cat prints a unit
+# file as written: systemd allows spaces around "=" and continues a line that ends with "\" (review 26.11.2026).
+ENV_LINE_RE = re.compile(rb"^([ \t]*Environment[ \t]*=[ \t]*)((?:[^\n]*\\\n)*[^\n]*)$", re.M)
 ENV_NAME_RE = re.compile(rb"^[A-Za-z_][A-Za-z0-9_]*=")
+CONTINUED = b"\\\n"
+# SetCredential=ID:VALUE puts the secret itself into the unit file; the ID stays.
+CREDENTIAL_RE = re.compile(rb"^([ \t]*SetCredential[ \t]*=[ \t]*[^:\n]*:)[^\n]+$", re.M)
+
+
+def _env_gap(line: bytes, i: int) -> int:
+    """The length of the separator at i (a space, a tab, a continued line), 0 inside an assignment."""
+    if line[i:i + 2] == CONTINUED:
+        return 2
+    return 1 if line[i:i + 1] in (b" ", b"\t", b"\n") else 0
 
 
 def _env_values(line: bytes) -> Tuple[bytes, int]:
-    """Environment=…'s assignments with their values masked; quotes keep a value with spaces in one assignment."""
+    """Environment=…'s assignments with their values masked; quotes keep a value with spaces in one assignment.
+
+    A masked quoted value keeps the continued lines it spanned, so the text keeps its line count."""
     out, masked, i = [], 0, 0
     while i < len(line):
-        if line[i:i + 1] in (b" ", b"\t"):
-            out.append(line[i:i + 1])
-            i += 1
+        gap = _env_gap(line, i)
+        if gap:
+            out.append(line[i:i + gap])
+            i += gap
             continue
         j, quoted = i, False
-        while j < len(line) and (quoted or line[j:j + 1] not in (b" ", b"\t")):
+        while j < len(line) and (quoted or not _env_gap(line, j)):
             if line[j:j + 1] == b'"':
                 quoted = not quoted
             j += 1
@@ -1290,7 +1494,8 @@ def _env_values(line: bytes) -> Tuple[bytes, int]:
         bare = token[1:] if token.startswith(b'"') else token
         name = ENV_NAME_RE.match(bare)
         if name and len(bare) > name.end() and bare[name.end():] != b'"':
-            out.append(token[:len(token) - len(bare)] + name.group(0) + MASK + (b'"' if token.startswith(b'"') else b""))
+            out.append(token[:len(token) - len(bare)] + name.group(0) + MASK + CONTINUED * token.count(b"\n")
+                       + (b'"' if token.startswith(b'"') else b""))
             masked += 1
         else:
             out.append(token)
@@ -1298,16 +1503,32 @@ def _env_values(line: bytes) -> Tuple[bytes, int]:
     return b"".join(out), masked
 
 
-def redact_counted(data: bytes) -> Tuple[bytes, int]:
-    """(the output with secrets masked, how many places were masked)."""
-    total = [0]
+def _fixed(replacement: bytes, total: List[int]) -> Callable:
+    def sub(match) -> bytes:
+        total[0] += 1
+        return match.expand(replacement)
+    return sub
 
-    def fixed(replacement: bytes) -> Callable:
-        def sub(match) -> bytes:
-            total[0] += 1
-            return match.expand(replacement)
-        return sub
 
+def _sub(regex, replacement: bytes) -> Callable[[bytes, List[int]], bytes]:
+    def apply(data: bytes, total: List[int]) -> bytes:
+        return regex.sub(_fixed(replacement, total), data)
+    return apply
+
+
+def _mysql_lines(data: bytes, total: List[int]) -> bytes:
+    return MYSQL_LINE_RE.sub(lambda match: MYSQL_P_RE.sub(_fixed(rb"\1***", total), match.group(0)), data)
+
+
+def _env_lines(data: bytes, total: List[int]) -> bytes:
+    def env_line(match) -> bytes:
+        values, masked = _env_values(match.group(2))
+        total[0] += masked
+        return match.group(1) + values
+    return ENV_LINE_RE.sub(env_line, data)
+
+
+def _key_values(data: bytes, total: List[int]) -> bytes:
     def key_value(match) -> bytes:
         whole = match.group(0)
         if match.group("name").lower() == b"key" and b":" in match.group("sep") and not match.group("q1"):
@@ -1319,31 +1540,184 @@ def redact_counted(data: bytes) -> Tuple[bytes, int]:
             return whole[:match.start("q") - match.start()] + match.group("q") + MASK + match.group("end")
         total[0] += 1
         return whole[:match.start("uv") - match.start()] + MASK
+    return KV_RE.sub(key_value, data)
 
-    def mysql_line(match) -> bytes:
-        return MYSQL_P_RE.sub(fixed(rb"\1***"), match.group(0))
 
-    data = PEM_RE.sub(fixed(_PEM_MASKED), data)
-    data = EDGE_END_RE.sub(fixed(b"://***"), data)
-    data = URL_CREDS_RE.sub(fixed(rb"\1***:***@"), data)
-    data = BEARER_RE.sub(fixed(rb"\1***"), data)
-    data = BASIC_RE.sub(fixed(rb"\1***"), data)
-    data = TELEGRAM_RE.sub(fixed(b"***"), data)
-    data = MYSQL_LINE_RE.sub(mysql_line, data)
-    data = OPT_P_RE.sub(fixed(rb"\1\2***"), data)
-    data = OPT_U_RE.sub(fixed(rb"\1\2\3***"), data)
-    def env_line(match) -> bytes:
-        values, masked = _env_values(match.group(2))
-        total[0] += masked
-        return match.group(1) + values
+class LineMask(NamedTuple):
+    """A mask that keeps to one line (or to one unit-file line continued with "\\"), with its hint: what its every
+    match needs in the lower-cased line — one of words (and then matching at that word, if given), or hint."""
+    name: str
+    apply: Callable[[bytes, List[int]], bytes]
+    words: Tuple[bytes, ...]
+    then: Optional[Callable]  # re.match of a compiled pattern
+    hint: Optional[Callable]  # re.finditer of a compiled pattern
 
-    data = ENV_LINE_RE.sub(env_line, data)
-    data = KV_RE.sub(key_value, data)
-    return data, total[0]
+
+def _line_mask(name: str, apply: Callable[[bytes, List[int]], bytes], words: Sequence[bytes] = (),
+               then: Optional[bytes] = None, hint: Optional[bytes] = None) -> LineMask:
+    """A mask without a hint is refused: blind() would never run it, and grep would see its secrets."""
+    if not words and hint is None:
+        raise ValueError("line mask %s has no hint" % name)
+    return LineMask(name, apply, tuple(words), re.compile(then).match if then else None,
+                    re.compile(hint).finditer if hint else None)
+
+
+# The line masks in the order they are applied. A hint is a necessary condition, never a guess: blind() runs a mask
+# only over the lines holding its hint, so a match without it would stay unmasked in what grep sees
+# (test_every_mask_has_its_own_hint).
+LINE_MASKS = (
+    _line_mask("url_creds", _sub(URL_CREDS_RE, rb"\1***:***@"), [b"://"], then=rb"://[^\s/@:'\"]*:[^\s/@'\"]*@"),
+    _line_mask("bearer", _sub(BEARER_RE, rb"\1***"), [b"bearer"]),
+    _line_mask("basic", _sub(BASIC_RE, rb"\1***"), [b"basic"]),
+    _line_mask("telegram", _sub(TELEGRAM_RE, b"***"), hint=rb":[a-z0-9_-]{35}"),
+    _line_mask("mysql", _mysql_lines, [b"mysql"]),
+    _line_mask("opt_p", _sub(OPT_P_RE, rb"\1\2***"), [b"-p ", b"-p\t", b"--pass"]),
+    _line_mask("opt_u", _sub(OPT_U_RE, rb"\1\2\3***"), [b"-u ", b"-u\t", b"-u=", b"--user"]),
+    _line_mask("environment", _env_lines, [b"environment"]),
+    _line_mask("set_credential", _sub(CREDENTIAL_RE, rb"\1***"), [b"setcredential"]),
+    # every name of _SECRET_NAMES ends with one of these, then comes KV_RE's separator
+    _line_mask("key_value", _key_values, [b"key", b"pass", b"pwd", b"sig", b"secret", b"token"],
+               then=rb"(?:key|secret|token|signature|password|passwd|pass|pwd|sig)[\"']?[ \t]*[=:,]"),
+)
+
+
+def _mask_lines(data: bytes, total: List[int]) -> bytes:
+    """Every mask that keeps to one line: all but PEM_RE and EDGE_END_RE. None of them adds or removes a line break,
+    so the masked text keeps its line numbers."""
+    for mask in LINE_MASKS:
+        data = mask.apply(data, total)
+    return data
+
+
+def redact_counted(data: bytes) -> Tuple[bytes, int]:
+    """(the output with secrets masked, how many places were masked)."""
+    total = [0]
+    data = PEM_RE.sub(_fixed(_PEM_MASKED, total), data)
+    data = EDGE_END_RE.sub(_fixed(b"://***", total), data)
+    return _mask_lines(data, total), total[0]
 
 
 def redact(data: bytes) -> bytes:
     return redact_counted(data)[0]
+
+
+# --- what a pattern sees: the masked text ------------------------------------------
+# A pattern run over the raw file answers about the secret even when no secret is printed: grep -c '^password=a'
+# says 0 or 1, and the presence of a masked line says the same (review 26.11.2026). grep and zgrep therefore match the
+# text the gateway would show — the file through _mask_lines, line for line. Running the masks over every byte in
+# Python is slow (3-6 MB/s), so each mask of LINE_MASKS runs only over the lines holding its own hint, found by a
+# byte search; a line without it is the same masked. An access log with referrers, user agents and paths like
+# /signin goes at about 80-130 MB/s (8 MB, review 26.11.2026); a log with "token=" on every line at about 10 MB/s.
+BLIND_BLOCK = 1 << 20
+BLIND_LINE_MAX = 64 << 20  # a "line" longer than this is not read on: it could not be masked in one piece
+
+
+def _line_end(data: bytes, pos: int) -> int:
+    """The end of the line at pos (its "\\n" or the end of data), over lines continued with a trailing "\\"."""
+    end = data.find(b"\n", pos)
+    while end > 0 and data[end - 1:end] == b"\\":
+        end = data.find(b"\n", end + 1)
+    return len(data) if end < 0 else end
+
+
+def _hits(mask: LineMask, low: bytes) -> List[int]:
+    """Where mask's hint is in low (lower-cased data): at least one place on every line holding it."""
+    hits = [found.start() for found in mask.hint(low)] if mask.hint else []
+    for word in mask.words:
+        at = low.find(word)
+        while at >= 0:
+            if mask.then is None or mask.then(low, at):
+                hits.append(at)
+                line_end = low.find(b"\n", at)
+                at = -1 if line_end < 0 else low.find(word, line_end)
+            else:
+                at = low.find(word, at + 1)
+    return hits
+
+
+def _spans(data: bytes, hits: List[int]) -> List[Tuple[int, int]]:
+    """(start, end) of the lines holding hits, in order and apart."""
+    spans: List[Tuple[int, int]] = []
+    end = -1
+    for at in sorted(hits):
+        if at < end:  # on a line already taken (a continued line too)
+            continue
+        end = _line_end(data, at)
+        spans.append((data.rfind(b"\n", 0, at) + 1, end))
+    return spans
+
+
+def _hinted_lines(data: bytes) -> List[Tuple[int, int]]:
+    """(start, end) of the lines some line mask could change. Where none could, none does: the first mask to change
+    anything had its hint in data as it is."""
+    low = data.lower()
+    return _spans(data, [at for mask in LINE_MASKS for at in _hits(mask, low)])
+
+
+def _apply_on(data: bytes, spans: List[Tuple[int, int]], mask: LineMask) -> bytes:
+    """data with mask applied to the lines of spans only — data itself when it changed nothing."""
+    joined = b"\n".join(data[start:end] for start, end in spans)
+    masked = mask.apply(joined, [0])
+    if masked == joined:
+        return data
+    lines = masked.split(b"\n")
+    if len(lines) != joined.count(b"\n") + 1:  # the mask changed the line count: apply it to everything instead
+        return mask.apply(data, [0])
+    out, last, k = [], 0, 0
+    for start, end in spans:
+        count = data.count(b"\n", start, end) + 1
+        out.append(data[last:start])
+        out.append(b"\n".join(lines[k:k + count]))
+        k += count
+        last = end
+    out.append(data[last:])
+    return b"".join(out)
+
+
+def blind(data: bytes) -> bytes:
+    """Whole lines as a pattern may see them: _mask_lines(data) byte for byte, each mask run only on its lines."""
+    low = data.lower()
+    for mask in LINE_MASKS:
+        spans = _spans(data, _hits(mask, low))
+        if spans:
+            masked = _apply_on(data, spans, mask)
+            if masked is not data:
+                data, low = masked, masked.lower()
+    return data
+
+
+def _cut(data: bytes) -> int:
+    """Where whole lines end in data: after a "\\n" that does not continue a line; 0 — nowhere yet."""
+    end = data.rfind(b"\n")
+    while end > 0 and data[end - 1:end] == b"\\":
+        end = data.rfind(b"\n", 0, end)
+    return end + 1
+
+
+def blind_stream(chunks: Iterable[bytes], errors: List[str]) -> Iterator[bytes]:
+    """chunks as blind() sees them, in blocks of whole lines. A line longer than BLIND_LINE_MAX ends the stream
+    (into errors): its secret could fall across two blocks."""
+    pending: List[bytes] = []
+    size = 0
+    for chunk in chunks:
+        pending.append(chunk)
+        size += len(chunk)
+        if size < BLIND_BLOCK or (b"\n" not in chunk and size <= BLIND_LINE_MAX):
+            continue  # no new line has ended
+        data = b"".join(pending)
+        cut = _cut(data)
+        if not cut and len(data) > BLIND_LINE_MAX:
+            cut = data.rfind(b"\n") + 1
+            if not cut:
+                errors.append("строка длиннее %d МБ — дальше файл не читается" % (BLIND_LINE_MAX >> 20))
+                return
+        if cut:
+            yield blind(data[:cut])
+            data = data[cut:]
+        pending, size = [data], len(data)
+    data = b"".join(pending)
+    if data:
+        yield blind(data)
 
 
 def _safe(text: str) -> str:
@@ -1378,6 +1752,9 @@ def main(argv=None, environ=None, out=None, err=None) -> int:
     try:
         plan = check_data(raw) if data else check(raw)
         sqlite = plan.argv[0] == "sqlite3"  # read in-process, no binary to find
+        journal = journal_grep(plan.argv[1:]) if plan.argv[0] == "journalctl" else None
+        if journal is not None:
+            plan = Plan(["journalctl"] + journal[0], False)
         command = [] if sqlite else materialize(plan)
     except Deny as exc:
         _log("%sdeny (%s): %s" % (tag, exc, raw))
@@ -1389,11 +1766,17 @@ def main(argv=None, environ=None, out=None, err=None) -> int:
         timeout = SQLITE_TIMEOUT
         _cap_memory()
         result = run_sqlite(plan.argv[1], plan.argv[2])
-    elif plan.argv[0] == "zgrep":
-        result = run_zgrep(command, env=CHILD_ENV)
+    elif plan.argv[0] in ("grep", "zgrep"):
+        result = run_grep(command, plan.argv[0], env=CHILD_ENV)
+    elif journal is not None:
+        result = run_journal_grep(command, journal[1], journal[2], env=CHILD_ENV)
     else:
         result = run_limited(command, timeout=timeout, env=CHILD_ENV)
     output, hidden = redact_counted(result.output)
+    if plan.argv[0] in ("grep", "zgrep"):
+        # grep read the masked text, so its lines come masked already: count the marks (a URL's "***:***@" is one;
+        # a file's own "***" counts too)
+        hidden = output.count(MASK) - output.count(b"***:***@")
     out.write(output)
     if hidden:
         _write(out, "\n[agent-ro-gate: скрыто секретов: %d]\n" % hidden)

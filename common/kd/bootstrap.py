@@ -127,6 +127,10 @@ def steps(install, projects, where, *, host, opt=OPT) -> Dict[str, List[Step]]:
     out["base"].append(Step(
         "base", "foundation", stage + ("--check",),
         (stage + ("--prefix", prefix, "--commands", install.naming["commands"], "--cards", install.naming["cards"]),)))
+    # root's one Claude Code for every agent (KD-9474): a step of its own, so a new pinned build is installed
+    # without running the foundation again
+    out["base"].append(Step("base", "Claude Code", sh("common/install/claude_setup.sh", "check"),
+                            (sh("common/install/claude_setup.sh", "install"),)))
     out["base"].append(Step("base", "session host", sh("common/install/session_host_setup.sh", "check"),
                             (sh("common/install/session_host_setup.sh", "install"),)))
 

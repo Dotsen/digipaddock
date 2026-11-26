@@ -96,6 +96,8 @@ PLATFORM_DENY = (
     "Bash(ssh *)",
     "Bash(su *)",
     "Bash(sudo *)",
+    # Claude Code loads the rules of a .claude/rules/ as instructions: no session writes one anywhere (KD-9482)
+    "Edit(//**/.claude/rules/**)",
     "Monitor",
     "Read(//**/.git-credentials)",
     "Skill(hindsight-coding-agent)",
@@ -171,10 +173,24 @@ AGENT_DIR_EDIT_DENY = (
     "work/.mcp.json",
     "work/CLAUDE.local.md",
     "work/CLAUDE.md",
+    # a repository at work/'s top (WORK_GIT below), and a CLAUDE.local.md anywhere under work/: Claude Code loads a
+    # folder's CLAUDE.md and CLAUDE.local.md once a file there is read, so no session leaves one for a later session
+    # to obey (KD-9482); a folder's CLAUDE.md is denied by WORK_INSTRUCTIONS below
+    "work/.git",
+    "work/.git/**",
+    "work/**/CLAUDE.local.md",
     # the shared notes only through kd-notes add (appended under a lock), the split's original never
     "memory/notes.md",
     "memory/legacy/**",
 )
+# A repository at work/'s top would be the one git finds for the session's cwd, and Claude Code runs git there outside
+# the sandbox (kd.launch refuses a launch while there is one). Clones live a level below, work/<Repo>/.git.
+WORK_GIT = ".git"
+# A folder's CLAUDE.md under work/: a developer's clones (work/<Repo>/…) keep their tracked CLAUDE.md editable for a
+# pull request, so the holder of git.develop is denied it in its temp folder only, which holds no clone.
+WORK_INSTRUCTIONS = "work/**/CLAUDE.md"
+CLONE_HOLDER = "git.develop"
+CLONE_HOLDER_INSTRUCTIONS = "work/tmp/**/CLAUDE.md"
 # what a session edits of its folder — its own notes (memory/tasks/<card>.md, memory/chats/<thread>.md)
 SESSION_NOTES = ("memory/chats/**", "memory/tasks/**")
 SANDBOX_SHARED_NOTES = ("memory/legacy", "memory/notes.md")
@@ -444,12 +460,14 @@ def _platform_rules(
     }
     rules.deny |= set(PLATFORM_DENY)
     rules.deny |= {f"Edit(/{agent.folder}/{item})" for item in AGENT_DIR_EDIT_DENY}
+    instructions = CLONE_HOLDER_INSTRUCTIONS if CLONE_HOLDER in agent.held else WORK_INSTRUCTIONS
+    rules.deny.add(f"Edit(/{agent.folder}/{instructions})")
     rules.deny_write |= {f"{agent.folder}/{item}" for item in SANDBOX_SHARED_NOTES}
     rules.deny |= {f"Read(/{agent.home}/{item})" for item in HOME_READ_DENY}
     rules.deny |= {f"Edit(/{agent.home}/{item})" for item in HOME_EDIT_DENY}
     rules.deny_read |= {f"{agent.home}/{item}" for item in HOME_SANDBOX_DENY_READ}
     rules.deny_write |= {f"{agent.home}/{item}" for item in HOME_SANDBOX_DENY_WRITE}
-    rules.deny_write |= {f"{agent.work}/{item}" for item in WORK_PLACEHOLDERS}
+    rules.deny_write |= {f"{agent.work}/{item}" for item in (*WORK_PLACEHOLDERS, WORK_GIT)}
     rules.deny_read |= set(RUN_DIRS)
     rules.deny_write |= set(RUN_DIRS)
     rules.deny.add(_path_rule("Edit", agent.code, "dir"))

@@ -21,7 +21,9 @@
                                  the turn ends: the next turn, the waits, Review or Done. wait_until --until
                                  2026-11-08T12:00Z puts your card off until that moment: with its time
                                  zone (Z or an offset), 10 minutes to 7 days away; the cabinet wakes you then, or a
-                                 person's message in the card's thread earlier. wait_dependency --council <id>
+                                 person's message in the card's thread earlier. A card the owner or @boss put off
+                                 stays put off until their time: your moment wakes you no earlier than that.
+                                 wait_dependency --council <id>
                                  waits for the round of your card's council to end; --deploy api:staging waits
                                  for a finished run of that environment holding the commit (by default the
                                  card's last merged PR in the project): success wakes you, failure too, with

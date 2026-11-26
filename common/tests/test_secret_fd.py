@@ -114,13 +114,22 @@ CHILD = (
 )
 
 
+# a program root alone may change, as the installed Claude Code is (KD-9474): the system's interpreter, not a venv's
+SYSTEM_PYTHON = os.path.realpath("/usr/bin/python3")
+needs_root_python = pytest.mark.skipif(
+    secret_fd.root_program(SYSTEM_PYTHON) is not None,
+    reason="no root-owned /usr/bin/python3",
+)
+
+
+@needs_root_python
 def test_main_execs_the_program_with_the_descriptor_only():
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "CLAUDE_CODE_OAUTH_TOKEN": "tok-9",
     }
     done = subprocess.run(
-        [sys.executable, "-I", str(MODULE), sys.executable, "-c", CHILD],
+        [sys.executable, "-I", str(MODULE), SYSTEM_PYTHON, "-I", "-c", CHILD],
         env=env,
         capture_output=True,
         text=True,
@@ -145,3 +154,23 @@ def test_main_without_a_program_or_with_a_missing_one():
         timeout=60,
     )
     assert done.returncode == 127 and "/nonexistent/claude" in done.stderr
+    assert "/nonexistent is missing" in done.stderr
+
+
+def test_main_hands_no_secret_to_a_program_its_user_could_replace(tmp_path):
+    # KD-9474: Claude Code in the agent's home (~/.local/bin/claude) was the agent's to swap for one that keeps the token
+    planted = tmp_path / "claude"
+    planted.write_text("#!/bin/sh\necho ran > \"$0.ran\"\n", encoding="utf-8")
+    planted.chmod(0o755)
+    for program in (str(planted), "claude", "../bin/claude"):
+        done = subprocess.run(
+            [sys.executable, "-I", str(MODULE), program],
+            env={"PATH": f"{tmp_path}:/usr/bin:/bin", "CLAUDE_CODE_OAUTH_TOKEN": "tok-9"},
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert done.returncode == 126, (program, done.stderr)
+        assert "refused" in done.stderr and "tok-9" not in done.stderr + done.stdout
+    assert not (tmp_path / "claude.ran").exists()

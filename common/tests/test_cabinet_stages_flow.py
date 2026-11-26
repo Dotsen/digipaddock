@@ -346,3 +346,8 @@ def test_review_of_an_aggregate_with_open_stages_is_refused(cab):
     assert exc.value.kind == "refused" and kids["a"].id in str(exc.value) and kids["b"].id in str(exc.value)
     # review M8: what to do instead — the stages move it, the turn ends without an outcome
     assert "end the turn without an outcome" in str(exc.value)
+    # kd-task edit --status Review passes the same guards as the finish (KD-9479)
+    with pytest.raises(api.ApiError) as exc:
+        cab.call("digi", {"op": "worker.edit", "agent": "dev", "card": parent.id, "status": "Review"})
+    assert exc.value.kind == "refused" and kids["a"].id in str(exc.value)
+    assert cab.store.card(parent.id).status == "In Progress"

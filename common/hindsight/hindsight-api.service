@@ -12,7 +12,8 @@ WorkingDirectory=/opt/hindsight
 EnvironmentFile=/etc/hindsight/coding-agent.env
 # the host's Claude token for Hindsight's Claude calls; without it, the base user's own login
 EnvironmentFile=-/etc/digipaddock/claude.env
-Environment=PATH=/opt/hindsight/venv/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=4 DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+# claude: root's one install (KD-9474), found before any copy in the base user's home
+Environment=PATH=/opt/hindsight/venv/bin:/opt/digipaddock-claude:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=4 DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ExecStart=/opt/hindsight/venv/bin/hindsight-api
 Restart=always
 RestartSec=30

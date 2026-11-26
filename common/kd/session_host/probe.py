@@ -12,7 +12,7 @@ import json
 import re
 from typing import List, Mapping
 
-from kd import claude_token, llm_models, redact
+from kd import claude_code, claude_token, llm_models, redact
 from kd.session_host import claude
 from kd.worker_packs import ISOLATION_ARGS
 
@@ -29,8 +29,9 @@ def unit(probe_id: str) -> str:
 
 
 def argv(unit_name: str, user: str, spec: Mapping, timeout_s: int = TIMEOUT_S) -> List[str]:
-    """The probe's transient unit: the base user's ``claude`` in its home, on the kind's key and the model's
-    environment, apart from any agent's settings; nothing of the request reaches the line but the checked spec."""
+    """The probe's transient unit under the base user: root's ``claude`` (``kd.claude_code``, never a copy in a
+    home: it gets the key), on the kind's key and the model's environment, apart from any agent's settings; nothing
+    of the request reaches the line but the checked spec."""
     if not UNIT.fullmatch(unit_name or ""):
         raise ValueError(f"bad unit name {unit_name!r}")
     if not claude.USER.fullmatch(user or "") or user == "root":
@@ -49,7 +50,7 @@ def argv(unit_name: str, user: str, spec: Mapping, timeout_s: int = TIMEOUT_S) -
         "-p", "NoNewPrivileges=yes",
         *claude.setenv_args({**(llm_models.environment(spec) if paid else {}), "DISABLE_AUTOUPDATER": "1"}),
         # the key goes to claude by a pipe (kd.secret_fd), not in its environ
-        "/usr/bin/python3", "-I", SECRET_FD, f"/home/{user}/.local/bin/claude", "-p", PROMPT, "--model", model, "--output-format", "json",
+        "/usr/bin/python3", "-I", SECRET_FD, claude_code.BINARY, "-p", PROMPT, "--model", model, "--output-format", "json",
         "--max-turns", "1", *ISOLATION_ARGS, "--no-session-persistence",
     ]
 

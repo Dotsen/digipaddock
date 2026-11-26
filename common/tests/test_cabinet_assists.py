@@ -378,6 +378,10 @@ def test_review_and_done_refused_while_help_open(cab):
     request(cab, record)
     assert "open help" in failing("refused", lead_finish, cab, record, outcome="review", note="готово")
     assert "open help" in failing("refused", lead_finish, cab, record, outcome="done", note="готово")
+    # kd-task edit --status Review passes the same guards as the finish (KD-9479)
+    assert "open help" in failing("refused", cab.call, BASE, {"op": "worker.edit", "agent": "dev",
+                                                             "card": record.id, "status": "Review"})
+    assert cab.store.card(record.id).status == "In Progress"
 
 
 def test_reassign_cancels_help_and_drops_command(cab):

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -I
 """kd-permlog — the PermissionRequest hook (managed-settings): every permission prompt of any agent goes as a JSON line
 into the private audit /var/log/digipaddock-permission/permission.jsonl. Not into the system journal — all agents read
 that through kd-host-read. To look, as root on the factory host: tail /var/log/digipaddock-permission/permission.jsonl.

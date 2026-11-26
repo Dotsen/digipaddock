@@ -13,7 +13,8 @@ compiled policy is ``<agent folder>/.claude/policy.json``, byte for byte as
 ``kd.policy.render_policy`` writes it. A missing, untrusted, non-canonical or malformed
 policy, a policy of an older schema, a sandbox weaker than fail-closed, an unknown model
 or an unsafe ``work/`` (an agent-owned ``.claude/`` or ``.mcp.json`` in it included:
-Claude Code loads them from the cwd) refuses the launch: nothing falls back to other
+Claude Code loads them from the cwd; and any ``.git`` at its top: Claude Code runs git in
+its cwd outside the sandbox) refuses the launch: nothing falls back to other
 settings or to an unsandboxed session. The full policy check
 (``check_policy`` against the registry) belongs to the installer; the launcher checks
 what it hands over.
@@ -51,6 +52,9 @@ WORK_PROJECT_CONFIG = {".claude": "dir", ".mcp.json": "file"}
 # log): the agent's own work/.claude holding only this directory is not project config,
 # nor are the empty read-only mount points the sandbox keeps there while a command runs.
 WORK_RUNTIME_DIRS = frozenset({".cc-writes"})
+# A repository at work/'s top is the one git finds for the session's cwd, and Claude Code runs git there outside
+# the sandbox: its config could name an fsmonitor or an ssh program. Clones live a level below, work/<Repo>/.git.
+WORK_GIT = ".git"
 # Group or other write bits; a POSIX ACL that grants write shows up in the group bits.
 SHARED_WRITE = stat.S_IWGRP | stat.S_IWOTH
 
@@ -478,6 +482,10 @@ def _check_work(fs: Filesystem, work: str, uid: int) -> None:
         runtime = _runtime_only if kind == "dir" else _mount_point
         if not runtime(fs, path, uid):
             raise LaunchError(f"{path} must be absent or root's")
+    # No .git of any kind or owner — directory, gitfile or link; only the sandbox's mount point for the denied path.
+    path = f"{work}/{WORK_GIT}"
+    if fs.node(path) is not None and not _mount_point(fs, path, uid):
+        raise LaunchError(f"{path} must be absent: no repository at the top of work/ (clones live in work/<Repo>/)")
 
 
 def _mount_point(fs: Filesystem, path: str, uid: int) -> bool:

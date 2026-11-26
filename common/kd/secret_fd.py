@@ -16,9 +16,13 @@ no descriptor at all; two keys for one descriptor refuse the start.
 
 ``python3 -I secret_fd.py <program> [args…]`` moves them and execs the program (agent-launch, the session host's
 probe); the root worker runner calls ``move`` itself and passes the descriptors to its child.
+
+The program is named by its absolute path and must be root's (``root_program``): a program its user could replace
+would get the secret it is handed — the reason Claude Code is installed under ``/opt``, never in the home (KD-9474).
 """
 
 import os
+import stat
 import sys
 
 FD_VARIABLES = {
@@ -81,10 +85,47 @@ def move(env):
     return out, fds
 
 
+def root_program(path, lstat=os.lstat):
+    """Why ``path`` may not be handed a secret, or None: a plain absolute path (no ``.``, ``..`` or empty part,
+    so no PATH lookup either), with no symlink anywhere on it, whose every directory and the file itself root owns
+    and only root may write (group or other write — a POSIX ACL's too — refuses), the file a regular executable."""
+    if not isinstance(path, str) or not path.startswith("/") or path == "/" \
+            or any(part in ("", ".", "..") for part in path.split("/")[1:]):
+        return f"{path!r} is not a plain absolute path"
+    parts = path.split("/")[1:]
+    chain = ["/"] + ["/" + "/".join(parts[: i + 1]) for i in range(len(parts))]
+    info = None
+    for each in chain:
+        try:
+            info = lstat(each)
+        except FileNotFoundError:
+            return f"{each} is missing"
+        except OSError as exc:
+            return f"{each}: {exc.strerror or exc.__class__.__name__}"
+        if stat.S_ISLNK(info.st_mode):
+            return f"{each} is a symlink"
+        if each != path and not stat.S_ISDIR(info.st_mode):
+            return f"{each} is not a directory"
+        if each == path and not stat.S_ISREG(info.st_mode):
+            return f"{each} is not a regular file"
+        if info.st_uid != 0:
+            return f"{each} is not root's"
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            return f"{each} is writable by others than root"
+    if not info.st_mode & stat.S_IXUSR:
+        return f"{path} is not executable"
+    return None
+
+
 def main(argv):
     if not argv:
         print("usage: secret_fd.py <program> [args…]", file=sys.stderr)
         return 2
+    why = root_program(argv[0])
+    if why:
+        print(f"secret_fd: {argv[0]!r} refused: {why} — a secret goes only to a program root alone may change",
+              file=sys.stderr)
+        return 127 if why.endswith(" is missing") else 126
     try:
         env, fds = move(os.environ)
     except (OSError, ValueError) as exc:
@@ -96,7 +137,7 @@ def main(argv):
     for fd in fds:
         os.set_inheritable(fd, True)
     try:
-        os.execvpe(argv[0], argv, env)
+        os.execve(argv[0], argv, env)
     except OSError as exc:
         print(f"secret_fd: {argv[0]}: {exc.strerror}", file=sys.stderr)
         return 127

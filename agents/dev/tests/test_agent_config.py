@@ -387,8 +387,10 @@ def test_work_root_instructions_and_settings_denied_to_edit():
     for rule in (f"Edit(/{WORK}/CLAUDE.md)", f"Edit(/{WORK}/CLAUDE.local.md)", f"Edit(/{WORK}/.claude/**)",
                  f"Edit(/{WORK}/.mcp.json)"):
         assert rule in SETTINGS["deny"], rule
-    # the agent edits CLAUDE.md of the clones in a PR — nothing forbids them
-    assert not any(r.startswith(f"Edit(/{WORK}/**/CLAUDE") for r in SETTINGS["deny"])
+    # the agent edits CLAUDE.md of the clones in a PR: a folder's CLAUDE.md is denied in the temp folder only, which
+    # holds no clone; a CLAUDE.local.md everywhere (KD-9482)
+    nested = sorted(r for r in SETTINGS["deny"] if r.startswith(f"Edit(/{WORK}/") and "/**/CLAUDE" in r)
+    assert nested == [f"Edit(/{WORK}/**/CLAUDE.local.md)", f"Edit(/{WORK}/tmp/**/CLAUDE.md)"]
 
 
 def test_claude_md_texts_and_attachments_go_to_work_tmp():

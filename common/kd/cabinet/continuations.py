@@ -76,11 +76,25 @@ def _since(ctx, seconds: int) -> str:
 
 
 def _window(ctx, record) -> list:
-    """When the queued continuations counted in the card's window were created, oldest first."""
+    """When the turns counted in the card's window were asked for, oldest first: its queued continuations and the
+    signals an agent queued for itself on it (``command.enqueue`` — KD-9479), which start turns just the same."""
+    since = _since(ctx, ctx.pipeline().window_s)
     return [r[0] for r in ctx.store._conn.execute(
-        "SELECT created FROM continuations WHERE card=? AND state='queued' AND created>=? ORDER BY created, rowid",
-        (record.id, _since(ctx, ctx.pipeline().window_s)),
+        "SELECT created FROM continuations WHERE card=? AND state='queued' AND created>=?"
+        " UNION ALL SELECT created FROM commands WHERE card=? AND kind='signal' AND initiator='agent:' || agent"
+        " AND created>=? ORDER BY 1",
+        (record.id, since, record.id, since),
     ).fetchall()]
+
+
+def self_signal_refusal(ctx, record) -> Optional[str]:
+    """Why an agent may not queue one more signal for itself on the card now, or None: the card's window is full
+    (``per_window`` turns in ``window_s``, its continuations counted with them) — in either mode of the pipeline."""
+    config = ctx.pipeline()
+    if len(_window(ctx, record)) >= config.per_window:
+        return (f"rate limit: {config.per_window} turns of {record.id} in {config.window_s // 60} minutes "
+                "(continuations and your own signals)")
+    return None
 
 
 def _window_end(ctx, record) -> str:
@@ -172,7 +186,8 @@ def launch(ctx, *, key: str, record, agent: str, source: str, text: str, merged_
                                            "initiator": "system", "basis": basis_of(s, record),
                                            "next_try": _window_end(ctx, record) if reason == "window" else ""})
                 command = queued["id"]
-                state = "queued" if queued["key"] == key else "merged"
+                # its own key (or that key taken before: store.KEY_TAKEN_SUFFIX), or a command with its text already
+                state = "queued" if queued["key"] in (key, key + store_mod.KEY_TAKEN_SUFFIX) else "merged"
         s._conn.execute(
             "INSERT INTO continuations (key, card, agent, source, command, state, mark, reason, created)"
             " VALUES (?,?,?,?,?,?,?,?,?)",

@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
+from kd import claude_code
 from kd.cabinet import api, pages, probe_cards, result, snapshot, store, users
 from kd.effort_probe import MEMORY_OFF, ProbeError, Runner, _subprocess, environment, outcome
 
@@ -125,7 +126,7 @@ def _home() -> str:
 
 
 def _argv(model: str, system: str) -> list:
-    return ["claude", "-p", "--model", model, "--system-prompt", system, "--tools", "", "--strict-mcp-config",
+    return [claude_code.BINARY, "-p", "--model", model, "--system-prompt", system, "--tools", "", "--strict-mcp-config",
             "--output-format", "stream-json", "--verbose"]
 
 
@@ -137,7 +138,7 @@ def run(*, instructions: Path, out: Path, model: str, grader: str, repeats: int,
     memory = out / "hindsight-off.json"
     env = {**environment(AGENT, home), "HINDSIGHT_CONFIG": str(memory)}
     cwd = str(out.parent if out.parent.exists() else Path("/"))
-    code, lines = runner(["claude", "--help"], "", cwd, env, 60)
+    code, lines = runner([claude_code.BINARY, "--help"], "", cwd, env, 60)
     if code != 0 or not all(any(flag in line for line in lines) for flag in ("--tools", "--system-prompt")):
         raise ProbeError("the installed claude has no --tools or --system-prompt: the probe cannot run without tools")
     system = instructions.read_text("utf-8")

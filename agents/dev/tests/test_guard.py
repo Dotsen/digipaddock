@@ -669,6 +669,19 @@ def test_work_root_claude_dir_and_mcp_are_not_writable(command, cwd):
 
 
 @pytest.mark.parametrize("command,cwd", [
+    # KD-9482: Claude Code loads a folder's CLAUDE.md and CLAUDE.local.md once a file there is read
+    (f"echo x > {WORK}/tmp/cards/KD-12/CLAUDE.md", None),
+    ("cp ../kd-x.md CLAUDE.md", f"{WORK}/tmp/cards/KD-12"),
+    (f"tee {WORK}/tmp/CLAUDE.local.md", CLONE),
+    ("echo x > CLAUDE.local.md", CLONE),
+    (f"touch {CLONE}/agents/dev/CLAUDE.local.md", None),
+])
+def test_a_folders_instructions_outside_a_clone_are_not_writable(command, cwd):
+    reason = guard.decide(command, cwd=cwd)
+    assert reason is not None and "CLAUDE" in reason and "запис" in reason, (command, reason)
+
+
+@pytest.mark.parametrize("command,cwd", [
     (f"echo x >> {CLONE}/CLAUDE.md", None),          # the agent edits the clone's CLAUDE.md in a PR
     ("sed -i s/a/b/ CLAUDE.md", CLONE),
     (f"echo x > {CLONE}/agents/dev/CLAUDE.md", None),

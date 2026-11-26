@@ -128,7 +128,7 @@ def test_a_key_reused_with_other_content_is_a_conflict(db, change):
         "thread": {"thread": db.agent_thread("analyst"), "card": ""},
     }[change]
     with pytest.raises(store.Conflict, match="in use with other content"):
-        db.enqueue({**_spec(db, card), **other})
+        db.enqueue({**_spec(db, card), **other}, strict=True)  # a caller's own key (KD-9479)
     assert len(db.commands()) == 1
 
 

@@ -8,8 +8,8 @@
 #   --origin — the cabinet's address: cabinet.json keeps it, passkeys are bound to it; by default —
 #   cabinet_origin from host/host.json.
 #   --check — only a check of what is installed (changes nothing): code 0 — everything is in place, 1 — a line per failure.
-# The base user's Claude Code is of the version from common/install/versions.json; another version already installed
-# is not updated by itself: a new version is first tried on the base user (the order of the trials is in the deployment's overlay).
+# Claude Code is root's one install for every agent and the model probe (claude_setup.sh install: the build of
+# common/install/versions.json, its sha256 checked), never one in a home (KD-9474).
 set -euo pipefail
 REPO=/opt/digipaddock
 NAMING=/etc/digipaddock/naming.json
@@ -38,8 +38,6 @@ done
 . "$REPO/common/install/lib/naming.sh"
 # the factory host — host/host.json of the release tree; behind NAT — by its cabinet's DNS
 kd_factory_host || exit 1
-claude_version=$(/usr/bin/python3 -I "$REPO/common/kd/install_catalog.py" version claude_code) \
-  || { echo "the version catalog is unreadable" >&2; exit 1; }
 
 # --check: what this script installs, read only
 stage_check() {
@@ -54,11 +52,8 @@ stage_check() {
   command -v jq >/dev/null || problems+=("no jq")
   [ -d "$BOARD/.git" ] || problems+=("no git of the nightly snapshot $BOARD")
   [ -d /var/lib/digipaddock/attention ] || problems+=("no /var/lib/digipaddock/attention")
-  have=$(runuser -u "$base" -- "/home/$base/.local/bin/claude" --version 2>/dev/null | awk '{print $1}' || true)
-  # another version is the window of a new one's probes (the full run leaves it as it is): a warning, not a failure
-  [ -n "$have" ] || problems+=("no Claude Code for $base")
-  [ "$have" = "$claude_version" ] || [ -z "$have" ] \
-    || echo "warning: Claude Code for $base is $have, the catalog has $claude_version: another version goes in by hand, after probes as $base" >&2
+  # Claude Code is claude_setup.sh's own check, a step of its own in bootstrap.sh base: a new pinned build must not
+  # fail this one, whose fix reruns this whole script and so the cabinet's setup
   if [ -d /etc/needrestart/conf.d ]; then
     cmp -s "$REPO/common/needrestart/digipaddock-sessions.conf" /etc/needrestart/conf.d/digipaddock-sessions.conf \
       || problems+=("the needrestart config differs from the code")
@@ -161,13 +156,9 @@ if [ ! -d "$BOARD/.git" ]; then
 fi
 git config --global --get-all safe.directory | grep -qxF /srv/digipaddock-agents/board || git config --global --add safe.directory /srv/digipaddock-agents/board
 
-# 4. Claude Code for the base user (the stock installer) — of the version from the catalog; another version already
-#    installed stays: an update is done by hand, after trials on the base user (agents follow it, add_user.sh)
-as_agent "[ -x ~/.local/bin/claude ] || curl -fsSL https://claude.ai/install.sh | bash -s '$claude_version'"
-[ -x "/home/$base/.local/bin/claude" ] || { echo "Claude Code did not install" >&2; exit 1; }
-got=$(as_agent '~/.local/bin/claude --version' | awk '{print $1}' || true)
-[ "$got" = "$claude_version" ] \
-  || echo "warning: Claude Code for $base is $got, the catalog has $claude_version: update by hand, after probes as $base" >&2
+# 4. Claude Code: root's one install for every agent and the model probe (KD-9474), never in a home — the pinned
+#    build, its sha256 checked; a home's copy an older install left is not run by anything
+bash "$REPO/common/install/claude_setup.sh" install
 
 # 6. The shared floor of Claude Code rules (root) — a template with the host's names; render_host.sh installs it
 #    together with the units (step 9)
@@ -206,7 +197,7 @@ install -d -o root -g root -m 0755 /var/lib/digipaddock/release-result
 install -d -o root -g root -m 0700 /var/lib/digipaddock/mirror
 systemctl enable --now digipaddock-release.path
 
-echo "claude: $(as_agent '~/.local/bin/claude --version')"
+echo "claude: $(as_agent 'DISABLE_AUTOUPDATER=1 /opt/digipaddock-claude/claude --version')"
 
 # 6b. The agents' Hindsight memory: the plugin and the config for every agent user (the base one and those from
 # /etc/digipaddock/agents.json) — only when the server is already on the factory host. At the end of the script and

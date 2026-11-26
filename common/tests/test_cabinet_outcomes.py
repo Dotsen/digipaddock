@@ -174,7 +174,13 @@ def test_review_and_done_need_their_status(cab):
     assert "In Progress" in refused(cab, record, outcome="done")
 
 
+def closer(cab, agent="dev"):
+    """The project names ``agent`` as the one that closes its cards (``done_by``): its Done is its own."""
+    cab.store.update_project("digipaddock", actor="root", done_by=agent)
+
+
 def test_owner_cards_and_cards_out_of_work_owe_nothing(cab):
+    closer(cab)
     closed = card(cab, status="Done")
     started(cab, closed)
     assert "finish is for the card's assignee" in refused(cab, closed)
@@ -432,6 +438,7 @@ def test_superseded_outcome_with_nobody_on_the_card_is_a_problem(cab):
 
 @pytest.mark.parametrize("outcome,status", [("review", "Review"), ("done", "Done")])
 def test_an_outcome_whose_status_is_in_place_already_applies(cab, outcome, status):
+    closer(cab)
     record = card(cab)
     command, session = begin(cab, record)
     finish(cab, record, outcome=outcome, note="ready")
@@ -443,6 +450,7 @@ def test_an_outcome_whose_status_is_in_place_already_applies(cab, outcome, statu
 
 
 def test_in_review_only_done_is_recorded(cab):
+    closer(cab)
     record = card(cab, status="Review")
     started(cab, record)
     for outcome in ("continue", "review"):

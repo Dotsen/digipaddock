@@ -9,7 +9,7 @@ actions, in order: the board grant is deferred (step 40); every ACL and channel 
   4. service-user digi-observe: create: system user, no login shell, home /home/digi-observe 0700
   5. user digi-boss: common/install/add_user.sh digi-boss --prepare: useradd --create-home --user-group --shell /bin/bash; /home/digi-boss and /home/digi 0750
   6. group digipaddock-cabinet: digi-boss joins it through common/install/cabinet_setup.sh grant: the board's socket (KD-225)
-  7. download /home/digi-boss/.local/bin/claude: Claude Code, the base user's version, from https://claude.ai/install.sh (network)
+  7. download /opt/digipaddock-claude/claude: Claude Code of common/install/versions.json, root's for every agent: root:root 0755, its sha256 checked before it is installed (common/install/claude_setup.sh; network once a version); digi-boss removes an older install's copy in its home (.local/bin/claude, .local/share/claude)
   8. dir /home/digi-boss/.config: digi-boss:digi-boss 0700, made by digi-boss
   9. plugin hindsight: if /etc/hindsight/coding-agent.env exists: @vectorize-io/hindsight-coding-agents through npx for digi-boss (network)
  10. file /home/digi-boss/.hindsight/coding-agent.json: digi-boss:digi-boss 0600, made by digi-boss if Hindsight runs: holds the API key (value not shown)
@@ -17,9 +17,9 @@ actions, in order: the board grant is deferred (step 40); every ACL and channel 
  12. dir /srv/digipaddock-agents/boss: root:root 0755
  13. dir /srv/digipaddock-agents/boss/.claude: root:root 0755
  14. file /srv/digipaddock-agents/boss/CLAUDE.md: root:root 0644 sha256=68883d36665b7f9245ebfc9e364b872744e3014114f462866fb700bd65ca49a0 bytes=566
- 15. file /srv/digipaddock-agents/boss/.claude/policy.json: root:root 0644 sha256=1941a90a7cbd652506702c813577c2cfde444a0b8b76e2afa122a1c4b9804773 bytes=17420
- 16. file /srv/digipaddock-agents/boss/.claude/settings.json: root:root 0644 sha256=b15c90f86a4504f85d77d3039463539bb413d87a178025e346d7db6a48e1379c bytes=8050
- 17. file /srv/digipaddock-agents/boss/.claude/launch-settings.json: root:root 0644 sha256=087c8c2f0daca4a34549387bca3c1527443b3342d0405d61c3a9683305c871ac bytes=2779
+ 15. file /srv/digipaddock-agents/boss/.claude/policy.json: root:root 0644 sha256=ca69318e2bf653f309dc786cecbef3386879ed60be97eee28c4f441f0b599fd4 bytes=17764
+ 16. file /srv/digipaddock-agents/boss/.claude/settings.json: root:root 0644 sha256=8f8dd15999ba175e65256be192f3bf5ddf27037a937eb60a1036ba31364a1862 bytes=8332
+ 17. file /srv/digipaddock-agents/boss/.claude/launch-settings.json: root:root 0644 sha256=25d8943ed5d7242cd4e449d4328e9f1f92e2cb12c63c9a2ce1287e9458c0ddc4 bytes=2829
  18. dir /srv/digipaddock-agents/boss/playbooks: root:root 0755
  19. file /srv/digipaddock-agents/boss/playbooks/escalation.md: root:root 0644 sha256=0be5ca9d5bf583330e4cb802e5aec2f4c966658a901a6e04691445146e1626f7 bytes=86
  20. dir /srv/digipaddock-agents/boss/memory: digi-boss:digi-boss 0750
@@ -394,6 +394,7 @@ files in full:
           "/srv/digipaddock-agents/board",
           "/srv/digipaddock-agents/boss/memory/legacy",
           "/srv/digipaddock-agents/boss/memory/notes.md",
+          "/srv/digipaddock-agents/boss/work/.git",
           "/srv/digipaddock-agents/boss/work/CLAUDE.local.md",
           "/srv/digipaddock-agents/boss/work/CLAUDE.md",
           "/srv/example-docs",
@@ -540,6 +541,7 @@ files in full:
         "Bash(ssh-ro *)",
         "Bash(su *)",
         "Bash(sudo *)",
+        "Edit(//**/.claude/rules/**)",
         "Edit(//home/agent-ro/**)",
         "Edit(//home/digi-analyst/**)",
         "Edit(//home/digi-boss/.bash_profile)",
@@ -576,7 +578,11 @@ files in full:
         "Edit(//srv/digipaddock-agents/boss/playbooks/**)",
         "Edit(//srv/digipaddock-agents/boss/work/**/.claude/**)",
         "Edit(//srv/digipaddock-agents/boss/work/**/.mcp.json)",
+        "Edit(//srv/digipaddock-agents/boss/work/**/CLAUDE.local.md)",
+        "Edit(//srv/digipaddock-agents/boss/work/**/CLAUDE.md)",
         "Edit(//srv/digipaddock-agents/boss/work/.claude/**)",
+        "Edit(//srv/digipaddock-agents/boss/work/.git)",
+        "Edit(//srv/digipaddock-agents/boss/work/.git/**)",
         "Edit(//srv/digipaddock-agents/boss/work/.mcp.json)",
         "Edit(//srv/digipaddock-agents/boss/work/CLAUDE.local.md)",
         "Edit(//srv/digipaddock-agents/boss/work/CLAUDE.md)",
@@ -765,6 +771,7 @@ files in full:
       "Bash(ssh-ro *)",
       "Bash(su *)",
       "Bash(sudo *)",
+      "Edit(//**/.claude/rules/**)",
       "Edit(//home/agent-ro/**)",
       "Edit(//home/digi-analyst/**)",
       "Edit(//home/digi-boss/.bash_profile)",
@@ -801,7 +808,11 @@ files in full:
       "Edit(//srv/digipaddock-agents/boss/playbooks/**)",
       "Edit(//srv/digipaddock-agents/boss/work/**/.claude/**)",
       "Edit(//srv/digipaddock-agents/boss/work/**/.mcp.json)",
+      "Edit(//srv/digipaddock-agents/boss/work/**/CLAUDE.local.md)",
+      "Edit(//srv/digipaddock-agents/boss/work/**/CLAUDE.md)",
       "Edit(//srv/digipaddock-agents/boss/work/.claude/**)",
+      "Edit(//srv/digipaddock-agents/boss/work/.git)",
+      "Edit(//srv/digipaddock-agents/boss/work/.git/**)",
       "Edit(//srv/digipaddock-agents/boss/work/.mcp.json)",
       "Edit(//srv/digipaddock-agents/boss/work/CLAUDE.local.md)",
       "Edit(//srv/digipaddock-agents/boss/work/CLAUDE.md)",
@@ -944,6 +955,7 @@ files in full:
         "/srv/digipaddock-agents/board",
         "/srv/digipaddock-agents/boss/memory/legacy",
         "/srv/digipaddock-agents/boss/memory/notes.md",
+        "/srv/digipaddock-agents/boss/work/.git",
         "/srv/digipaddock-agents/boss/work/CLAUDE.local.md",
         "/srv/digipaddock-agents/boss/work/CLAUDE.md",
         "/srv/example-docs",

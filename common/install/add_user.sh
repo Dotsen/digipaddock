@@ -102,13 +102,11 @@ fi
 if [ "$mode" = --grant ]; then exit 0; fi
 fi
 
-# 3. Claude Code of the same version as the base user's ($base) (the version is pinned: auto-update is off), ~/.config
-v=$(runuser -u "$base" -- "/home/$base/.local/bin/claude" --version | awk '{print $1}')
-[[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "cannot determine the Claude Code version of $base: $v" >&2; exit 1; }
-runuser -u "$u" -- env DISABLE_AUTOUPDATER=1 bash -o pipefail -c "cd ~ && { [ -x ~/.local/bin/claude ] && ~/.local/bin/claude --version | grep -qwF '$v'; } || curl -fsSL https://claude.ai/install.sh | bash -s '$v'"
-# install.sh may have installed the wrong version — compare, do not trust
-got=$(runuser -u "$u" -- "/home/$u/.local/bin/claude" --version | awk '{print $1}' || true)
-[ "$got" = "$v" ] || { echo "Claude Code of $u is '$got', of $base $v — the versions must match" >&2; exit 1; }
+# 3. Claude Code: the one root-owned install every agent runs (claude_setup.sh: the pinned build, its sha256
+#    checked), never a copy in the home — the binary gets the host's token, and the home is the agent's to write
+#    (KD-9474). The copy an older install put in the home goes, removed by its owner: nothing runs it any more.
+bash "$REPO/common/install/claude_setup.sh" install
+runuser -u "$u" -- bash -c 'cd ~ && rm -f -- .local/bin/claude && rm -rf -- .local/share/claude'
 runuser -u "$u" -- bash -c 'mkdir -p ~/.config && chmod 0700 ~/.config'
 
 # 4. The Hindsight memory (the same server and key as the base user's; the bank — by the agent's folder)
@@ -116,4 +114,4 @@ runuser -u "$u" -- bash -c 'mkdir -p ~/.config && chmod 0700 ~/.config'
 source "$REPO/common/install/lib/hindsight_client.sh"
 hindsight_client_for "$u" || { if [ "$mode" = --prepare ]; then echo "Hindsight preparation failed" >&2; exit 1; fi; echo "warning: the Hindsight client for $u did not install — rerun add_user.sh" >&2; }
 
-echo "claude ($u): $(runuser -u "$u" -- "/home/$u/.local/bin/claude" --version)"
+echo "claude ($u): $(cd / && runuser -u "$u" -- env DISABLE_AUTOUPDATER=1 /opt/digipaddock-claude/claude --version)"

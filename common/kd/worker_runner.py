@@ -19,6 +19,7 @@ import os
 import posixpath
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from kd import (
     agents,
+    claude_code,
     claude_token,
     context_limit,
     llm_models,
@@ -51,7 +53,7 @@ from kd.worker_result import OUTPUT_CAP
 COPIES = "/srv/digipaddock-repos"  # read-only host copies, kd-repo-sync
 FLOOR = "/etc/claude-code/managed-settings.json"
 POLICY_FILE = ".claude/policy.json"
-CLAUDE = ".local/bin/claude"  # under the agent's home, the install of common/install
+CLAUDE = claude_code.BINARY  # root's, never the agent's home: it gets the host's token (KD-9474)
 PROJECT = worker_jobs.PROJECT
 T_GIT = 120
 # The definition kd-worker submits (kd.worker_jobs.definition) and the bounds the host's end_line checks.
@@ -176,9 +178,11 @@ def source_copy(project: str, *, copies_root: str = COPIES) -> str:
     return path
 
 
-def _empty(dfd: int) -> None:
+def _empty(dfd: int, keep: frozenset = frozenset()) -> None:
     with os.scandir(dfd) as entries:
         for entry in entries:
+            if entry.name in keep:
+                continue
             if entry.is_dir(follow_symlinks=False):
                 child = os.open(entry.name, _DIR, dir_fd=dfd)
                 try:
@@ -264,23 +268,36 @@ def move_in(parent: str, name: str, source: str) -> None:
         raise RunnerError(f"{path}: cannot move the clone in ({exc.__class__.__name__})") from exc
 
 
-def clear(path: str) -> None:
-    """Empty directory ``path`` and keep it; a link inside is unlinked, never followed."""
+def clear(path: str, keep: frozenset = frozenset()) -> None:
+    """Empty directory ``path`` but the entries named in ``keep``, and keep it; a link inside is unlinked, never
+    followed."""
     try:
         if _DIR_FD:
             dfd = os.open(path, _DIR)
             try:
-                _empty(dfd)
+                _empty(dfd, keep)
             finally:
                 os.close(dfd)
             return
         for entry in os.scandir(path):  # Windows: tests only
+            if entry.name in keep:
+                continue
             if entry.is_dir(follow_symlinks=False):
                 shutil.rmtree(entry.path)
             else:
                 os.unlink(entry.path)
     except OSError as exc:
         raise RunnerError(f"{path}: cannot clear ({exc.__class__.__name__})") from exc
+
+
+# Every git of the runner, before the job and after it: command-line config beats every config file, so no
+# repository names a program git runs (an fsmonitor, a hook, an ssh program) or a transport it uses. With
+# GIT_NO_LAZY_FETCH in the environment an object missing from a copy the job made a partial clone is not fetched
+# from the remote its config names (KD-9482: probed on the host, the fetch ran the job's ssh program as the agent).
+GIT_LOCKDOWN = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=false",
+                "-c", "protocol.allow=never")
+# the clone of the host's copy before the job: its local path, and no other transport
+LOCAL_SOURCE = ("-c", "protocol.file.allow=always")
 
 
 def _git(
@@ -296,14 +313,14 @@ def _git(
         drop["extra_groups"] = []
     try:
         proc = run(
-            ["git", *args],
+            ["git", *GIT_LOCKDOWN, *args],
             cwd=cwd,
             check=True,
             capture_output=True,
             text=True,
             timeout=T_GIT,
             stdin=subprocess.DEVNULL,
-            env=env,
+            env={**(os.environ if env is None else env), "GIT_NO_LAZY_FETCH": "1"},
             **drop,
         )
     except subprocess.CalledProcessError as exc:
@@ -372,7 +389,7 @@ def prepare_repo(
         raise RunnerError(f"{staging}: cannot prepare ({exc.__class__.__name__})") from exc
     write_trust(slot_root, [source, f"{source}/.git", staging])
     env = git_env(slot_root)
-    _git(run, ["clone", "--quiet", "--no-hardlinks", source, staging], env=env)
+    _git(run, [*LOCAL_SOURCE, "clone", "--quiet", "--no-hardlinks", source, staging], env=env)
     if pull is None:
         base, at = _git(run, ["rev-parse", "HEAD"], cwd=staging, env=env), "HEAD"
         branch = f"worker/{job_id}"
@@ -397,7 +414,7 @@ def _pull_refs(run: Callable[..., Any], source: str, staging: str, pull: Mapping
 
     def fetched(ref: str) -> str:
         try:
-            _git(run, ["fetch", "--quiet", "--no-tags", source, ref], cwd=staging, env=env)
+            _git(run, [*LOCAL_SOURCE, "fetch", "--quiet", "--no-tags", source, ref], cwd=staging, env=env)
         except RunnerError as exc:
             raise RunnerError(f"{HEAD_MISSING}: the copy has no {ref}") from exc
         return _git(run, ["rev-parse", "FETCH_HEAD"], cwd=staging, env=env)
@@ -505,6 +522,11 @@ def check_work(
         )
 
 
+# what prepare keeps in work/ and makes anew for every job: the copy (a developer's), the temp folder, the inputs and
+# root's placeholders
+WORK_ENTRIES = frozenset({"repo", "tmp", worker_inputs.DIR, *worker_slots.WORK_PLACEHOLDERS})
+
+
 def restore_placeholders(work: str) -> None:
     """work/CLAUDE.md and work/CLAUDE.local.md root-owned again before every job: the folder is
     the agent's, so the last job could have left its own instructions there."""
@@ -540,12 +562,17 @@ def prepare(
     getpw: Callable[[str], Any],
     login: Callable[[str, int, str], list[str]] = worker_slots.credential_problems,
     look: worker_slots.Look = worker_slots.probe,
+    program: Callable[[str], Optional[str]] = claude_code.problem,
 ) -> Prepared:
     """Everything one job (``check_definition``) needs in its slot, or RunnerError with the reason it cannot run.
 
     ``login(home, uid, agent)`` lists the problems of the agent's Claude Code login (by
     metadata only); the check is the runner's because the base-user executor cannot see the
-    agent's home. ``look`` is the lstat of the slot's work/ (tests)."""
+    agent's home. ``look`` is the lstat of the slot's work/ (tests). ``program(path)`` says why the job must not
+    exec Claude Code at ``path`` (``kd.claude_code.problem``: not root's), or None."""
+    why = program(CLAUDE)
+    if why:  # never another claude: the job fails with what root has to do
+        raise RunnerError(f"claude: {why}")
     try:
         config = worker_slots.load_config(config_path)
         user = worker_slots.agent_user(config, job["agent"], registry_path)
@@ -567,6 +594,9 @@ def prepare(
     work = f"{slot_dir(slot, slots_root)}/work"
     check_work(work, account.pw_uid, look=look)
     os.makedirs(work, 0o700, exist_ok=True)  # a host has it (checked above by lstat); tests build the slot here
+    # work/ is the job's cwd and the agent's to write: nothing the last job left there (a repository at its top, a
+    # folder's CLAUDE.md, settings) reaches this one; the entries kept are rebuilt below
+    clear(work, keep=WORK_ENTRIES)
     try:
         packs = worker_packs.load_packs(
             packs_root, require_root_owner=require_root_owner
@@ -652,7 +682,7 @@ def argv(p: Prepared) -> list[str]:
     """claude in print mode with the slot's system prompt and settings, every setting source
     and skill discovery off (kd.worker_packs.ISOLATION_ARGS), one stream of JSON events."""
     out = [
-        f"{p.home}/{CLAUDE}",
+        CLAUDE,
         "-p",
         p.task,
         "--system-prompt-file",
@@ -694,7 +724,7 @@ def env(p: Prepared) -> dict[str, str]:
     return {
         **_credentials(p),
         **context_limit.environment(p.context_limit),
-        "PATH": f"{p.home}/.local/bin:/usr/local/bin:/usr/bin:/bin",
+        "PATH": claude_code.PATH,
         "HOME": p.home,
         "USER": p.user,
         "LOGNAME": p.user,
@@ -702,6 +732,10 @@ def env(p: Prepared) -> dict[str, str]:
         "KD_AGENT": p.slot.agent,
         "KD_WORKER_JOB": p.job["id"],
         "KD_WORKER_SLOT": p.slot.root,
+        # git — Claude Code's own, outside the sandbox, and the job's — finds no repository above the slot (the
+        # folder that holds work/) and reads no system config (KD-9482)
+        "GIT_CEILING_DIRECTORIES": p.slot.root,
+        "GIT_CONFIG_NOSYSTEM": "1",
         "DISABLE_AUTOUPDATER": "1",
         "CLAUDE_CODE_ENABLE_AWAY_SUMMARY": "0",
         "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
@@ -821,9 +855,28 @@ AGENT_GIT_ENV = {
 DIFF_PLAIN = ["diff", "--no-ext-diff", "--no-textconv"]
 
 
+def check_job_copy(repo: str) -> None:
+    """The job's copy is a repository of its own, read by lstat alone — git never runs on a refused copy: its .git a
+    directory (a gitfile or a link names another repository; with none git searches above the copy), with no
+    commondir (a linked worktree's, whose config lives in another repository) and no config.worktree (a second
+    config file)."""
+    git_dir = f"{repo}/.git"
+    try:
+        own = stat.S_ISDIR(os.lstat(git_dir).st_mode)
+    except OSError:
+        own = False
+    if not own:
+        raise RunnerError(f"{git_dir} is not a directory (a gitfile, a link or missing): the job's copy is refused")
+    for name in ("commondir", "config.worktree"):
+        if os.path.lexists(f"{git_dir}/{name}"):
+            raise RunnerError(f"{git_dir}/{name} points git at another config: the job's copy is refused")
+
+
 def _agent_git(p: Prepared, run: Callable[..., Any], args: list[str]) -> str:
-    """git in the job's copy as the agent (``p.uid``/``p.gid``), never as root."""
-    return _git(run, args, cwd=f"{p.work}/repo", env=dict(AGENT_GIT_ENV), as_user=(p.uid, p.gid))
+    """git in the job's copy as the agent (``p.uid``/``p.gid``), never as root, on a checked copy only."""
+    repo = f"{p.work}/repo"
+    check_job_copy(repo)
+    return _git(run, args, cwd=repo, env=dict(AGENT_GIT_ENV), as_user=(p.uid, p.gid))
 
 
 def repo_facts(p: Prepared, *, run: Callable[..., Any]) -> tuple[Optional[str], str]:
@@ -908,6 +961,7 @@ def run(
     getpw: Callable[[str], Any],
     login: Callable[[str, int, str], list[str]] = worker_slots.credential_problems,
     look: worker_slots.Look = worker_slots.probe,
+    program: Callable[[str], Optional[str]] = claude_code.problem,
     popen: Callable[..., Any] = subprocess.Popen,
     now: Callable[[], float] = time.time,
 ) -> tuple[int, dict]:
@@ -941,6 +995,7 @@ def run(
             getpw=getpw,
             login=login,
             look=look,
+            program=program,
         )
         os.makedirs(events_root, 0o700, exist_ok=True)
         done = launch(

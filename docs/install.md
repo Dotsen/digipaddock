@@ -33,7 +33,8 @@ Measured on a running deployment:
 |---|---|
 | Code, release trees, the cabinet's environment and web | about 1 GB; a release tree is a few hundred MB and only the last ones are kept |
 | The cabinet's data and its nightly copies | about 0.5 GB, grows with the board |
-| Each agent user: Claude Code and its caches | about 0.4 GB |
+| Claude Code, root's one install for every agent (`/opt/digipaddock-claude`) | about 0.25 GB |
+| Each agent user: Claude Code's own folder (`~/.claude`) | small; grows with its history |
 | The agents' folders, the repository copies, the worker slots | about 1 GB, grows with the projects |
 | Memory service: its environment | about 2.5 GB; an upgrade keeps the previous one until it is removed |
 | Memory service: its models | about 0.9 GB |
@@ -50,7 +51,7 @@ Measured on a running deployment:
 | Inbound | 443 | The cabinet | Always |
 | Inbound | 80 | The certificate (Let's Encrypt over HTTP) and the redirect to HTTPS | Always |
 | Inbound | SSH | Whoever administers the host | Always |
-| Outbound | Anthropic | Claude Code, its installer and its sessions | Always |
+| Outbound | Anthropic | Claude Code's sessions; root downloads the pinned build (`downloads.claude.ai`) once a version | Always |
 | Outbound | The forge, over SSH | The code, the overlay, the projects' repositories | Always |
 | Outbound | The distribution's and Node.js's apt repositories, npm, PyPI | Packages | Install and updates |
 | Outbound | The browsers' push services | Push notifications | Once someone subscribes |
@@ -108,7 +109,7 @@ ones the host got at its first install, stop it before anything is installed.
 |---|---|---|
 | `preflight` | Distribution packages (`prereq.sh`), the overlay's check, root's key to the forge, read access to the release repositories | Node.js 22 and, with the memory service, PostgreSQL 18 with pgvector come from their vendors' apt repositories: the script prints the commands and never adds a foreign repository itself. Root's public key goes to both repositories as a read-only Deploy Key |
 | `tree` | The first release tree: `kd-release --bootstrap` clones both repositories, composes the tree, checks it and switches `/opt/digipaddock` to it | — |
-| `base` | The base user, the pinned Claude Code, the cabinet and its web, the release service `kd-release`, the session host (`stage_setup.sh`, `session_host_setup.sh`) | — |
+| `base` | The base user, the cabinet and its web, the release service `kd-release` (`stage_setup.sh`); the pinned Claude Code, root's one install for every agent, its sha256 checked against `versions.json` before it is installed (`claude_setup.sh`); the session host (`session_host_setup.sh`) | — |
 | `hindsight` | The memory service: PostgreSQL role and database, the pinned `hindsight-api`, its env, units and nightly dump (`hindsight_setup.sh`) | — |
 | `agents` | Each role of `install.json` under its own user, unless the installed one already is what this code installs (`new_agent.sh --verify`, then `--install`), then the board's projects of `projects.json`. On a kernel that restricts user namespaces (Ubuntu 24.04) the first agent also brings the `apparmor` package and the profile that lets the sandbox (`bwrap`) create them | A role that reads repositories (the analyst): the installer prints the key of the repository copies' user; it goes to every project's repository as a read-only Deploy Key. The sysadmin's servers come after its install: `bash agents/sysadmin/install/deploy_target.sh <alias>` for each, from the owner's machine (its SSH aliases are the inventory's): it puts the read-only gate on the server, pins the server's host key on the factory host and enables it. It also installs the exec gate there, in `observe` mode, with the owner's signing passkeys from the cabinet — so the cabinet's first owner needs a passkey enabled for signing first (`kd-cabinet user signing <id> --credential <prefix> on`, the prefix at least 8 characters of the key's id; the script prints the keys it installs, compare them with Settings → Devices). After the observation period: `deploy_target.sh <alias> --exec-mode enforce` server by server, and the envelopes flag (`/etc/digipaddock/exec-envelopes`) on the factory host, which makes the executors send signed envelopes |
 | `components` | Each component of `install.json` (`review`, `repo-attach`, `transcribe`, `e2e-runtime`, `devcheck`, `mirror`, `egress`) as its installer makes it, and the pipeline's mode | `mirror`: the private part of a GitHub deploy key with write access, placed where the installer says |
@@ -118,8 +119,9 @@ ones the host got at its first install, stop it before anything is installed.
 | `check` | Every check again from the release tree, the release tree's overlay (`overlay.py check`), the release's health (`kd-cabinet health`); installs nothing | Lists every failure |
 
 Exit codes: 0 — the phase is done; 3 — a step is yours (the line, or the installer's lines above it, say which);
-1 — an installer failed; 2 — usage. A Claude Code of the base user other than the pinned one is only a warning: a
-new version is tried by hand (see Updating).
+1 — an installer failed; 2 — usage. Claude Code is one binary of root's, `/opt/digipaddock-claude/claude`
+(root:root 0755): every session, worker job and probe execs it by that path, none runs a copy in a home, and a launch
+without it stops with `no Claude Code at /opt/digipaddock-claude/claude — root installs it: claude_setup.sh install`.
 
 The first owner of the cabinet: `kd-cabinet user add <id> --name <name> --role owner`, then `kd-cabinet user code
 <id>` prints a one-time code for the first sign-in; add a passkey in the cabinet's settings after it.
@@ -183,8 +185,24 @@ kd-cabinet release digipaddock --rollback      # back to the previous tree
 ```
 
 A release reinstalls the roles whose installed texts went stale and checks the release's health; the outcome is in
-the cabinet's feed. After a release, `bootstrap.sh check` shows the whole host again. A new pinned version of
-Claude Code (`common/install/versions.json`) is tried on the base user first, then on one agent, then on the rest.
+the cabinet's feed. After a release, `bootstrap.sh check` shows the whole host again.
+
+A new version of Claude Code is a change of `common/install/versions.json`, never an update on the host (auto-update
+is off; root never runs the vendor's install script):
+
+1. Take the build's checksums from the vendor's manifest of that version,
+   `https://downloads.claude.ai/claude-code-releases/<version>/manifest.json`: `platforms.linux-x64.checksum` and
+   `platforms.linux-arm64.checksum`.
+2. Put the version in `claude_code` and the two checksums in `claude_code_sha256_amd64` and
+   `claude_code_sha256_arm64`, in one commit; try the version with the model and effort probes first.
+3. Release. Every role's `new_agent.sh --verify` now differs, so the release reinstalls each role once; the first
+   reinstall downloads the build, checks its sha256 and only then swaps `/opt/digipaddock-claude/claude` in one rename.
+   By hand, at once: `bash /opt/digipaddock/common/install/claude_setup.sh install` (or `bootstrap.sh base`).
+   Until the swap, sessions run the previous build from the same path; a running session keeps its binary.
+
+A host installed before Claude Code was root's (each agent had a copy in its home) moves over with its next release
+the same way: the reinstall of each role installs root's binary and removes the home's copy. Until root's binary is
+there, a new session stops with the message above — it never falls back to the home's copy.
 
 ## Tags and the GitHub release
 

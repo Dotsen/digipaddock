@@ -82,7 +82,8 @@ FORBIDDEN_WHY = "запись в .claude/ и .mcp.json запрещена (кл�
 # a PR — this does not concern them
 WORK_MEMORY = ("CLAUDE.md", "CLAUDE.local.md")
 WORK_MEMORY_WHY = ("запись в work/CLAUDE.md и work/CLAUDE.local.md запрещена: их грузит каждая сессия агента "
-                   "(заглушки владельца); CLAUDE.md клона — можно")
+                   "(заглушки владельца); как и CLAUDE.local.md в любой папке work/ и CLAUDE.md в work/tmp/ — их "
+                   "сессия грузит, прочитав файл рядом; CLAUDE.md клона — можно")
 WRITE_WHY = ((f"запись разрешена только в {WORK}/repo (кроме .claude и .mcp.json), {TMP}/ (тексты и вывод команд) "
               "и /dev/null; папка агента, /tmp — нет") if SLOT else
              (f"запись разрешена только в work/<Repo> (кроме .claude и .mcp.json), {TMP}/ (тексты, вложения и вывод команд), "
@@ -545,9 +546,14 @@ def _resolve(cur: Optional[str], target: str) -> Optional[str]:
 
 
 def _work_memory(path: str) -> bool:
-    """The path is work/CLAUDE.md or work/CLAUDE.local.md, also by a glob in the root of work/ (rm work/C*, work/*.md)."""
+    """The path is work/CLAUDE.md or work/CLAUDE.local.md, also by a glob in the root of work/ (rm work/C*, work/*.md);
+    or below work/ a CLAUDE.local.md, or a CLAUDE.md in tmp/ (no clone there): Claude Code loads a folder's
+    instructions once a file there is read (KD-9482). A clone's tracked CLAUDE.md stays editable."""
     folder, name = posixpath.split(path)
-    return folder == WORK and any(fnmatch.fnmatchcase(m, name) for m in WORK_MEMORY)
+    if folder == WORK:
+        return any(fnmatch.fnmatchcase(m, name) for m in WORK_MEMORY)
+    return path.startswith(WORK + "/") and (name == "CLAUDE.local.md"
+                                            or (name == "CLAUDE.md" and path.startswith(TMP + "/")))
 
 
 def _target_problem(target: str, cur: Optional[str], loops, dotglob: bool, link: bool = False) -> Optional[str]:

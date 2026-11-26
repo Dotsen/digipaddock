@@ -307,7 +307,7 @@ def _put(path: str, node: Node | None) -> Callable[[FakeFS], None]:
 
 ROOT_DIR, ROOT_FILE = Node("dir", 0, 0o755), Node("file", 0, 0o644)
 AGENT_DIR, AGENT_FILE = Node("dir", AGENT_UID, 0o755), Node("file", AGENT_UID, 0o644)
-WORK_CLAUDE, WORK_MCP = f"{WORK}/.claude", f"{WORK}/.mcp.json"
+WORK_CLAUDE, WORK_MCP, WORK_GIT = f"{WORK}/.claude", f"{WORK}/.mcp.json", f"{WORK}/.git"
 FS_REFUSALS = [
     ("/ group-writable", _put("/", Node("dir", 0, 0o775)), "/ must be"),
     ("/srv not root's", _put("/srv", Node("dir", 1000, 0o755)), "/srv must be"),
@@ -461,6 +461,18 @@ FS_REFUSALS = [
         ),
         ".mcp.json must be absent",
     ),
+    # KD-9482: a repository at work/'s top is the one Claude Code's own git finds for its cwd, outside the sandbox
+    ("work .git the agent's repository", _put(WORK_GIT, AGENT_DIR), ".git must be absent"),
+    ("work .git root's directory", _put(WORK_GIT, ROOT_DIR), ".git must be absent"),
+    ("work .git a symlink", _put(WORK_GIT, Node("link", AGENT_UID, 0o777)), ".git must be absent"),
+    (
+        "work .git a gitfile",
+        lambda fs: (
+            _put(WORK_GIT, Node("file", AGENT_UID, 0o444))(fs),
+            fs.data.__setitem__(WORK_GIT, b"gitdir: ../elsewhere\n"),
+        ),
+        ".git must be absent",
+    ),
 ]
 
 
@@ -503,6 +515,17 @@ def test_sandbox_mount_points_in_work_are_accepted(policies, registry):
     for name in ("settings.json", "settings.local.json", "hooks", "skills", "agents"):
         _put(f"{WORK_CLAUDE}/{name}", Node("file", AGENT_UID, 0o444))(fs)
     _put(WORK_MCP, Node("file", AGENT_UID, 0o444))(fs)
+    _put(WORK_GIT, Node("file", AGENT_UID, 0o444))(fs)  # the policy's denied work/.git; git takes it for no repository
+    assert _plan("boss", b"", registry, fs=fs).model == "sonnet"
+
+
+def test_clones_below_work_are_no_repository_at_its_top(policies, registry):
+    """A developer's clones and card worktrees live in work/<Repo>/, each with its own .git."""
+    fs = installed("boss", render_policy(policies["boss"]))
+    _put(f"{WORK}/DigiPaddock", AGENT_DIR)(fs)
+    _put(f"{WORK}/DigiPaddock/.git", AGENT_DIR)(fs)
+    _put(f"{WORK}/DigiPaddock.KD-12", AGENT_DIR)(fs)
+    _put(f"{WORK}/DigiPaddock.KD-12/.git", AGENT_FILE)(fs)
     assert _plan("boss", b"", registry, fs=fs).model == "sonnet"
 
 
@@ -969,14 +992,18 @@ class Launcher:
         self.venv, self.out = self.tmp / "venv", self.tmp / "out"
         self.agent_bin = self.tmp / "agent-bin"
         self.registry, self.plan = self.tmp / "agents.json", self.tmp / "plan.txt"
+        # root's Claude Code (/opt/digipaddock-claude) and a copy an older install left in the home: only the first runs
+        self.claude_dir = self.tmp / "opt-claude"
         (self.home / ".local" / "bin").mkdir(parents=True)
+        self.claude_dir.mkdir()
         self.bin.mkdir()
         for path, text in (
             (self.bin / "python3", PYTHON),
             (self.bin / "sudo", RECORDER.replace("{tool}", "sudo")),
+            (self.claude_dir / "claude", RECORDER.replace("{tool}", "claude")),
             (
                 self.home / ".local" / "bin" / "claude",
-                RECORDER.replace("{tool}", "claude"),
+                RECORDER.replace("{tool}", "home-claude"),
             ),
         ):
             path.write_text(text, encoding="utf-8", newline="\n")
@@ -985,6 +1012,16 @@ class Launcher:
             COMMON / "kd",
             self.common / "kd",
             ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        # the test's tree is not root's: kd.secret_fd's ownership check has its own tests (test_claude_code)
+        # (defined before the module's entry runs main)
+        fd = self.common / "kd" / "secret_fd.py"
+        entry = '\nif __name__ == "__main__":'
+        source = fd.read_text(encoding="utf-8")
+        assert source.count(entry) == 1
+        fd.write_text(
+            source.replace(entry, "\ndef root_program(path, lstat=None):\n    return None\n\n" + entry),
+            encoding="utf-8",
         )
         shutil.copyfile(
             COMMON / "naming.default.json", self.common / "naming.default.json"
@@ -1031,6 +1068,7 @@ class Launcher:
 
     def script(self, text: str) -> str:
         for old, new in (
+            ("/opt/digipaddock-claude", _shell_path(self.claude_dir)),
             ("/opt/digipaddock-venv", _shell_path(self.venv)),
             ("/opt/digipaddock/common", self.common.as_posix()),
             ("/srv/digipaddock-agents", self.srv.as_posix()),
@@ -1159,6 +1197,35 @@ def test_root_owned_agent_bin_comes_first_in_path(tmp_path, policies, owner_uid,
     assert run.code == 0, run.stderr
     head = run.claude_env["PATH"].split(":")[0]
     assert (head == _shell_path(h.agent_bin / "boss")) is first
+
+
+@needs_bash
+def test_session_runs_roots_claude_and_nothing_of_the_home(tmp_path, policies):
+    # KD-9474: the binary that gets the host's token is root's; the home's copy and the home's bin are never used
+    h = Launcher(tmp_path, launch="replay")
+    h.reset()
+    _switched(h, "boss")
+    _replay(h, render_plan(LaunchPlan("sonnet", _merged(policies["boss"]))))
+    run = h.run(LAUNCHER, "boss", user="digi-boss")
+    assert run.code == 0, run.stderr
+    assert run.claude is not None and not (h.out / "home-claude.argv").exists()
+    path = run.claude_env["PATH"].split(":")
+    assert _shell_path(h.claude_dir) in path
+    assert not any(entry.startswith(_shell_path(h.home)) for entry in path), path
+
+
+@needs_bash
+def test_session_without_roots_claude_starts_nothing(tmp_path, policies):
+    # no fallback: a missing binary stops the launch with what root has to do
+    h = Launcher(tmp_path, launch="replay")
+    h.reset()
+    _switched(h, "boss")
+    _replay(h, render_plan(LaunchPlan("sonnet", _merged(policies["boss"]))))
+    (h.claude_dir / "claude").unlink()
+    run = h.run(LAUNCHER, "boss", user="digi-boss")
+    assert (run.code, run.claude) == (1, None)
+    assert "claude_setup.sh install" in run.stderr
+    assert not (h.out / "home-claude.argv").exists()
 
 
 @needs_bash
@@ -1326,6 +1393,9 @@ def test_session_mode_execs_stream_json_with_model_and_strict_settings(tmp_path,
     # keeps the token out of Bash instead
     assert "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB" not in env
     assert env["BASH_DEFAULT_TIMEOUT_MS"] == env["BASH_MAX_TIMEOUT_MS"] == "660000"
+    # KD-9482: git — Claude Code's own and the agent's — finds no repository above the agent's folder and reads no
+    # system config
+    assert env["GIT_CEILING_DIRECTORIES"] == folder and env["GIT_CONFIG_NOSYSTEM"] == "1"
     assert run.sudo is None
 
 

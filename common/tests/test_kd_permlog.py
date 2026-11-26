@@ -164,7 +164,9 @@ def test_the_hook_never_blocks_and_never_echoes_the_event(kd_permlog):
 
 def test_script_shebang_and_lf():
     data = (COMMON / "bin/kd-permlog").read_bytes()
-    assert data.startswith(b"#!/usr/bin/env python3\n") and b"\r" not in data
+    # isolated (KD-9474): it runs as the agent outside the sandbox, so nothing of the agent's home (a .pth in
+    # ~/.local/lib, PYTHON* variables, a python3 earlier on PATH) is loaded into it
+    assert data.startswith(b"#!/usr/bin/python3 -I\n") and b"\r" not in data
 
 
 def test_script_is_executable_in_git_index():

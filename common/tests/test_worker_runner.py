@@ -325,6 +325,7 @@ def _prepare(world, **override):
         getpw=lambda user: PW,
         login=lambda home, uid, agent: [],
         look=OWN,
+        program=lambda path: None,  # the host's root binary: kd.claude_code's own tests
     )
     kwargs.update(override)
     return wr.prepare(world["job"], **kwargs)
@@ -342,6 +343,24 @@ def test_prepare_refuses_a_job_whose_agent_login_is_missing(world):
         )
     assert seen == [("/home/digi-dev", PW.pw_uid, "dev")]
     assert not (Path(world["root"]) / "dev" / "worker1" / "settings.json").exists()
+
+
+def test_prepare_refuses_a_job_when_roots_claude_is_not_there_or_not_roots(world):
+    # KD-9474: the job fails with the reason; it never falls back to a claude of the agent's home
+    seen = []
+    with pytest.raises(wr.RunnerError, match="claude: /opt/digipaddock-claude/claude is missing; claude_setup.sh install"):
+        _prepare(world, program=lambda path: seen.append(path) or f"{path} is missing; claude_setup.sh install")
+    assert seen == ["/opt/digipaddock-claude/claude"]
+    assert not (Path(world["root"]) / "dev" / "worker1" / "settings.json").exists()
+
+
+def test_the_runners_default_check_is_the_root_binarys():
+    import inspect
+
+    from kd import claude_code
+
+    for function in (wr.prepare, wr.run):
+        assert inspect.signature(function).parameters["program"].default is claude_code.problem
 
 
 def test_prepare_restores_the_slots_placeholders_for_every_job(world):
@@ -504,6 +523,7 @@ def test_prepare_refuses_a_policy_of_another_agent(world):
             getpw=lambda user: PW,
             login=lambda *a: [],
             look=OWN,
+            program=lambda path: None,
         )
 
 
@@ -541,7 +561,8 @@ def test_argv_and_env_isolate_the_session(world, monkeypatch):
     monkeypatch.setattr(wr.claude_token, "env", lambda *a: {})
     p = _prepare(world)
     a = wr.argv(p)
-    assert a[0] == "/home/digi-dev/.local/bin/claude" and a[1:3] == ["-p", p.task]
+    # KD-9474: root's binary by its absolute path, never a copy in the agent's home
+    assert a[0] == "/opt/digipaddock-claude/claude" and a[1:3] == ["-p", p.task]
     for flag in wr.ISOLATION_ARGS:
         assert flag in a
     assert (
@@ -565,10 +586,13 @@ def test_argv_and_env_isolate_the_session(world, monkeypatch):
     )
     assert (
         e["HOME"] == "/home/digi-dev"
+        and e["PATH"] == "/opt/digipaddock-claude:/usr/local/bin:/usr/bin:/bin"
         and e["DISABLE_AUTOUPDATER"] == "1"
         and e["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
         and e["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
     )
+    # KD-9482: git finds no repository above the slot and reads no system config
+    assert e["GIT_CEILING_DIRECTORIES"] == p.slot.root and e["GIT_CONFIG_NOSYSTEM"] == "1"
     assert not any(
         k.startswith("CLAUDE_CODE_OAUTH") or k == "ANTHROPIC_API_KEY" for k in e
     )
@@ -851,6 +875,7 @@ def _options(world, copies=None):
         getpw=lambda user: PW,
         look=OWN,
         login=lambda *a: [],
+        program=lambda path: None,
         now=lambda: NOW,
     )
 
@@ -919,9 +944,10 @@ def test_run_writes_the_record_and_hands_the_patch_over(world):
     before = [c for c in calls if c[2] is None]
     after = [c for c in calls if c[2] is not None]
     assert before and all(Path(c[1] or "") == Path(config) for c in before), calls
-    assert [c[0][1] for c in after] == ["rev-parse", "diff", "diff"], calls
+    assert [_subcommand(c[0]) for c in after] == ["rev-parse", "diff", "diff"], calls
     assert all(c[1] == "/dev/null" and c[2] == PW.pw_uid for c in after), calls
-    assert all("--no-ext-diff" in c[0] and "--no-textconv" in c[0] for c in after if c[0][1] == "diff"), calls
+    assert all("--no-ext-diff" in c[0] and "--no-textconv" in c[0] for c in after if _subcommand(c[0]) == "diff"), calls
+    assert all("protocol.allow=never" in c[0] for c in calls), calls
 
 
 def test_end_line_has_outcome_comment_and_usage(world):
@@ -1136,6 +1162,114 @@ def test_the_jobs_git_config_runs_nothing_after_the_job(world, tmp_path):
     assert code == 0 and end["state"] == "done", end
     assert not marker.exists()
     assert "+three" in Path(rec["patch"]).read_text()
+
+
+def _subcommand(argv):
+    """git's subcommand past the leading ``-c name=value`` pairs."""
+    at = 1
+    while argv[at] == "-c":
+        at += 2
+    return argv[at]
+
+
+def test_git_runs_with_no_program_or_transport_the_repository_names():
+    # KD-9482: command-line config beats every config file, and GIT_NO_LAZY_FETCH stops a missing object's fetch
+    seen = {}
+
+    def run(argv, **kwargs):
+        seen.update(argv=argv, env=kwargs["env"])
+        return SimpleNamespace(stdout="ok\n")
+
+    assert wr._git(run, ["status"], env={"KEEP": "1"}) == "ok"
+    assert seen["argv"] == ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+                            "-c", "core.sshCommand=false", "-c", "protocol.allow=never", "status"]
+    assert seen["env"] == {"KEEP": "1", "GIT_NO_LAZY_FETCH": "1"}
+
+
+def test_the_clone_reaches_the_hosts_copy_by_its_local_path_only(world):
+    # before the job root clones and fetches from the host's copy: the file transport and no other
+    copy, head = _synced(world)
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.run(argv, **kwargs)
+
+    wr.prepare_repo(Slot.parse("dev", "worker1"), str(copy), job_id=world["job"]["id"], run=run,
+                    chown=lambda *a: None, root=world["root"], pull={"number": 7, "head": head, "target": "main"})
+    assert calls and all("protocol.allow=never" in argv for argv in calls), calls
+    local = [_subcommand(argv) for argv in calls if "protocol.file.allow=always" in argv]
+    assert local == ["clone", "fetch", "fetch"], calls
+
+
+def _as_self(argv, **kwargs):
+    """subprocess.run without the agent's ids: the test runs git as its own user (Windows has no setuid)."""
+    return subprocess.run(argv, **{k: v for k, v in kwargs.items() if k not in ("user", "group", "extra_groups")})
+
+
+def _job_copy(world, monkeypatch):
+    """The slot's copy as prepare_repo leaves it and the job's Prepared, for the reads after the session."""
+    monkeypatch.setattr(wr.os, "geteuid", lambda: 1000, raising=False)
+    slot = Slot.parse("dev", "worker1")
+    base, branch = wr.prepare_repo(slot, str(world["source"]), job_id=world["job"]["id"], run=subprocess.run,
+                                   chown=lambda *a: None, root=world["root"])
+    work = Path(world["root"]) / "dev" / "worker1" / "work"
+    prepared = wr.Prepared(job=world["job"], slot=slot, user=PW.pw_name, uid=PW.pw_uid, gid=PW.pw_gid,
+                           home=PW.pw_dir, settings_path="", system_path="", task="", base=base, branch=branch,
+                           model=None, work=str(work))
+    return prepared, work / "repo"
+
+
+def test_a_lazy_fetch_the_job_set_up_runs_nothing_after_the_job(world, tmp_path, monkeypatch):
+    # KD-9482 (probed on the host): an object missing from a copy the job made a partial clone sent git to fetch it,
+    # through the ssh program the job's config named — as the agent, outside the job's sandbox
+    marker = tmp_path / "ran"
+    tool = tmp_path / "tool.sh"
+    tool.write_text(f"#!/bin/sh\necho ran >> {marker.as_posix()}\nexit 1\n")
+    tool.chmod(0o755)
+    p, repo = _job_copy(world, monkeypatch)
+    for key, value in (("remote.origin.url", "ssh://example.test/x"), ("remote.origin.promisor", "true"),
+                       ("extensions.partialClone", "origin"), ("core.sshCommand", tool.as_posix())):
+        git("config", key, value, cwd=repo)
+    (repo / "README.md").write_text("three\n")
+    git("commit", "-qam", "three", cwd=repo)
+    blob = git("rev-parse", "HEAD:README.md", cwd=repo)
+    loose = repo / ".git" / "objects" / blob[:2] / blob[2:]
+    loose.chmod(0o644)  # git writes objects read-only (Windows will not unlink such a file)
+    loose.unlink()  # the job's commit names an object it removed
+
+    with pytest.raises(wr.RunnerError, match="^git: "):
+        wr.repo_facts(p, run=_as_self)
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("plant", [
+    lambda git_dir: (git_dir / "commondir").write_text("/elsewhere/.git\n"),
+    lambda git_dir: (git_dir / "config.worktree").write_text("[core]\n"),
+    lambda git_dir: (git_dir.rename(git_dir.with_name("old")), git_dir.write_text("gitdir: /elsewhere/.git\n")),
+    lambda git_dir: git_dir.rename(git_dir.with_name("old")),  # git would look for a repository above the copy
+], ids=["commondir", "config.worktree", "gitfile", "missing"])
+def test_a_job_copy_that_points_git_elsewhere_is_refused_before_git_runs(world, monkeypatch, plant):
+    p, repo = _job_copy(world, monkeypatch)
+    plant(repo / ".git")
+
+    def run(*a, **k):
+        pytest.fail("git must not run on a refused copy")
+
+    for read in (wr.repo_facts, lambda p, run: wr.hand_over_patch(p, run=run, agent_tmp=str(world["tmp"]))):
+        with pytest.raises(wr.RunnerError, match="the job's copy is refused"):
+            read(p, run=run)
+
+
+def test_prepare_leaves_nothing_but_its_own_entries_in_work(world):
+    # KD-9482: work/ is the job's cwd and the agent's to write; what a job left there — a repository at its top, a
+    # folder's instructions, settings — never reaches the next job
+    work = Path(world["root"]) / "dev" / "worker1" / "work"
+    for path in (".git/config", "notes/CLAUDE.md", ".claude/rules/x.md", "stray.txt"):
+        (work / path).parent.mkdir(parents=True, exist_ok=True)
+        (work / path).write_text("x\n")
+    _prepare(world)
+    assert sorted(p.name for p in work.iterdir()) == ["CLAUDE.local.md", "CLAUDE.md", "inputs", "repo", "tmp"]
 
 
 # --- a job on a model of the Claude subscription ------------------------------------------------------

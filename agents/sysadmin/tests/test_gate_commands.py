@@ -111,6 +111,42 @@ def test_top_w_cannot_raise_iterations():
     assert gate.check("top -bn1 -w").sudo is False
 
 
+@pytest.mark.parametrize("raw", [
+    "systemctl show -P Environment app.service", "systemctl show -PEnvironment app.service",
+    "systemctl show -p Environment --value app.service", "systemctl show --value app.service",
+    "systemctl show --property=Environment --value app.service", "systemctl show -lP ExecStart app.service",
+])
+def test_systemctl_value_without_its_name_is_refused(raw):
+    # review 26.11.2026: a value printed without "Environment=" escapes the mask of a unit's environment
+    with pytest.raises(gate.Deny, match="--value"):
+        gate.check(raw)
+
+
+@pytest.mark.parametrize("raw", [
+    "systemctl show app.service", "systemctl show -p Environment app.service",
+    "systemctl show --property=Environment,ExecStart app.service", "systemctl show -p ActiveState digipaddock",
+    "systemctl cat app.service",
+])
+def test_systemctl_show_with_property_names_is_allowed(raw):
+    assert gate.check(raw).argv == shlex.split(raw)
+
+
+@pytest.mark.parametrize("raw", [
+    "ps -eo pid,args:40", "ps -o args:20 -p 1", "ps axo cmd:30", "ps -O args:10", "ps -eo pid --cols 50",
+    "ps aux --width=60", "ps -eo args --columns 30", "ps -eo pid,command:5",
+])
+def test_ps_column_width_is_refused(raw):
+    # review 26.11.2026: a width the agent picks cuts "https://user:pass@host" before "@" — no mask sees a password
+    with pytest.raises(gate.Deny, match="ширин"):
+        gate.check(raw)
+    assert "s3cr3tpw" in gate.redact(b"curl https://admin:s3cr3tpw\nnext line\n").decode()  # such a cut line
+
+
+@pytest.mark.parametrize("raw", ["ps -eo pid,args", "ps auxww", "ps -eo pid,user,comm,rss,pcpu --sort=-rss"])
+def test_ps_without_a_width_is_allowed(raw):
+    assert gate.check(raw).argv == shlex.split(raw)
+
+
 def test_journalctl_grep_allows_unicode_but_not_control_chars():
     assert gate.check("journalctl -u app -g ошибка").sudo is False
     with pytest.raises(gate.Deny):

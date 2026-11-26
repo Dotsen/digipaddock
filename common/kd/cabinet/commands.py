@@ -37,6 +37,19 @@ BATCHED_EVENTS = ("decision.approved", "decision.rejected")
 MERGED = store_mod.MERGED
 JOIN = " | "
 TEXT_MAX = 2000  # the session host's one line (kd.session_host.protocol.TEXT_MAX)
+# The first parts of the command keys the cabinet writes itself (``derive``, chats, voice, waits, continuations,
+# defers, councils, help, problems, the chain's gate, jobs, incidents, probes, the dev seed) and of an agent's own
+# namespace: ``command.enqueue`` takes none of them from any caller, so nobody holds a key the cabinet needs later
+# (KD-9479). One taken before anyway is queued past (``store.KEY_TAKEN_SUFFIX``).
+RESERVED_KEYS = frozenset({
+    "agent", "assist", "brief-more", "chat", "cont", "continue", "council", "ev", "incident", "job", "probe",
+    "problem", "seed", "stage-return", "stage-review", "stop", "time", "voice", "wait",
+})
+AGENT_KEY = "agent:{agent}:{key}"  # an agent's own key: its namespace, never one of the cabinet's
+
+
+def reserved(key: str) -> bool:
+    return key.split(":", 1)[0] in RESERVED_KEYS
 
 
 def derive(event: Mapping) -> list:
@@ -114,8 +127,11 @@ def stale_reason(store, command: Mapping, hosted: Callable[[str], bool],
         return CARD_GONE
     if card.terminal and command["kind"] in _ENDS_AT_DONE:  # Done, or closed without the work
         return CARD_DONE
-    if command["kind"] in ("assigned", "continue", "urgent") and card.assignee != "@" + command["agent"]:
-        return REASSIGNED
+    if ((command["kind"] in ("assigned", "continue", "urgent") or self_signal(command))
+            and card.assignee != "@" + command["agent"]):
+        return REASSIGNED  # an agent's own signal holds only on a card it holds (KD-9479)
+    if self_signal(command) and card.terminal:
+        return CARD_DONE
     if _brief_wake(command):
         if card.status != "Inbox":
             return BRIEF_LEFT_INBOX
@@ -131,7 +147,7 @@ def stale_reason(store, command: Mapping, hosted: Callable[[str], bool],
 def _council_reason(store, command: Mapping) -> Optional[str]:
     """A council's wake of its writer (``council:<id>:round:<n>:writer``) holds while that council waits for the
     writer in that round: cancelled, ended or gone to its next round, it wakes nobody."""
-    parts = str(command.get("key") or "").split(":")
+    parts = str(command.get("key") or "").rstrip(store_mod.KEY_TAKEN_SUFFIX).split(":")  # one taken before, too
     if len(parts) != 5 or (parts[0], parts[2], parts[4]) != ("council", "round", "writer"):
         return None
     from kd.cabinet import councils  # at call time, as above
@@ -201,12 +217,18 @@ def grant_check(ctx, now: float) -> Callable[[str], Optional[str]]:
 
 
 def enqueue_signal(store, *, agent: str, text: str, card: str = "", initiator: str, key: str,
-                   space: str = "chat") -> dict:
+                   space: str = "chat", strict: bool = False) -> dict:
     """An explicit command (BOSS, the monitor, a worker's result): in the card's thread, or in the agent's own
-    ``space`` — its chat, or "Monitor" for the monitor's wakes."""
+    ``space`` — its chat, or "Monitor" for the monitor's wakes. ``strict``: the key is a caller's own (the op
+    boundary) — in use with other content it is a conflict (``store.enqueue``)."""
     with store.transaction():
         thread = store.card(card).thread if card else store.agent_thread(agent, space)
         return store._enqueue_in_tx(
             {"key": key, "agent": agent, "thread": thread, "card": card, "kind": "signal", "text": text,
-             "initiator": initiator}
+             "initiator": initiator}, strict=strict
         )
+
+
+def self_signal(command: Mapping) -> bool:
+    """A signal an agent queued for itself (``command.enqueue`` as its own principal)."""
+    return command["kind"] == "signal" and command.get("initiator") == "agent:" + command["agent"]

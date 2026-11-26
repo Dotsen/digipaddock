@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from kd import cap_grants, cap_units, naming, specializations
+from kd import cap_grants, cap_units, claude_code, naming, specializations
 from kd.agent_text import (
     AgentTextError,
     read_instruction_file,
@@ -115,10 +115,8 @@ BASE_COMMANDS = (
     "systemctl",
     "useradd",
 )
-# What add_user.sh needs besides them: downloads, the Hindsight client, and the base
-# user's Claude Code, whose version every agent user gets.
+# What add_user.sh needs besides them: the download of Claude Code (claude_setup.sh) and the Hindsight client.
 ADD_USER_COMMANDS = ("curl", "node")
-BASE_CLAUDE = ".local/bin/claude"
 # What add_user.sh does while preparing the user, before its board grant; tests pin every
 # source and path to the script, so the plan cannot drift from it.
 HINDSIGHT_ENV = "/etc/hindsight/coding-agent.env"
@@ -131,9 +129,10 @@ ADD_USER_EFFECTS = (
     ),
     (
         "download",
-        ".local/bin/claude",
-        "Claude Code, the base user's version, from https://claude.ai/install.sh"
-        " (network)",
+        claude_code.BINARY,
+        "Claude Code of common/install/versions.json, root's for every agent: root:root 0755, its sha256"
+        " checked before it is installed (common/install/claude_setup.sh; network once a version);"
+        " {user} removes an older install's copy in its home (.local/bin/claude, .local/share/claude)",
     ),
     ("dir", ".config", "{owner} 0700, made by {user}"),
     (
@@ -704,10 +703,6 @@ def _check_commands(
     )
     if inputs.manifest.user != DEFAULT_USER:
         required |= set(ADD_USER_COMMANDS)
-        claude = f"{HOME_ROOT}/{DEFAULT_USER}/{BASE_CLAUDE}"
-        # Inspected, never read: add_user.sh gives every agent user this version.
-        if host.kind(claude) not in ("file", "symlink"):
-            errors.append(f"missing dependency: Claude Code of {DEFAULT_USER} {claude}")
     errors += [
         f"missing dependency: command {command}"
         for command in sorted(required)
@@ -1066,7 +1061,7 @@ def _user_actions(
     )
     owner = f"{user}:{user}"
     for kind, target, detail in ADD_USER_EFFECTS:
-        path = target if kind in ("plugin", "group") else f"{home}/{target}"
+        path = target if kind in ("plugin", "group") or target.startswith("/") else f"{home}/{target}"
         plan.add(kind, path, detail.format(user=user, owner=owner))
 
 

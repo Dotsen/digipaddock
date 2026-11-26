@@ -248,6 +248,24 @@ def test_head_tail_line_slicing_allowed(raw):
     assert gate.check(raw).argv[0] in ("head", "tail")
 
 
+@pytest.mark.parametrize("raw", [
+    "cat -A /etc/app.conf", "cat -T /etc/app.conf", "cat -t /etc/app.conf", "cat -v /etc/app.conf",
+    "cat -e /etc/app.conf", "cat -nA /etc/app.conf", "cat -vET /etc/app.conf",
+])
+def test_cat_that_reshapes_the_text_is_denied(raw):
+    # review 26.11.2026: "password<Tab>= x" shown as "password^I= x", or "Р" as "M-PM- ", is no longer a pair the
+    # masks recognise
+    with pytest.raises(gate.Deny, match="маск"):
+        gate.check(raw)
+    assert red("password\t=\thunter2") == "password\t=\t***"
+    assert "hunter2" in red("password^I=^Ihunter2")  # what cat -T printed: the mask cannot see it
+
+
+@pytest.mark.parametrize("raw", ["cat /etc/hosts", "cat -n /etc/hosts", "cat -E /etc/hosts", "cat -bsu /etc/hosts"])
+def test_cat_that_keeps_the_text_is_allowed(raw):
+    assert gate.check(raw).argv[0] == "cat"
+
+
 def test_truncated_proxy_line_no_password_prefix_leaks():
     # the output is cut only at the end (LIMIT 1 MB): head/tail without -c, the beginning is always a whole line
     password = b"FakePassW0rd"
@@ -301,6 +319,8 @@ def _timed(data: bytes) -> float:
     ("scheme_chain", b"a://b:" * 170000),
     ("begin_run", b"-----BEGIN " + b"A" * (1024 * 1024)),
     ("slashes_scheme", b"a://b:" + b"c" * (1024 * 1024)),
+    ("env_backslashes", b"Environment=A=" + b"\\" * (1024 * 1024)),
+    ("env_continued", b"Environment=" + b'"A=\\\n' * 200000),
 ])
 def test_adversarial_input_is_linear(name, data):
     assert _timed(data) < 2.0, name
@@ -329,3 +349,23 @@ def test_a_units_environment_keeps_its_names_and_loses_its_values():
     out = red('Environment=APPCONFIG=rawsecretvalue LANG=C.UTF-8 "OPTS=-a -b"\nEnvironment=\nUser=www\n')
     assert out == 'Environment=APPCONFIG=*** LANG=*** "OPTS=***"\nEnvironment=\nUser=www\n'
     assert count("  Environment=TOKENLESS=abc\n") == 1
+
+
+def test_a_unit_files_environment_as_written_is_masked_too():
+    # review 26.11.2026: systemctl cat prints a unit file as written — spaces around "=", lines continued with "\"
+    assert red("Environment = APPCONFIG=rawsecret1\n") == "Environment = APPCONFIG=***\n"
+    assert red("Environment\t=\t\"APPCONFIG=raw secret2\"\n") == "Environment\t=\t\"APPCONFIG=***\"\n"
+    unit = "Environment=A=rawsecret3 \\\n    B=rawsecret4 \\\n  C=rawsecret5\nUser=www\n"
+    assert red(unit) == "Environment=A=*** \\\n    B=*** \\\n  C=***\nUser=www\n"
+    assert count(unit) == 3
+    # a quoted value continued on the next line keeps its line breaks: a masked file keeps its line numbers
+    quoted = 'Environment="OPTS=-a \\\n  -b" X=raw6\nUser=www\n'
+    assert red(quoted) == 'Environment="OPTS=***\\\n" X=***\nUser=www\n'
+    assert red("environment=a=b\n") == "environment=a=b\n"  # systemd keys are case-sensitive: not a unit's line
+
+
+def test_a_units_set_credential_value_is_masked():
+    assert red("SetCredential=dbcred:rawsecret7\n") == "SetCredential=dbcred:***\n"
+    assert red("  SetCredential = api:raw secret8\nUser=www\n") == "  SetCredential = api:***\nUser=www\n"
+    assert red("SetCredential=dbcred:\n") == "SetCredential=dbcred:\n"
+    assert red("LoadCredential=db:/etc/app/db.cred\n") == "LoadCredential=db:/etc/app/db.cred\n"

@@ -4,7 +4,8 @@ Two files. The repository's ``common/coordination/pipeline.json`` holds the limi
 ships with the code (who may close a card without the owner's acceptance is the project's ``done_by`` in the
 cabinet). The mode is the root's: ``/etc/digipaddock/pipeline.json`` (root, 0644) says ``observe`` or ``enforce`` and since
 when; no file is ``observe``. In ``observe`` the cabinet records outcomes, waits and problems and starts nothing;
-in ``enforce`` it queues continuations, asks BOSS about problems and holds an agent's Done to the policy. No agent
+in ``enforce`` it queues continuations and asks BOSS about problems. An agent's Done is held to the closing policy
+(the project's ``done_by``, a chain stage's gate, nothing open) in both modes. No agent
 writes either file: ``pipeline_setup.sh enable|disable`` does, after its readiness check.
 """
 

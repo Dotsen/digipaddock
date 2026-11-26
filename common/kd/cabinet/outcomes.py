@@ -63,8 +63,9 @@ def _listed(name: str, items: List[str]) -> str:
 def done_refusal(ctx, record, agent: str) -> Optional[str]:
     """Why the agent may not close the card itself, or None (the closing policy — pipeline spec 5.5): Done on a
     project that does not name the agent (its ``done_by``) is the owner's acceptance, and nothing on the
-    card may still be open — its children, its dependencies, its decisions, its PR. Applied in enforce; the owner's
-    «Accept» is not."""
+    card may still be open — its children, its dependencies, its decisions, its PR. Applied in both modes of the
+    pipeline: ``observe`` (its default, and the kill switch) relaxes continuations and problems, never who closes
+    a card. The owner's «Accept» is not an agent's Done."""
     project = ctx.store.project(record.project)
     if not agent or (project or {}).get("done_by") != agent:
         return f"Done on {record.project} is the owner's acceptance: finish with --outcome review"
@@ -89,6 +90,40 @@ def done_refusal(ctx, record, agent: str) -> Optional[str]:
     if helped:
         parts.append(_listed("help", [h[:8] for h in helped]))
     return f"{record.id} has open conditions: {'; '.join(parts)}" if parts else None
+
+
+def hand_in_refusal(ctx, record, agent: str, status: str) -> Optional[str]:
+    """Why the agent may not move its own card to ``status`` (Review or Done) now, or None — what the card says,
+    checked again when an outcome applies: its open help, Review only from In Progress and not of an aggregate
+    with open stages (its stages move it), Done only from In Progress or Review within the closing policy."""
+    helped = _open_help(ctx.store, record, agent)
+    if helped:
+        return (f"{record.id} has open help {', '.join(h[:8] for h in helped)}: wait for it "
+                "(--outcome wait_dependency) or let it end")
+    if status == REVIEW:
+        if record.status != IN_PROGRESS:
+            return f"review is from In Progress; {record.id} is {record.status}"
+        staged = stages.open_children(ctx.store, record.id)
+        if staged:  # an aggregate goes to Review by itself when its stages are Done
+            return (f"{record.id} has open conditions: {_listed('children', staged)}; its stages move it to"
+                    " Review — end the turn without an outcome")
+    if status == DONE:
+        if record.status not in (IN_PROGRESS, REVIEW):
+            return f"done is from In Progress or Review; {record.id} is {record.status}"
+        return done_refusal(ctx, record, agent)
+    return None
+
+
+def hand_in(ctx, record, agent: str, status: str) -> None:
+    """The guards of the agent's own move of its card to Review or Done, one for both ways in — ``kd-work finish
+    --outcome review|done`` and ``kd-task edit --status Review|Done``: not past its council's findings (refused in
+    enforce, a problem in observe — ``council_rounds.gate``), then ``hand_in_refusal`` (refused in both modes)."""
+    from kd.cabinet import council_rounds  # at call time: it loads the jobs and the API
+
+    council_rounds.on_finish(ctx, record, agent, "review" if status == REVIEW else "done", False)
+    why = hand_in_refusal(ctx, record, agent, status)
+    if why:
+        raise _refused(why)
 
 
 def _invalid(message):
@@ -249,7 +284,7 @@ def _specs(ctx, record, agent: str, outcome: str, request) -> List[dict]:
             and outcome != "wait_dependency"):
         raise _invalid("--card, --operation, --assist, --contour, --council and --deploy go with --outcome "
                        "wait_dependency")
-    if outcome in ("review", "done", "wait_user") or named_councils:  # not past the council's findings
+    if outcome == "wait_user" or named_councils:  # not past the council's findings (review and done: hand_in)
         from kd.cabinet import council_rounds  # at call time: it loads the jobs and the API
 
         council_rounds.on_finish(ctx, record, agent, outcome, bool(named_councils))
@@ -276,23 +311,7 @@ def _specs(ctx, record, agent: str, outcome: str, request) -> List[dict]:
     if outcome == "continue":
         return [{"kind": "decision", "ref": d, "blocking": 0} for d in _open_decisions(s, record, agent)]
     if outcome in ("review", "done"):
-        helped = _open_help(s, record, agent)
-        if helped:
-            raise _refused(f"{record.id} has open help {', '.join(h[:8] for h in helped)}: wait for it "
-                           "(--outcome wait_dependency) or let it end")
-    if outcome == "review" and record.status != IN_PROGRESS:
-        raise _refused(f"review is from In Progress; {record.id} is {record.status}")
-    if outcome == "review":
-        staged = stages.open_children(s, record.id)
-        if staged:  # an aggregate goes to Review by itself when its stages are Done
-            raise _refused(f"{record.id} has open conditions: {_listed('children', staged)}; its stages move it to"
-                           " Review — end the turn without an outcome")
-    if outcome == "done":
-        if record.status not in (IN_PROGRESS, REVIEW):
-            raise _refused(f"done is from In Progress or Review; {record.id} is {record.status}")
-        why = done_refusal(ctx, record, agent) if ctx.pipeline().enforcing else None
-        if why:
-            raise _refused(why)
+        hand_in(ctx, record, agent, REVIEW if outcome == "review" else DONE)
     return []
 
 
@@ -454,13 +473,9 @@ def _move(ctx, record, agent: str, status: str) -> Optional[str]:
     """The card to ``status`` as the agent would move it (its transition table); why not, or None."""
     if record.status == status:  # moved there during the turn already (by hand, or by the owner)
         return None
-    helped = _open_help(ctx.store, record, agent)  # asked for after the outcome was recorded (H06)
-    if helped:
-        return f"{record.id} has open help {', '.join(h[:8] for h in helped)}: wait for it or let it end"
-    if status == DONE and ctx.pipeline().enforcing:
-        why = done_refusal(ctx, record, agent)
-        if why:
-            return why
+    why = hand_in_refusal(ctx, record, agent, status)  # what changed since the finish (help asked for after it, H06)
+    if why:
+        return why
     try:
         plan = worker_board.plan("edit", {"status": status}, agent=agent,
                                  card=boss_board.card_from(record.to_dict()), targets=ctx.targets(), specs=None)
@@ -516,8 +531,10 @@ def _apply(ctx, record, row: Mapping, command: Mapping) -> Optional[str]:
 
 
 def _defer(ctx, record, row: Mapping) -> None:
-    """``wait_until`` applied — the card put off until its time wait's moment, in place of the active defer;
-    the agent's third defer in a row without ``kd-work progress`` asks BOSS to look (``continuation_limit``)."""
+    """``wait_until`` applied — the card put off until its time wait's moment, in place of the agent's own active
+    defer; an owner's or BOSS's stands (``defers.place``): the turn ends waiting on its time wait, whose wake that
+    defer holds until its own time. The agent's third defer in a row without ``kd-work progress`` asks BOSS to look
+    (``continuation_limit``)."""
     s, agent = ctx.store, row["agent"]
     waits.activate(ctx, row["command"])
     timed = [w for w in waits.of_command(s, row["command"]) if w["kind"] == "time"]
@@ -525,7 +542,7 @@ def _defer(ctx, record, row: Mapping) -> None:
     placed = defers.place(ctx, record, until=timed[0]["ref"], source="agent", by=f"agent:{agent}",
                           command=row["command"], streak=streak)
     _set(s, row["command"], "final")
-    if streak >= defers.STREAK:
+    if placed["source"] == "agent" and streak >= defers.STREAK:
         problems.raise_problem(ctx, key=f"defer:{placed['id']}", record=record, kind="continuation_limit",
                                agent=agent, command=row["command"], detail={"reason": "defer", "streak": streak})
     waits.settle(ctx, row["command"])  # the moment may have passed while the turn ran

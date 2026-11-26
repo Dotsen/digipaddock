@@ -96,7 +96,6 @@ COMMANDS = (
     "/usr/sbin/runuser",
     "/usr/sbin/useradd",
 )
-BASE_CLAUDE = f"/home/digi/{install_plan.BASE_CLAUDE}"
 # What a check may read: no home, no secret, no sudoers file; and the one listing.
 STATE_FILES = {
     install_plan.PASSWD,
@@ -224,7 +223,7 @@ def _make_host(base: Path) -> Host:
     host.set_runtime({"dev": {"runtime": "generated", "user": "digi-dev"}})
     for unit in sorted((REPO / "common/systemd").iterdir()):
         _copy(unit, host.at(f"{install_plan.UNIT_DIR}/{unit.name}"))
-    for command in (*COMMANDS, BASE_CLAUDE):  # a command on PATH is linked by the host's name (stage_setup.sh)
+    for command in COMMANDS:  # a command on PATH is linked by the host's name (stage_setup.sh)
         _write(host.at(naming.rewrite(command)), "#!/bin/sh\n")
     for directory in (
         install_plan.SUDOERS_DIR,
@@ -483,8 +482,8 @@ def test_board_acl_strings_are_add_user_strings() -> None:
 def test_add_user_effects_are_the_script_effects() -> None:
     sources = ADD_USER + HINDSIGHT_LIB
     for needle in (
-        "https://claude.ai/install.sh",
-        "~/.local/bin/claude",
+        'bash "$REPO/common/install/claude_setup.sh" install',
+        "cd ~ && rm -f -- .local/bin/claude && rm -rf -- .local/share/claude",
         "mkdir -p ~/.config && chmod 0700 ~/.config",
         "@vectorize-io/hindsight-coding-agents",
         "~/.hindsight/coding-agent.json",
@@ -492,7 +491,6 @@ def test_add_user_effects_are_the_script_effects() -> None:
         "useradd --create-home --user-group --shell /bin/bash",
         'runuser -u "$u" -- chmod 0750 "/home/$u"',
         'runuser -u "$base" -- chmod 0750 "/home/$base"',
-        '"/home/$base/.local/bin/claude" --version',
     ):
         assert needle in sources, needle
     # the group the user joins is the cabinet's socket group, as cabinet_setup.sh names it
@@ -501,10 +499,11 @@ def test_add_user_effects_are_the_script_effects() -> None:
     assert ("group", group) in {(k, t) for k, t, _d in install_plan.ADD_USER_EFFECTS}
     described = " ".join(f"{t} {d}" for _k, t, d in install_plan.ADD_USER_EFFECTS)
     for needle in (
-        "https://claude.ai/install.sh",
+        "common/install/claude_setup.sh",
+        "/opt/digipaddock-claude/claude",
         "@vectorize-io/hindsight-coding-agents",
         ".hindsight/coding-agent.json",
-        ".local/bin/claude",
+        ".local/bin/claude, .local/share/claude",
     ):
         assert needle in described, needle
 
@@ -513,7 +512,8 @@ def test_add_user_effects_are_listed_without_values(host: Host) -> None:
     actions = _actions(host.plan())
     key = actions[("file", "/home/digi-boss/.hindsight/coding-agent.json")]
     assert "API key (value not shown)" in key
-    assert "network" in actions[("download", "/home/digi-boss/.local/bin/claude")]
+    assert "network" in actions[("download", "/opt/digipaddock-claude/claude")]  # root's, outside the home
+    assert not [k for k in actions if k[1].endswith("/.local/bin/claude")]
     assert not [k for k in actions if ".bun" in k[1]]  # Bun ran only the Telegram plugin
     assert "bun" not in (ADD_USER + HINDSIGHT_LIB).lower()
     assert "network" in actions[("plugin", "hindsight")]
@@ -853,7 +853,6 @@ MISSING = [
     ("sudo", _delete("/usr/bin/sudo"), "command sudo"),
     ("flock", _delete("/usr/bin/flock"), "command flock"),
     ("alert-command", _delete("/usr/local/bin/kd-alert"), "command kd-alert"),
-    ("base-claude", _delete(BASE_CLAUDE), "Claude Code of digi"),
     ("launcher", _delete("/usr/local/bin/agent-launch"), "missing dependency: /usr/local/bin/agent-launch"),
     ("package-installer", _delete("/usr/bin/apt-get"), "command apt-get"),
     ("alert-unit", _delete(f"{install_plan.UNIT_DIR}/digipaddock-alert@.service"), "unit /etc/systemd/system/digipaddock-alert@.service"),

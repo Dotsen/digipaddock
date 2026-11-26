@@ -16,6 +16,7 @@ HOST = naming.load_host(str(REPO / "host" / "host.example.json"))
 def test_versions_has_exactly_the_pinned_keys(tmp_path):
     v = install_catalog.versions()
     assert v["claude_code"] == "2.1.289"
+    assert all(len(v[f"claude_code_sha256_{arch}"]) == 64 for arch in ("amd64", "arm64"))
     assert v["node_major"] == "22"
     assert v["hindsight_api"] == "1.1.0"
     assert v["torch"] == "2.14.1"

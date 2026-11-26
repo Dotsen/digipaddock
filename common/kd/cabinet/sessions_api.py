@@ -16,7 +16,7 @@ import traceback
 from typing import Mapping, Tuple
 
 from kd import agents, llm_models, naming
-from kd.cabinet import api, commands, jobs, outcomes, schema, store, usage, voice, waits
+from kd.cabinet import api, commands, continuations, jobs, outcomes, schema, store, usage, voice, waits
 
 KEY = re.compile(r"[A-Za-z0-9:._-]{1,64}")
 SESSION_ID = COMMAND_ID = re.compile(r"[0-9a-f]{32}")
@@ -391,6 +391,10 @@ def _host_report(ctx, principal, request):
 
 # --- commands, sessions -----------------------------------------------------------------------
 def _command_enqueue(ctx, principal, request):
+    """An explicit signal: an executor's (kd-nudge, kd-work reply — the coordinator's wakes) for any agent, or an
+    agent's for itself (the monitor's wake of its own agent). The cabinet's own key prefixes are nobody's
+    (``commands.RESERVED_KEYS``); an agent's key is kept in its namespace (``agent:<name>:<key>``), its card must be
+    one it holds and not closed, and its signals there count in the card's continuations window (KD-9479)."""
     agent = _agent(ctx, request.get("agent"))
     if principal.kind == "agent" and principal.agent != agent:
         raise api.ApiError("refused", "an agent queues commands only for itself")
@@ -400,14 +404,27 @@ def _command_enqueue(ctx, principal, request):
     key = request.get("key")
     if not isinstance(key, str) or not KEY.fullmatch(key):
         raise _invalid("key must be 1 to 64 letters, digits or :._-")
+    if commands.reserved(key):
+        raise api.ApiError("refused", f"key {key.split(':', 1)[0]}:… is reserved for the cabinet's own commands")
     card = request.get("card", "")
     if card:
-        card = api._card(ctx, card).id
+        record = api._card(ctx, card)
+        card = record.id
     space = request.get("space", "chat")
     if not isinstance(space, str) or space not in schema.AGENT_SPACES or (card and space != "chat"):
         raise _invalid(f"space is one of {', '.join(schema.AGENT_SPACES)}, and only without a card")
+    if principal.kind == "agent":
+        key = commands.AGENT_KEY.format(agent=agent, key=key)
+        if card:
+            if record.assignee != "@" + agent or record.terminal:
+                raise api.ApiError("refused", f"{card} is not yours in work ({record.status}, held by "
+                                              f"{record.assignee or 'nobody'}): an agent signals only a card it holds")
+            why = continuations.self_signal_refusal(ctx, record)
+            if why:
+                raise api.ApiError("refused", why)
     command = commands.enqueue_signal(
-        ctx.store, agent=agent, text=text, card=card, initiator=api.card_actor(principal), key=key, space=space
+        ctx.store, agent=agent, text=text, card=card, initiator=api.card_actor(principal), key=key, space=space,
+        strict=True,
     )
     return {"command": command}
 

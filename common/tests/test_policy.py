@@ -230,6 +230,47 @@ def test_no_policy_reaches_the_backlog_cli() -> None:
         assert all("backlog" not in c["commands"] for c in policy["channels"]), name
 
 
+def _glob(pattern: str) -> re.Pattern[str]:
+    """A path rule's pattern as Claude Code matches it (gitignore style): ``/**/`` is any number of folders,
+    ``**`` at the end everything below, ``*`` one name's part."""
+    parts = re.split(r"(/\*\*/|/\*\*$|\*)", pattern)
+    table = {"/**/": "/(?:.*/)?", "/**": "/.*", "*": "[^/]*"}
+    return re.compile("".join(table.get(part, re.escape(part)) for part in parts) + "$")
+
+
+def _denied(policy: Policy, rule: str) -> bool:
+    """``Edit(/<path>)`` matches a deny rule of the policy."""
+    path = rule[len("Edit(/"):-1]
+    return any(
+        deny.startswith("Edit(/") and _glob(deny[len("Edit(/"):-1]).match(path)
+        for deny in _permissions(policy)["deny"]
+    )
+
+
+@pytest.mark.parametrize("name", [*LEGACY, "boss"])
+def test_no_session_makes_work_a_repository(name: str) -> None:
+    # KD-9482: Claude Code runs git in its cwd outside the sandbox; a work/.git would be that repository
+    policy = _compile(name)
+    work = f"/srv/digipaddock-agents/{name}/work"
+    assert f"{work}/.git" in _sandbox(policy)["filesystem"]["denyWrite"]
+    assert _denied(policy, f"Edit(/{work}/.git)") and _denied(policy, f"Edit(/{work}/.git/config)")
+    assert not _denied(policy, f"Edit(/{work}/DigiPaddock/README.md)")  # the clones below stay as they were
+
+
+@pytest.mark.parametrize("name", [*LEGACY, "boss"])
+def test_no_session_leaves_instructions_for_a_later_one(name: str) -> None:
+    # KD-9482: Claude Code loads a folder's CLAUDE.md once a file there is read, and .claude/rules as instructions
+    policy = _compile(name)
+    work = f"/srv/digipaddock-agents/{name}/work"
+    for path in ("tmp/cards/KD-1/CLAUDE.md", "tmp/CLAUDE.local.md", "DigiPaddock/CLAUDE.local.md",
+                 "DigiPaddock/.claude/rules/x.md"):
+        assert _denied(policy, f"Edit(/{work}/{path})"), path
+    assert _denied(policy, f"Edit(//home/digi-{name}/.claude/rules/x.md)")
+    # the developer edits a clone's tracked CLAUDE.md in a pull request; no one else holds a clone
+    clone = [f"Edit(/{work}/DigiPaddock/CLAUDE.md)", f"Edit(/{work}/DigiPaddock.KD-12/agents/dev/CLAUDE.md)"]
+    assert [_denied(policy, rule) for rule in clone] == [name != "dev"] * 2
+
+
 def test_coordinator_policy_is_read_only_without_network() -> None:
     policy = _compile("boss")
     permissions, sandbox = _permissions(policy), _sandbox(policy)
@@ -665,6 +706,11 @@ TAMPERING = [
     ("drop-instructions-deny", "sysadmin", _remove((*PERMS, "deny"), "Edit(//srv/digipaddock-agents/sysadmin/CLAUDE.md)"), "missing deny Edit(//srv/digipaddock-agents/sysadmin/CLAUDE.md)"),
     ("writable-board", "boss", _remove((*FS, "denyWrite"), "/srv/digipaddock-agents/board"), "sandbox: missing denyWrite /srv/digipaddock-agents/board"),
     ("writable-placeholder", "dev", _remove((*FS, "denyWrite"), "/srv/digipaddock-agents/dev/work/CLAUDE.md"), "missing denyWrite /srv/digipaddock-agents/dev/work/CLAUDE.md"),
+    ("writable-work-git", "sysadmin", _remove((*FS, "denyWrite"), "/srv/digipaddock-agents/sysadmin/work/.git"), "missing denyWrite /srv/digipaddock-agents/sysadmin/work/.git"),
+    ("editable-work-git", "dev", _remove((*PERMS, "deny"), "Edit(//srv/digipaddock-agents/dev/work/.git/**)"), "missing deny Edit(//srv/digipaddock-agents/dev/work/.git/**)"),
+    ("editable-folder-instructions", "sysadmin", _remove((*PERMS, "deny"), "Edit(//srv/digipaddock-agents/sysadmin/work/**/CLAUDE.md)"), "missing deny Edit(//srv/digipaddock-agents/sysadmin/work/**/CLAUDE.md)"),
+    ("editable-temp-instructions", "dev", _remove((*PERMS, "deny"), "Edit(//srv/digipaddock-agents/dev/work/tmp/**/CLAUDE.md)"), "missing deny Edit(//srv/digipaddock-agents/dev/work/tmp/**/CLAUDE.md)"),
+    ("editable-rules", "boss", _remove((*PERMS, "deny"), "Edit(//**/.claude/rules/**)"), "missing deny Edit(//**/.claude/rules/**)"),
     ("bypass-mode", "sysadmin", _put((*PERMS, "defaultMode"), "bypassPermissions"), "defaultMode must be dontAsk"),
     ("auto-mode", "dev", _put((*PERMS, "disableAutoMode"), "enable"), "disableAutoMode must be disable"),
     ("extra-directory", "boss", _add((*PERMS, "additionalDirectories"), "/etc"), "additional directory /etc"),
