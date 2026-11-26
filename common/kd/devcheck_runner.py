@@ -3,9 +3,9 @@
 The session host starts it as ``digipaddock-operation-<id12>`` once ``<id>.request.json`` is written. The runner reads the PR
 live in Forgejo with the ci account's token (statuses only), sets ``devcheck/<profile>`` pending on its head, checks
 the head and the set's components out as root with the read key of the repo user, hands the directory to the ci user,
-prepares the dependencies and runs each profile in its own child unit ``digipaddock-devcheck-<id12>``: the ci user, no
-network, a read-only system with only the check's directory writable, the platform's sockets and secrets out of
-sight, the deployed ``devcheck_steps.py`` (never the candidate's runner). The first red profile stops the rest. The
+prepares the dependencies and runs each profile in its own child unit ``digipaddock-devcheck-<id12>``: the ci user in a
+pid namespace of its own (``ci_unit``: no other check's unit is within its reach), no network, a read-only system
+with only the check's directory writable, the platform's sockets and secrets out of sight, the deployed ``devcheck_steps.py`` (never the candidate's runner). The first red profile stops the rest. The
 PR's head is read again — moved: ``superseded``. The statuses end success or failure (error for what did not run)
 and link the card. The masked log is ``LOG_DIR/<id>.log``; the result ``<id>.result.json`` is what the host reports
 to the cabinet. Nothing of the request becomes a unit property: the limits are this file's.
@@ -28,8 +28,8 @@ import urllib.error
 import urllib.request
 from typing import Callable, Optional
 
+from kd import ci_unit, naming, repo_sync
 from kd import devcheck_steps as steps
-from kd import naming, repo_sync
 from kd.envfile import load_env
 from kd.session_host import devcheck as host_devcheck
 from kd.session_host import protocol
@@ -219,8 +219,8 @@ class _Log:
 
 class _Check:
     def __init__(self, check_id: str, record: dict, *, request_path: str, forge, git, units, clock, sleep, work,
-                 deps, own, deployed, host, repos, remove, ci_user, log: _Log, token: str):
-        self.id, self.params, self.request_path = check_id, record["params"], request_path
+                 deps, own, deployed, host, repos, remove, ci_user, log: _Log, token: str, tools: Callable):
+        self.id, self.params, self.request_path, self.tools = check_id, record["params"], request_path, tools
         self.forge, self.git, self.units, self.clock, self.sleep = forge, git, units, clock, sleep
         self.deps, self.own, self.deployed, self.host, self.repos = deps, own, deployed, host, repos
         self.remove, self.ci_user, self.log, self.token = remove, ci_user, log, token
@@ -245,6 +245,10 @@ class _Check:
         missing += [f"{name} checkout" for name in steps.NEEDS.get(p["project"], ()) if name not in p["set"]]
         if missing:
             raise _End("environment_not_ready", f"{p['project']}: no steps on this tree for {', '.join(missing)}")
+        absent = self.tools()  # no unit of the ci user starts without its own pid namespace
+        if absent:
+            raise _End("environment_not_ready", f"no {', '.join(absent)}: the ci units cannot be isolated",
+                       maintenance=f"нет {', '.join(absent)} (util-linux): юниты проверок не изолируются")
         token = self._token()
         self.url = f"{self.host['cabinet_origin']}/cards/{p['card']}"
         self.api = self._forge(lambda: self.forge(token))
@@ -360,19 +364,16 @@ class _Check:
         self.log.write(f"== {what}: {repo} {ref} at {sha[:12]}")
 
     def _child(self, project: str, profile: str, prepared: dict, limit: int) -> list:
-        props = [f"User={self.ci_user}", f"Group={self.ci_user}", "PrivateNetwork=yes", "PrivateTmp=yes",
-                 "ProtectSystem=strict", "ProtectHome=yes", f"ReadWritePaths={self.dir}", "NoNewPrivileges=yes",
-                 "CPUQuota=200%", "MemoryMax=3G", f"RuntimeMaxSec={limit}",
-                 "InaccessiblePaths=" + " ".join("-" + path for path in INACCESSIBLE),
-                 f"WorkingDirectory={self.src}"]
-        argv = ["systemd-run", "--unit", host_devcheck.child_unit(self.id), "--wait", "--pipe", "--collect",
-                "--quiet"]
-        for prop in props:
-            argv += ["-p", prop]
-        argv += [f"--setenv=HOME={os.path.join(self.dir, 'home')}", "--setenv=CI=1", "--",
-                 posixpath.join(prepared["venv"], "bin", "python"), "-I",
-                 posixpath.join(self.deployed, "common", "kd", "devcheck_steps.py"), project, profile, self.src]
-        return argv + [f"{name}={path}" for name, path in self.sets.items()]
+        """A profile's unit: the ci user in a pid namespace of its own (``ci_unit``), no network, only the check's
+        directory writable."""
+        props = ["PrivateNetwork=yes", "PrivateTmp=yes", "ProtectSystem=strict", "ProtectHome=yes",
+                 f"ReadWritePaths={self.dir}", "CPUQuota=200%", "MemoryMax=3G", f"RuntimeMaxSec={limit}",
+                 "InaccessiblePaths=" + " ".join("-" + path for path in INACCESSIBLE)]
+        command = [posixpath.join(prepared["venv"], "bin", "python"), "-I",
+                   posixpath.join(self.deployed, "common", "kd", "devcheck_steps.py"), project, profile, self.src]
+        command += [f"{name}={path}" for name, path in self.sets.items()]
+        return ci_unit.argv(host_devcheck.child_unit(self.id), props, command, user=self.ci_user,
+                            env=[f"HOME={os.path.join(self.dir, 'home')}", "CI=1"], workdir=self.src)
 
     def _profiles(self, prepared: dict) -> None:
         p = self.params
@@ -449,11 +450,12 @@ class _Check:
 def run(check_id: str, *, state_dir: str, forge, git, units, clock, deps, own, sleep=time.sleep, work: str = WORK,
         log_dir: str = LOG_DIR, token: str = TOKEN, deployed: str = DEPLOYED, host: Optional[dict] = None,
         repos: Optional[dict] = None, mask: Optional[Callable] = None, remove=shutil.rmtree, ci_user: str = "",
-        observe_group: str = "", stop: Optional[Callable] = None) -> dict:
+        observe_group: str = "", stop: Optional[Callable] = None, tools: Callable = ci_unit.missing) -> dict:
     """The check's stages, its result file written last. ``forge(token)`` → a client (``Forgejo``); ``git(argv)``
     and ``units(argv)`` → (exit code, output); ``deps(id, project, checkout, sets, budget_s=…)`` → ``{"venv",
     "node"}``; ``own(path, user=…, recursive=…)`` or ``own(path, group=…)``; ``stop(unit names)`` — the tests'
-    units, which outlive a stopped or failed runner (each is a unit of its own)."""
+    units, which outlive a stopped or failed runner (each is a unit of its own); ``tools()`` → the isolation
+    wrapper's tools that are missing."""
     if not protocol.HEX32.fullmatch(check_id or ""):
         raise RunnerError("bad check id")
     request_path = os.path.join(state_dir, host_devcheck.DIR, f"{check_id}.request.json")
@@ -467,7 +469,7 @@ def run(check_id: str, *, state_dir: str, forge, git, units, clock, deps, own, s
     log = _Log(log_dir, check_id, mask or _mask, own, observe_group)
     check = _Check(check_id, record, request_path=request_path, forge=forge, git=git, units=units, clock=clock,
                    sleep=sleep, work=work, deps=deps, own=own, deployed=deployed, host=host, repos=repos,
-                   remove=remove, ci_user=ci_user, log=log, token=token)
+                   remove=remove, ci_user=ci_user, log=log, token=token, tools=tools)
     maintenance = ""
     _ARMED[0] = True
     try:
@@ -751,18 +753,14 @@ class Deps:
         ]
 
     def _unit(self, check_id: str, new: str, command: list, limit: int = DEPS_MAX_S, *, network: bool = False) -> list:
-        """A deps unit: the ci user, only its build directory writable; with network only for a step that runs
+        """A deps unit: the ci user in a pid namespace of its own (``ci_unit``: another check's tests cannot reach
+        this build through /proc), only its build directory writable; with network only for a step that runs
         nothing of the candidate's (a fetch, npm ci with no scripts)."""
-        props = [f"User={self.ci_user}", f"Group={self.ci_user}", *(() if network else ("PrivateNetwork=yes",)),
-                 "PrivateTmp=yes", "ProtectSystem=strict",
-                 "ProtectHome=yes", f"ReadWritePaths={new}", "NoNewPrivileges=yes", "CPUQuota=200%", "MemoryMax=3G",
-                 f"RuntimeMaxSec={limit}", "InaccessiblePaths=" + " ".join("-" + path for path in INACCESSIBLE),
-                 f"WorkingDirectory={new}"]
-        argv = ["systemd-run", "--unit", host_devcheck.deps_unit(check_id), "--wait", "--pipe", "--collect",
-                "--quiet"]
-        for prop in props:
-            argv += ["-p", prop]
-        return argv + [f"--setenv=HOME={os.path.join(new, '.home')}", "--", *command]
+        props = [*(() if network else ("PrivateNetwork=yes",)), "PrivateTmp=yes", "ProtectSystem=strict",
+                 "ProtectHome=yes", f"ReadWritePaths={new}", "CPUQuota=200%", "MemoryMax=3G",
+                 f"RuntimeMaxSec={limit}", "InaccessiblePaths=" + " ".join("-" + path for path in INACCESSIBLE)]
+        return ci_unit.argv(host_devcheck.deps_unit(check_id), props, command, user=self.ci_user,
+                            env=[f"HOME={os.path.join(new, '.home')}"], workdir=new)
 
     def _node_modules(self, node: str, code: str) -> None:
         web = os.path.join(code, *WEB.split("/"))

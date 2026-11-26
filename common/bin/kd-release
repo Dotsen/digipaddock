@@ -53,7 +53,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))  # common/ of this release tree
-from kd import ids, release_requests  # noqa: E402
+from kd import ids, plain_tree, release_requests  # noqa: E402
 
 try:
     import fcntl
@@ -545,9 +545,9 @@ def _plain(run, mirror, head):
     p = run(["git", "-C", mirror, "ls-tree", "-r", head], capture_output=True, text=True, timeout=T_LOCAL)
     if p.returncode != 0:
         raise RuntimeError("git ls-tree failed")
-    odd = [ln.split("\t", 1)[-1] for ln in (p.stdout or "").splitlines() if ln.split(" ", 1)[0] in ("120000", "160000")]
+    odd = plain_tree.refusal(plain_tree.odd_entries(p.stdout))
     if odd:
-        raise RuntimeError(f"a symlink or a submodule in the release — not releasing: {', '.join(odd[:5])}")
+        raise RuntimeError(f"{odd} — not releasing")
     return head
 
 

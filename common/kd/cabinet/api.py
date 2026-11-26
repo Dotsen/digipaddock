@@ -514,6 +514,23 @@ def _require(ctx, principal, perm, project=None):
         raise ApiError("refused", f"no permission {perm}")
 
 
+def reads_agent_thread(ctx, principal: Principal, space: str = "chat") -> bool:
+    """An agent's own thread with people in ``space`` (its chat or «Monitor», outside cards) is open to the caller:
+    a person needs ``perms.AGENT_THREAD_PERMS`` over every project; an agent or a service passes (an agent's own
+    thread only — its callers check that)."""
+    return all(allowed(ctx, principal, perm) for perm in perms.AGENT_THREAD_PERMS[space])
+
+
+def _require_agent_thread(ctx, principal: Principal, space: str = "chat"):
+    for perm in perms.AGENT_THREAD_PERMS[space]:
+        _require(ctx, principal, perm)
+
+
+def agent_spaces(ctx, principal: Principal) -> tuple:
+    """The spaces of agents' own threads the caller may read, in ``schema.AGENT_SPACES`` order."""
+    return tuple(space for space in schema.AGENT_SPACES if reads_agent_thread(ctx, principal, space))
+
+
 def _visible_card(ctx, principal, card_id) -> store.CardRecord:
     record = _card(ctx, card_id)
     if not visible(ctx, principal, record.project):
@@ -944,8 +961,8 @@ def _addressees(ctx, record, text: str, author: str = "") -> list:
 
 
 def _readable_file(ctx, principal, file_id) -> dict:
-    """An attachment of a thread the caller may read: a card's (its project in sight) or an agent's chat
-    (people with ``agents.chat``, an agent its own); anything else is «no such file»."""
+    """An attachment of a thread the caller may read: a card's (its project in sight) or an agent's chat or «Monitor»
+    (people who may read that thread, ``reads_agent_thread``; an agent its own); anything else is «no such file»."""
     if not isinstance(file_id, str) or not FILE_ID.fullmatch(file_id):
         raise ApiError("not_found", "no such file")
     try:
@@ -954,7 +971,8 @@ def _readable_file(ctx, principal, file_id) -> dict:
         raise ApiError("not_found", "no such file")
     if row["thread_kind"] in schema.AGENT_THREAD_KINDS:  # its chat or "Monitor"
         mine = principal.kind != "agent" or principal.agent == row["agent"]
-        if not (mine and allowed(ctx, principal, "agents.chat")):
+        space = store.SPACE_OF[row["thread_kind"]]
+        if not (mine and reads_agent_thread(ctx, principal, space)):
             raise ApiError("not_found", "no such file")
     else:
         _visible_card(ctx, principal, row["card"])
@@ -1708,8 +1726,19 @@ def event_filter(ctx, principal):
                 projects[card_id] = None
         return projects[card_id]
 
-    chat = allowed(ctx, principal, "agents.chat")
+    spaces = agent_spaces(ctx, principal)
     settings = allowed(ctx, principal, "settings")
+    threads = {}
+
+    def space_of(event) -> str:
+        """The space of the agent's own thread an event is in — its chat or «Monitor» — by the event's thread (a
+        command's or a session's event names no space)."""
+        thread = event.get("thread")
+        if thread is None:
+            return (event.get("payload") or {}).get("space") or "chat"
+        if thread not in threads:
+            threads[thread] = ctx.store.agent_space(thread) or "chat"
+        return threads[thread]
 
     def shown(event):
         """Which memory a project has and who closes its cards are the settings' — a partner
@@ -1722,7 +1751,7 @@ def event_filter(ctx, principal):
 
     def keep(event):
         if sessions_api.chat_event(event):
-            return chat  # an agent's chat and its runs outside cards
+            return space_of(event) in spaces  # an agent's chat or «Monitor» and its runs there
         if event.get("card"):
             project = project_of(event["card"])
             return project is not None and visible(ctx, principal, project)

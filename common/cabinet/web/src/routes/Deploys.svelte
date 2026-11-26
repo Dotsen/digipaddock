@@ -12,14 +12,15 @@
   // The forge reader brings the runs and the counts every 45 s; the page reads itself every 30 s. The owner starts a
   // manual environment (prod) from its row: the sheet names the commit that goes out and the new commits it
   // brings, skip_tests where the workflow takes it, then the saved passkey's signature with no fingerprint or PIN —
-  // no typed word; kd-review dispatches it with its own token, and the run comes with the reader's next read. While
+  // no typed word; the request names the commit the sheet showed and a branch that moved since is shown again
+  // before any prompt; kd-review dispatches it with its own token, and the run comes with the reader's next read. While
   // a deploy is under way (`in_flight`) the button waits, and the server refuses a second launch.
   import { onMount } from "svelte";
   import Freshness from "../components/Freshness.svelte";
   import Sheet from "../components/Sheet.svelte";
   import { apiGet } from "../lib/api";
   import {
-    checkMark, commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, PLATFORM,
+    checkMark, commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, HeadChanged, launchDeploy, live, PLATFORM,
     projectRows, projectsOf, settled, shortSha, statusClass, statusMark, type CommitGroup,
   } from "../lib/deploys";
   import { errorText, t, type Key } from "../lib/i18n.svelte";
@@ -43,11 +44,15 @@
   let skipTests = $state(false);
   let busy = $state(false);
   let launchError = $state("");
+  let shownHead = $state(""); // the commit the sheet shows: the one a launch binds, '' when the page knew none
+  let headNote = $state(""); // the branch moved (or its head was unknown): the sheet says so, nothing was signed
 
   function openLaunch(row: DeployEnv) {
     launching = row;
     skipTests = false;
     launchError = "";
+    shownHead = row.head;
+    headNote = "";
   }
 
   async function launch() {
@@ -55,12 +60,23 @@
     if (!row) return;
     busy = true;
     launchError = "";
+    headNote = "";
     try {
-      const done = await launchDeploy(row, row.skip_tests && skipTests);
+      const done = await launchDeploy(row, row.skip_tests && skipTests, shownHead);
       toast(t("deploys.launch.done", { project: row.name, env: done.env, sha: shortSha(done.sha) }));
       launching = null;
       await data.run();
     } catch (error) {
+      if (error instanceof HeadChanged) {
+        // look again before any prompt: the sheet takes the live head, then the row's commits from a fresh read
+        shownHead = error.head;
+        headNote = t(error.unseen ? "deploys.launch.unseen" : "deploys.launch.moved", {
+          branch: row.branch, sha: shortSha(error.head),
+        });
+        await data.run();
+        launching = list?.envs.find((e) => e.project === row.project && e.env === row.env) ?? row;
+        return;
+      }
       launchError = isCancelled(error) ? t("error.passkey_cancelled") : errorText(error);
     } finally {
       busy = false;
@@ -335,11 +351,14 @@
 {#if launching}
   <Sheet title={t("deploys.launch.title", { project: launching.name, env: launching.env })} onclose={() => (launching = null)}>
     <p>
-      {launching.head
-        ? t("deploys.launch.head", { branch: launching.branch, sha: shortSha(launching.head) })
+      {shownHead
+        ? t("deploys.launch.head", { branch: launching.branch, sha: shortSha(shownHead) })
         : t("deploys.launch.head_unknown", { branch: launching.branch })}
     </p>
-    {#if launching.pending !== null}
+    {#if headNote}<p class="error-text" role="alert">{headNote}</p>{/if}
+    {#if shownHead && launching.head !== shownHead}
+      <p class="muted">{t("deploys.launch.commits_lagging")}</p>
+    {:else if launching.pending !== null}
       <p>
         {launching.pending > 0
           ? t("deploys.launch.pending", {

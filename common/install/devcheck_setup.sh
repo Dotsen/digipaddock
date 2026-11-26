@@ -14,6 +14,8 @@
 #   daily download), the scan's $SCAN_WORK and the seen findings' $STATE_DIR (root's); the units
 #   digipaddock-vulnscan.service/.timer, the timer on, and a first run started now — until its database is there,
 #   the vulns step of every PR is red.
+#   Every unit the ci user runs in starts as root and enters a pid namespace of its own (unshare, then setpriv to the
+#   ci user, kd/ci_unit.py): check names a missing tool.
 # check: the same state, changing nothing; the token missing is a warning (checks end environment_not_ready until
 #   it is there), and so is a database not downloaded yet. Exit 1 with the reasons.
 # disable: every check contour goes into maintenance (kd-cabinet contour maintenance): no new check starts, a running
@@ -73,6 +75,10 @@ check() {
   # the dependency builds (npm ci, a venv per lock hash) run with these
   command -v npm >/dev/null 2>&1 || problems+=("no npm")
   /usr/bin/python3 -I -c 'import ensurepip, venv' 2>/dev/null || problems+=("no python3 -m venv")
+  # every unit of the ci user enters a pid namespace of its own through these (kd/ci_unit.py): without them none starts
+  for tool in /usr/bin/unshare /usr/bin/setpriv /usr/bin/env; do
+    [ -x "$tool" ] || problems+=("no $tool (util-linux, coreutils)")
+  done
   arch=$(osv_arch) || arch=none
   if [ "$arch" = none ]; then
     problems+=("osv-scanner: no release binary for $(uname -m)")

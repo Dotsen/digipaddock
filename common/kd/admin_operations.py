@@ -492,9 +492,12 @@ def load_home(path: Optional[Path] = None) -> str:
 
 # The factory's own host takes no script step (review 04.11.2026): there the exec user is root and a free-form
 # text — the denylist reads only its text — reaches the cage itself (grants, policies, other agents' secrets,
-# the exec key). Its catalog operations and an exact critical action, signed per command, stay.
-HOME_SCRIPT = "{home} is the factory's own host: a plan has no script step there (a catalog operation, or an exact " \
-    "critical action through kd-admin-propose-action)"
+# the exec key). A root cron line and a sysctl or logrotate file carry text root runs or the kernel applies later,
+# so they are refused there too (review 26.11.2026). Its other catalog operations and an exact critical action,
+# signed per command, stay.
+HOME_VERBS = ("script", "cron.line", "file.drop")
+HOME_SCRIPT = "{home} is the factory's own host: a plan has no script, cron.line or file.drop step there (a catalog " \
+    "operation, or an exact critical action through kd-admin-propose-action)"
 
 
 def load_enabled(path: Path = ENABLED_PATH) -> FrozenSet[str]:
@@ -729,7 +732,7 @@ def validate_proposal(data: object, catalog: Catalog, inventory: Iterable[str], 
     inventory, enabled = set(inventory), set(enabled)
     operations = tuple(validate_operation(op, catalog, inventory, enabled) for op in raw)
     for number, op in enumerate(operations, 1):
-        if op.verb == "script" and home is not None and op.server == home:
+        if op.verb in HOME_VERBS and home is not None and op.server == home:
             raise ProposalError(HOME_SCRIPT.format(home=home))
         command = remote_command(op, catalog)
         guarded = exec_policy.protect(command)

@@ -178,7 +178,8 @@ edit_keys() {  # edit_keys <файл> <добавить строку или ""> 
   if [ -n "$add" ]; then expected=$((expected + 1)); fi
   after=$(grep -c '' "$tmp" || true)
   [ "$after" -eq "$expected" ] || { rm -f "$tmp"; echo "$file: expected $expected lines, got $after; untouched" >&2; exit 1; }
-  chown --reference="$file" "$tmp"
+  # run by the exec user itself (exec_edit_keys) it cannot hand the file to anyone: the owner stays, a group it is not in too
+  chown --reference="$file" "$tmp" || [ "$(id -u)" != 0 ]
   chmod --reference="$file" "$tmp"
   mv -f "$tmp" "$file"
   if command -v restorecon >/dev/null; then restorecon "$file" || true; fi
@@ -188,6 +189,17 @@ key_blob() {  # key_blob '<type> <blob> <comment>' — the key's base64 blob, ""
   local type blob rest
   read -r type blob rest <<< "${1:-}" || true
   if [[ ${blob:-} =~ ^[A-Za-z0-9+/]{40,}={0,2}$ ]]; then printf '%s\n' "$blob"; fi
+}
+# The exec user's ~/.ssh belongs to that user, who can replace it or authorized_keys with a symlink: root following
+# it would write (install, cp, mv, chown) into a system directory. So for any exec user but root the edit is made by
+# the exec user itself (the same function, in its own shell); root's own ~/.ssh is root's.
+exec_edit_keys() {  # the arguments of edit_keys
+  if [ "$exec_user" = root ]; then
+    edit_keys "$@"
+  else
+    # the same shell options as this script: a failed copy (a full disk) stops the edit before the file is touched
+    runuser -u "$exec_user" -- bash -c "$(declare -f edit_keys); set -euo pipefail; edit_keys "'"$@"' _ "$@"
+  fi
 }
 # --- end edit_keys
 
@@ -272,7 +284,7 @@ if [ "$mode" = remove ]; then
   rm -f /home/agent-ro/.ssh/authorized_keys
   exec_blob=$(key_blob "$exec_key")
   if grep -qsF -e "$EXEC_COMMENT" ${exec_blob:+-e "$exec_blob"} "$exec_auth"; then
-    edit_keys "$exec_auth" "" "$EXEC_COMMENT" "$exec_blob"
+    exec_edit_keys "$exec_auth" "" "$EXEC_COMMENT" "$exec_blob"
   fi
   # shellcheck disable=SC2046 # the test environments' reads close with the list; the gate prints plain paths
   test_env_acl revoke $(test_env_reads "$TEST_ENVS" 2>/dev/null || true)
@@ -514,8 +526,8 @@ chmod 0644 "$tmp"
 mv -f "$tmp" /home/agent-ro/.ssh/authorized_keys
 
 # 5. the exec key: only its own line; foreign lines (an rrsync mirror of backups, for one) are left alone
-[ -d "$exec_home/.ssh" ] || install -d -o "$exec_user" -g "$(id -gn "$exec_user")" -m 0700 "$exec_home/.ssh"
-[ -f "$exec_auth" ] || install -o "$exec_user" -g "$(id -gn "$exec_user")" -m 0600 /dev/null "$exec_auth"
+# made by the exec user itself (its ~/.ssh is not root's to write into, see exec_edit_keys)
+runuser -u "$exec_user" -- sh -c 'umask 077; [ -d "$1" ] || mkdir -m 0700 "$1"; [ -f "$2" ] || : > "$2"' _ "$exec_home/.ssh" "$exec_auth"
 # the key's line is the gate's forced command (restrict = no pty, no forwarding, no user rc; the executor
 # runs ssh -T). The whole line is compared, not only the key: a line from before the gate is rewritten.
 # every other line with the key's comment or its blob goes too — the same key under another comment (or none)
@@ -524,7 +536,7 @@ exec_line="restrict,command=\"$EXEC_GATE\",from=\"$STAGE_IP\" $exec_key"
 exec_blob=$(key_blob "$exec_key")
 if ! grep -qxF -- "$exec_line" "$exec_auth" \
     || [ "$(grep -cF -e "$EXEC_COMMENT" -e "$exec_blob" "$exec_auth" || true)" -ne 1 ]; then
-  edit_keys "$exec_auth" "$exec_line" "$EXEC_COMMENT" "$exec_blob"
+  exec_edit_keys "$exec_auth" "$exec_line" "$EXEC_COMMENT" "$exec_blob"
 fi
 
 # 6. SELinux (AlmaLinux): labels for the new files

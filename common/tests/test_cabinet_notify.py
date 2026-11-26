@@ -506,12 +506,14 @@ def test_a_failure_code_reads_in_words(code, text):
 
 def test_an_agents_chat_message_pushes_the_people_who_may_read_the_chat(tmp_path):
     env, n = _env(tmp_path)
-    env.users.create("bob", "Bob", roles=[("partner", "*")], actor="root", language="en")
+    env.users.set_role("talker", ["cards.read", "agents.chat"], actor="root")
+    env.users.create("bob", "Bob", roles=[("talker", "*")], actor="root", language="en")
+    env.users.create("petr", "Petr", roles=[("partner", "*")], actor="root")
     thread = env.store.agent_thread("analyst")
     env.store.add_thread_message(thread, author="agent:analyst", kind="text", body="x" * 300)
     ids = n.on_event(env.store.events_since(0)[-1], None)
     rows = {r["user"]: r for r in (env.store.notification(i) for i in ids)}
-    assert set(rows) == {"owner", "bob"}  # anna's agents.chat is for web only, the chat has no project
+    assert set(rows) == {"owner", "bob"}  # a partner has no agents.chat, of every project or of one
     seq = env.store.thread_messages(thread)[-1]["seq"]
     assert rows["owner"]["kind"] == "agent.message" and rows["owner"]["tag"] == f"chat:analyst:seq:{seq}"
     assert rows["bob"]["title"] == i18n.t("en", "push.agent.reply", agent="ANALYST", count=1)

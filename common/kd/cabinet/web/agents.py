@@ -3,7 +3,7 @@
 Agents come from the host's registry (``agents.json``), their specializations from the repository's
 registry. An agent's state and every number about it (``kd.cabinet.team``) come from its
 sessions, commands, questions and cards on the threads the person may read — the cards they see, its chat with
-``agents.chat``. Spend is ``kd-usage``'s ledger (``usage.jsonl``): today's rows per agent and the ledger itself,
+``agents.chat``, its «Monitor» with ``servers.read`` too. Spend is ``kd-usage``'s ledger (``usage.jsonl``): today's rows per agent and the ledger itself,
 both only with ``settings``. An agent on the session host has ``host`` — its sessions at work and
 waiting for a slot (of those threads) and its slots — and its sessions on those threads.
 """
@@ -76,13 +76,13 @@ async def _agents(request: Request, user: deps.User) -> List[dict]:
     # spend is money: only a person with settings sees it, as with the ledger itself
     money = service.users.can(user.id, "settings")
     rows, day = (_usage(service) if money else []), _today(service)
-    chat = service.users.can(user.id, "agents.chat")
+    spaces = api.agent_spaces(service.ctx, deps.principal(user))
     config = service.ctx.host_config()
     out = []
     for name in registry.names(path):
         handle = f"@{name}"
         hosted = config.hosted(name)
-        found = team.facts(service.ctx.store, name, cards=cards, chat=chat, hosted=hosted, now=service.now())
+        found = team.facts(service.ctx.store, name, cards=cards, spaces=spaces, hosted=hosted, now=service.now())
         counts = found.pop("cards")
         out.append(
             {
@@ -134,9 +134,10 @@ async def agent(
                 except api.ApiError as exc:
                     if exc.kind != "refused":
                         raise
-            # its "Monitor" thread, once the monitor (or a person) opened it, for who reads its chat
+            # its "Monitor" thread, once the monitor (or a person) opened it, for who may read it (the servers too)
             service = deps.svc(request)
-            monitor = service.users.can(user.id, "agents.chat") and (name, "monitor") in service.ctx.store.agent_spaces()
+            monitor = (api.reads_agent_thread(service.ctx, deps.principal(user), "monitor")
+                       and (name, "monitor") in service.ctx.store.agent_spaces())
             return {
                 **rest,
                 "counts": found["cards"],

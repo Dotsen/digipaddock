@@ -18,6 +18,8 @@ def env(tmp_path):
     u.create("owner", "Владелец", roles=[("owner", "*")], actor="root")
     u.create("anna", "Анна", roles=[("partner", "*")], actor="user:owner")
     u.create("vera", "Вера", roles=[("viewer", "*")], actor="user:owner")
+    u.set_role("talker", ["cards.read", "agents.chat"], actor="user:owner")  # the agents' chats: no default role but
+    u.create("chen", "Чэнь", roles=[("talker", "*")], actor="user:owner")  # the owner's holds them (KD-9476)
     api.install_host(e.ctx, lambda: HOSTED)
     return e
 
@@ -254,11 +256,12 @@ def test_command_and_session_lists_by_card_and_agent(env):
     assert [c["id"] for c in out["commands"]] == [command["id"]]
     out = api.dispatch(env.ctx, person("owner"), {"op": "session.list", "card": card.id})
     assert [s["id"] for s in out["sessions"]] == [session["id"]]
-    by_agent = api.dispatch(env.ctx, person("anna"), {"op": "session.list", "agent": "analyst"})
+    by_agent = api.dispatch(env.ctx, person("chen"), {"op": "session.list", "agent": "analyst"})
     assert [s["id"] for s in by_agent["sessions"]] == [session["id"]]
-    with pytest.raises(api.ApiError) as exc:
-        api.dispatch(env.ctx, person("vera"), {"op": "session.list", "agent": "analyst"})
-    assert exc.value.kind == "refused"
+    for user in ("vera", "anna"):  # a viewer, a partner: no agents.chat
+        with pytest.raises(api.ApiError) as exc:
+            api.dispatch(env.ctx, person(user), {"op": "session.list", "agent": "analyst"})
+        assert exc.value.kind == "refused"
 
 
 def test_continue_only_failed_stopped_exited(env):
@@ -304,14 +307,15 @@ def test_stop_enqueues_a_stop(env):
 
 def test_agent_message_needs_agents_chat_and_carries_no_text_in_command(env):
     out = api.dispatch(
-        env.ctx, person("anna"), {"op": "user.agent.message", "agent": "analyst", "text": "секрет: привет"}
+        env.ctx, person("chen"), {"op": "user.agent.message", "agent": "analyst", "text": "секрет: привет"}
     )
-    assert out["message"]["author"] == "user:anna" and out["message"]["body"] == "секрет: привет"
+    assert out["message"]["author"] == "user:chen" and out["message"]["body"] == "секрет: привет"
     [command] = env.store.commands(agent="analyst")
     assert command["kind"] == "chat" and "секрет" not in command["text"] and command["card"] == ""
-    with pytest.raises(api.ApiError) as exc:
-        api.dispatch(env.ctx, person("vera"), {"op": "user.agent.message", "agent": "analyst", "text": "x"})
-    assert exc.value.kind == "refused"
+    for user in ("vera", "anna"):
+        with pytest.raises(api.ApiError) as exc:
+            api.dispatch(env.ctx, person(user), {"op": "user.agent.message", "agent": "analyst", "text": "x"})
+        assert exc.value.kind == "refused"
     with pytest.raises(api.ApiError) as exc:
         api.dispatch(env.ctx, person("owner"), {"op": "user.agent.message", "agent": "dev", "text": "x"})
     assert exc.value.kind == "refused"  # dev is not on the session host
@@ -322,11 +326,12 @@ def test_agent_message_needs_agents_chat_and_carries_no_text_in_command(env):
 def test_chat_events_visible_only_with_agents_chat(env):
     api.dispatch(env.ctx, person("owner"), {"op": "user.agent.message", "agent": "analyst", "text": "hi"})
     events = env.store.events_since(0)
-    for_anna = api.event_filter(env.ctx, person("anna"))(events)
-    for_vera = api.event_filter(env.ctx, person("vera"))(events)
-    assert any(e["kind"] == "message.added" and e["card"] == "" for e in for_anna)
-    assert any(e["kind"] == "command.queued" for e in for_anna)
-    assert not any(e["card"] == "" and e["kind"] in ("message.added", "command.queued") for e in for_vera)
+    for_chen = api.event_filter(env.ctx, person("chen"))(events)
+    assert any(e["kind"] == "message.added" and e["card"] == "" for e in for_chen)
+    assert any(e["kind"] == "command.queued" for e in for_chen)
+    for user in ("vera", "anna"):  # a viewer, a partner
+        seen = api.event_filter(env.ctx, person(user))(events)
+        assert not any(e["card"] == "" and e["kind"] in ("message.added", "command.queued") for e in seen)
 
 
 def test_a_report_item_that_raises_is_refused_as_invalid_and_the_rest_apply(env, monkeypatch, capsys):

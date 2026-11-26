@@ -134,8 +134,9 @@ def _admin_plan(service, decision) -> dict:
                 "risk": {"level": op.risk_level, "why": op.risk_why},
                 "rollback": op.rollback,
                 "command": command,
-                # a script step's command is its exact text — the page shows it unfolded for the owner
-                # to read before signing; a typed step keeps the catalog command folded
+                # the page shows every step's command unfolded for the owner to read before signing — a
+                # script step's is its exact text and is labelled as a script; a typed step's (a cron line,
+                # a dropped file's text) is shown whole too
                 "kind": "script" if op.verb == "script" else "typed",
                 "servers": [op.server],
                 "production": op.server == admin_action.production(),

@@ -270,6 +270,27 @@ def test_a_script_step_on_the_factory_host_is_refused_at_run(tmp_path, enabled_a
     assert log[0]["event"] == "admin_refused" and "factory's own host" in log[0]["reason"]
 
 
+@pytest.mark.parametrize("step", [
+    {"verb": "cron.line", "mark": "KD-123", "action": "set", "line": "*/5 * * * * /usr/local/bin/backup.sh"},
+    {"verb": "file.drop", "dir": "/etc/logrotate.d", "name": "app", "mark": "KD-123", "action": "set",
+     "text": "/var/log/app.log {\n daily\n}\n"},
+])
+def test_a_cron_line_or_file_drop_on_the_factory_host_is_refused_at_run(tmp_path, enabled_all, monkeypatch, step):
+    # a root cron line or a sysctl/logrotate file reaches the cage on the home host as a script would: the
+    # executor refuses it itself, whatever path the grant came by
+    data = json.loads(ops.CATALOG_PATH.read_text(encoding="utf-8"))
+    data["verbs"] += ["cron.line", "file.drop"]
+    catalog = tmp_path / "operations.json"
+    catalog.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(ops, "CATALOG_PATH", catalog)
+    env = make_env(tmp_path, enabled_all, card=CARD.replace("server:node-c", "server:example-stage"))
+    home = dict(PROPOSAL, operations=[{"server": "example-stage", **step, **EXPLAIN}])
+    grant(env, proposal=home)
+    code, _, err, calls, _, log = run(env, ["--task", "KD-123", "--op", "1"])
+    assert code == 2 and calls == [] and "factory's own host" in err
+    assert log[0]["event"] == "admin_refused" and "factory's own host" in log[0]["reason"]
+
+
 def test_a_script_step_with_no_home_in_the_inventory_is_refused(env, monkeypatch, tmp_path):
     # the home alias fails closed: an inventory without it refuses every script step, typed steps still run
     inv = json.loads((Path(inventory.INVENTORY)).read_text(encoding="utf-8"))

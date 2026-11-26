@@ -1515,10 +1515,14 @@ def test_typed_helper_steps_mirror_the_stage(owner, op, words):
 @pytest.mark.parametrize("op", [
     dict(CRON, line="0 4 * * * systemctl reboot"),
     dict(CRON, line="* * * * * echo x >> /etc/sudoers"),
+    dict(CRON, line="*/5 * * * * sh%iptables -F%reboot"),  # cron feeds what follows % to sh on stdin
     dict(CRON, line="a b c"),
     dict(CRON, action="remove"),  # a line with remove
     dict(CRON, mark="7"),
     dict(DROP, text="/var/log/a {\n postrotate\n id\n endscript\n}\n"),
+    dict(DROP, text="/etc/shadow {\n daily\n}\n"),  # a stanza outside /var/log/
+    dict(DROP, text="/var/log/a.log {\n create 0666 root root\n}\n"),
+    dict(DROP, dir="/etc/sysctl.d", name="60-kd.conf", text="net.ipv4.ip_forward = 1\n"),  # a critical action's
     dict(DROP, dir="/etc/cron.d"),
     dict(DROP, name="../x"),
     {"verb": "gate.script", "value": "maybe"},

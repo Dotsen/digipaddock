@@ -64,10 +64,10 @@ def main(argv=None) -> int:
             "next": events["next"],
         }
     visible = [api.compact(r) for r in base.cards() if api.visible(ctx, person, r.project)]
-    chat = api.allowed(ctx, person, "agents.chat")
+    spaces = api.agent_spaces(ctx, person)
     config = ctx.host_config()
     for name in registry.names(REGISTRY):
-        facts = team.facts(base, name, cards=visible, chat=chat, hosted=config.hosted(name), now=ctx.now())
+        facts = team.facts(base, name, cards=visible, spaces=spaces, hosted=config.hosted(name), now=ctx.now())
         out["agents"][name] = {k: facts[k] for k in ("state", "working", "waiting_you", "queued", "failed", "stale", "heartbeat")}
     print(json.dumps(out, ensure_ascii=False, indent=1, default=dict))
     return 0

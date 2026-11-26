@@ -20,6 +20,7 @@ Exit 0 all ok, 3 the owner's step, 1 an installer failed, 2 usage.
 
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -210,12 +211,41 @@ def steps(install, projects, where, *, host, opt=OPT) -> Dict[str, List[Step]]:
     return out
 
 
+_SHOW_LIMIT = 8192  # a public key is a line; a file larger than this is not one
+
+
+def _read_plain(path) -> str:
+    """The text of a regular file, opened without following a link: root prints files from a user's home, and that
+    user could point a link at any file of root's. ``OSError`` — not there; ``ValueError`` — not a plain key file."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        if os.path.islink(path):  # O_NOFOLLOW refuses with ELOOP: a link is not "not there yet"
+            raise ValueError("a symlink") from exc
+        raise
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):  # before fdopen: it refuses a directory itself, as an OSError
+            raise ValueError("not a regular file")
+        handle = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with handle:
+        if info.st_size > _SHOW_LIMIT:
+            raise ValueError("too large for a key")
+        return handle.read(_SHOW_LIMIT + 1).decode("utf-8")
+
+
 def _show(paths, out) -> None:
     for path in paths:
         try:
-            out.write(Path(path).read_text(encoding="utf-8").rstrip("\n") + "\n")
+            out.write(_read_plain(path).rstrip("\n") + "\n")
         except OSError:
             out.write(f"    {path} — not there yet, the install makes it\n")
+        except ValueError as exc:  # also an undecodable file
+            out.write(f"    {path} — not shown: {exc}, look at it by hand\n")
 
 
 def _again(phase) -> str:

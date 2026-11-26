@@ -8,9 +8,11 @@ and kd-mirror run this file of the tree that is running, never a file of an inco
 
 host/private_scan.json is ``{"literals": [...]}`` — addresses, aliases, domains, accounts and names of this
 deployment. A literal counts case-insensitively where no letter, digit or ``_`` touches it (``203.0.113.10`` is not
-found inside ``1203.0.113.105``; ``example.test`` is found in ``www.example.test``). Text files only (a NUL in the
-first 8 KiB — binary, skipped), ``.git`` skipped. Prints ``<path>:<line>: <literal>``; exit 1 with findings,
-0 clean, 2 on a broken list or a missing path. Stdlib only, Python 3.6+, no kd imports: kd-release runs it in its
+found inside ``1203.0.113.105``; ``example.test`` is found in ``www.example.test``). A file with a NUL in the
+first 8 KiB is binary and is read too, as UTF-8 and as UTF-16 of either byte order: the whole literal is needed
+as in text, but no closing boundary (a PNG chunk's text is followed by its CRC) and the printed number is the byte
+offset, the literal followed by ``(byte offset)``. ``.git`` skipped. Prints ``<path>:<line>: <literal>``; exit 1 with
+findings, 0 clean, 2 on a broken list or a missing path. Stdlib only, Python 3.6+, no kd imports: kd-release runs it in its
 sandbox (no network, no secrets, read-only input), kd-mirror from the release tree.
 """
 
@@ -21,6 +23,7 @@ import re
 import sys
 
 BINARY_PROBE = 8192
+_TAIL = r"(?![A-Za-z0-9_])"
 
 
 def load(path):
@@ -60,11 +63,58 @@ def files(root):
                 yield path
 
 
+def _views(data):
+    """What a binary file may say, as (text, byte offset of the text's character i): its bytes as UTF-8 (a byte that is
+    not UTF-8 kept apart) and as UTF-16 of either byte order from either alignment."""
+    yield (
+        data.decode("utf-8", "surrogateescape"),
+        lambda text, i: len(text[:i].encode("utf-8", "surrogateescape")),
+    )
+    for codec in ("utf-16-le", "utf-16-be"):
+        for skip in (0, 1):
+            body = data[skip : len(data) - (len(data) - skip) % 2]
+            yield body.decode(codec, "replace"), lambda text, i, skip=skip: skip + 2 * i
+
+
+def binary_hits(data, patterns):
+    """[(byte offset, literal)] of the literals in a binary file's bytes."""
+    found, seen = [], set()
+    patterns = [
+        (
+            literal,
+            re.compile(p.pattern[: -len(_TAIL)] if p.pattern.endswith(_TAIL) else p.pattern, p.flags),
+        )
+        for literal, p in patterns
+    ]
+    for text, offset in _views(data):
+        here = set()
+        position = 0
+        for line in text.split("\n"):
+            for literal, pattern in patterns:
+                match = pattern.search(line)
+                if not match:
+                    continue
+                key = (literal, match.group(0).lower())
+                here.add(key)
+                if key not in seen:  # an ASCII text reads the same in the UTF-8 and the UTF-16 views
+                    found.append((offset(text, position + match.start()), literal))
+            position += len(line) + 1
+        seen |= here
+    return sorted(found)
+
+
+def scan_binary(path, data, patterns):
+    return [
+        "{}:{}: {} (byte offset)".format(path, where, literal)
+        for where, literal in binary_hits(data, patterns)
+    ]
+
+
 def scan(path, patterns):
     with open(path, "rb") as f:
         data = f.read()
     if b"\0" in data[:BINARY_PROBE]:
-        return []
+        return scan_binary(path, data, patterns)
     found = []
     for number, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
         for literal, pattern in patterns:

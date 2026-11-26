@@ -61,6 +61,30 @@ def test_the_cron_command_is_read_by_rules_1_and_2():
 
 
 @pytest.mark.parametrize(
+    "line",
+    [
+        "*/5 * * * * sh%iptables -F%reboot",
+        "0 4 * * * /usr/local/bin/x.sh % reboot",
+        "0 4 * * * date +\\\\%F",  # \\ is one backslash: the % after it is not escaped
+        "@daily cat%",
+    ],
+)
+def test_a_cron_line_with_an_unescaped_percent_is_refused(line):
+    # cron ends the command at an unescaped % and feeds the rest to it on stdin: sh%iptables -F%reboot runs
+    # sh with "iptables -F", "reboot" as its program — text rules 1 and 2 never read as a command
+    problem = policy.cron_problem(line)
+    assert problem is not None and "%" in problem, problem
+
+
+def test_an_escaped_percent_is_literal_and_reaches_the_shell_as_one():
+    line = "0 4 * * * /usr/local/bin/backup.sh --name db-\\%F"
+    assert policy.cron_problem(line) is None
+    assert policy.cron_command(line) == "/usr/local/bin/backup.sh --name db-%F"
+    # the command cron hands to the shell is what rules 1 and 2 read
+    assert "критичн" in policy.cron_problem("0 4 * * * echo \\% ; reboot")
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "python3 -I /usr/local/libexec/agent-typed-op reboot KD-1",
@@ -88,12 +112,12 @@ def test_a_word_reboot_elsewhere_is_not_the_helpers_reboot():
         (
             "/etc/sysctl.d",
             "60-kd.conf",
-            "vm.swappiness = 10\n# comment\n\nnet.core.somaxconn=1024\n",
+            "vm.swappiness = 10\n# comment\n\nfs.file-max=100000\n",
         ),
         (
             "/etc/sysctl.d",
             "61-kd.conf",
-            "-net.ipv4.tcp_tw_reuse = 1\nkernel/pid_max = 4194304\n",
+            "-vm.overcommit_memory = 1\nkernel/pid_max = 4194304\n",
         ),
         (
             "/etc/logrotate.d",
@@ -109,6 +133,77 @@ def test_a_word_reboot_elsewhere_is_not_the_helpers_reboot():
 )
 def test_a_plain_sysctl_or_logrotate_file_may_be_dropped(directory, name, text):
     assert policy.drop_problem(directory, name, text) is None
+
+
+@pytest.mark.parametrize(
+    "text,why",
+    [
+        ("net.ipv4.ip_forward = 1\n", "kd-admin-propose-action"),
+        ("vm.swappiness = 10\nnet.core.somaxconn = 1024\n", "net.core.somaxconn"),
+        ("net/ipv4/ip_forward = 1\n", "kd-admin-propose-action"),
+        ("-net.ipv4.conf.all.rp_filter = 0\n", "kd-admin-propose-action"),
+        ("net = 1\n", "kd-admin-propose-action"),
+        # a glob in a key may stand for a refused one (systemd-sysctl expands it at boot)
+        ("n*.ipv4.ip_forward = 1\n", "*"),
+        ("kernel.core_patter* = |/tmp/x\n", "*"),
+        ("*.modprobe = /tmp/m\n", "*"),
+    ],
+)
+def test_a_sysctl_drop_that_changes_the_network_or_hides_its_key_is_refused(text, why):
+    # net.* is applied at once (sysctl -p): network access changes only as a critical action the owner signs
+    problem = policy.drop_problem("/etc/sysctl.d", "60-kd.conf", text)
+    assert problem is not None and why in problem, problem
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\"/var/log/app/access.log\" '/var/log/app/error.log' {\n  copytruncate\n}\n",
+        "# the app's logs\n/var/log/a.log\n/var/log/b.log\n{\n  daily\n}\n",
+        "/var/log/a.log {\n  daily\n}\n/var/log/b/*.log {\n  weekly\n  nocreate\n}\n",
+        "compress\n/var/log/a.log {\n  daily\n  dateext\n}\n",
+        "/var/log/nginx/*.log {\n  daily\n  rotate 7\n  delaycompress\n  notifempty\n  noolddir\n}\n",
+    ],
+)
+def test_logrotate_stanzas_of_var_log_may_be_dropped(text):
+    assert policy.drop_problem("/etc/logrotate.d", "app", text) is None, text
+
+
+@pytest.mark.parametrize(
+    "text,why",
+    [
+        ("/etc/shadow {\n  create 0666 root root\n}\n", "/var/log/"),
+        ("/etc/shadow {\n  daily\n}\n", "/var/log/"),
+        ('"/etc/shadow" {\n  daily\n}\n', "/var/log/"),
+        ("/var/log/a.log /etc/shadow {\n  daily\n}\n", "/var/log/"),
+        ("/var/log/a.log\n/etc/shadow\n{\n  daily\n}\n", "/var/log/"),
+        ("/var/log/a.log # /etc/shadow {\n  daily\n}\n", "/var/log/"),
+        ("/var/log/../../etc/shadow {\n  daily\n}\n", "/var/log/"),
+        ("/var/log/.*/.*/etc/shadow {\n  daily\n}\n", "/var/log/"),  # .* matches ..
+        ("/var/log/\\.\\./x {\n  daily\n}\n", "/var/log/"),
+        ("/var/log*/x {\n  daily\n}\n", "/var/log/"),
+        ("/var/log {\n  daily\n}\n", "/var/log/"),
+        ("~/x.log {\n  daily\n}\n", "/var/log/"),
+        ("/var/log/a.log\ndaily\n{\n  weekly\n}\n", "/var/log/"),  # a word before { is a file name
+        ("/var/log/a.log {\n  daily\n}\n} /etc/shadow {\n  daily\n}\n", "}"),
+        ("missingok {\n/etc/shadow\n}\n", "{"),
+        ("/var/log/a.log {\n  daily\n  /etc/shadow\n}\n", "директив"),
+        ("/var/log/a.log {\n  daily\n", "}"),
+        ("/var/log/a.log\n", "{"),
+        ("/var/log/a.log {\n  create 0666 root root\n}\n", "create"),
+        ("/var/log/a.log {\n  create\n}\n", "create"),
+        ("create 0640 root adm\n/var/log/a.log {\n  daily\n}\n", "create"),
+        ("/var/log/a.log {\n  su root root\n}\n", "su"),
+        ("/var/log/a.log {\n  olddir /etc\n}\n", "olddir"),
+        ("/var/log/a.log {\n  createolddir 0777 root root\n}\n", "createolddir"),
+        ("/var/log/a.log { copy }\n", "copy"),
+    ],
+)
+def test_a_logrotate_stanza_beyond_var_log_or_with_file_options_is_refused(text, why):
+    # a stanza on /etc/shadow with create 0666 would hand root's file to everyone; olddir, su and copy move or
+    # write files where the step does not say
+    problem = policy.drop_problem("/etc/logrotate.d", "app", text)
+    assert problem is not None and why in problem, problem
 
 
 @pytest.mark.parametrize(

@@ -176,8 +176,9 @@ def test_deploy_sends_the_data_key_only_to_servers_with_databases():
     assert 'cat "/home/$STAGE_DATA_USER/.ssh/agent_data_ed25519.pub"' in DEPLOY
     assert "agent-data@$STAGE$ ]]" in DEPLOY
     assert '$mysql_args $data_args"' in DEPLOY
-    # the data user pins the same host key as the sysadmin and the exec user
-    assert 'chown "$data_user:$data_user" "$new"' in DEPLOY
+    # the data user pins the same host key as the sysadmin and the exec user, written in its own name
+    assert 'if [ -n "$data_user" ]; then pin_key "$data_user"; fi' in DEPLOY
+    assert "chown" not in DEPLOY.split("pin_key() {")[1].split("\nEOF")[0]
     assert '$SYSADMIN_USER $STAGE_EXEC_USER $STAGE_DATA_USER"' in DEPLOY
 
 

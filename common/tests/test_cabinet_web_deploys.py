@@ -20,6 +20,7 @@ ENVS = [
      "skip_tests": True},
 ]
 HEAD, HEAD2 = "c" * 40, "d" * 40
+ABSENT = object()  # a body field the page leaves out
 
 
 class FakeReview:
@@ -176,7 +177,8 @@ def _signer(w, client=None):
 
 def _challenge(w, client=None, **over):
     client = client or w.client
-    body = {"project": "api", "env": "prod", "skip_tests": False, **over}
+    body = {"project": "api", "env": "prod", "skip_tests": False, "expected_sha": HEAD, **over}
+    body = {k: v for k, v in body.items() if v is not ABSENT}
     return client.post("/api/deploys/launch/challenge", headers=_h(w, client), json=body)
 
 
@@ -234,6 +236,43 @@ def test_the_launch_asks_for_the_passkey_alone(w):
     assert _challenge(w, skip_tests="yes").status_code == 400
     assert _challenge(w, env="staging").status_code == 404  # deploys by itself: no button
     assert [c["op"] for c in w.review.calls if c["op"] != "keys"] == ["deploy_head", "deploy_head"]
+
+
+def test_a_challenge_is_issued_only_for_the_head_the_sheet_showed(w):
+    """KD-9480: the page names the commit it showed; a head that moved since is a 409 with the live head and no
+    challenge stored — the owner looks again before any passkey prompt."""
+    w.login("owner")
+    _signer(w)
+    ok = _challenge(w)
+    assert ok.status_code == 200 and ok.json()["launch"]["sha"] == HEAD
+    stored = len(w.svc.challenges._items)
+    w.review.head = HEAD2
+    moved = _challenge(w)
+    assert moved.status_code == 409, moved.text
+    assert moved.json() == {"error": "conflict", "message": moved.json()["message"], "reason": "branch_moved",
+                            "head": HEAD2, "branch": "main", "expected": HEAD}
+    assert "challenge_id" not in moved.json()
+    assert len(w.svc.challenges._items) == stored  # nothing stored for the moved head
+
+
+def test_a_request_without_the_shown_head_is_only_answered_with_the_head(w):
+    w.login("owner")
+    _signer(w)
+    r = _challenge(w, expected_sha=ABSENT)
+    assert r.status_code == 409, r.text
+    assert r.json()["reason"] == "head_unseen" and r.json()["head"] == HEAD and r.json()["branch"] == "main"
+    assert "challenge_id" not in r.json() and "options" not in r.json()
+    assert w.svc.challenges._items == {}
+    assert _challenge(w, expected_sha=None).json()["reason"] == "head_unseen"
+
+
+def test_a_malformed_expected_sha_is_refused_before_kd_review_is_asked(w):
+    w.login("owner")
+    _signer(w)
+    calls = len(w.review.calls)
+    for bad in ("", "abc", "C" * 40, "g" * 40, 7, [HEAD], HEAD + "0"):
+        assert _challenge(w, expected_sha=bad).status_code == 400, bad
+    assert len(w.review.calls) == calls
 
 
 def test_without_a_signature_nothing_starts(w):

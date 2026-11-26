@@ -261,9 +261,9 @@ fi
 found=$(ssh-keygen -F "$host_ip" || true)
 keys=$(printf '%s\n' "$found" | grep -v '^#' | awk -v h="$host_ip" 'NF >= 3 && $1 !~ /^@/ {print h, $2, $3}' | sort -u || true)
 [ -n "$keys" ] || { echo "the owner's ~/.ssh/known_hosts has no key of $host_ip: log in to $target by hand first" >&2; exit 1; }
-# The script for the factory host goes through base64 (stdin is taken by the keys). The sysadmin's user: the write
-# is made in its name, atomically (root does not write into its home).
-# The exec user: the agent cannot reach its home — root writes, atomically too.
+# The script for the factory host goes through base64 (stdin is taken by the keys). The file of every user (the
+# sysadmin, the exec user, kd-data's user) is written in that user's name, atomically: root never writes into a home
+# the user can reshape (a .ssh swapped for a link would send root's write into a system directory).
 read -r -d '' remote <<'EOF' || true
 set -e
 host_ip=$1 target=$2 user=$3 exec_user=$4 data_user=${5:-}
@@ -271,27 +271,18 @@ t=$(mktemp)
 trap 'rm -f "$t"' EXIT
 cat > "$t"
 chmod 0644 "$t"
-runuser -u "$user" -- sh -c 'set -e; umask 022
+pin_key() {  # <user>: drop the old line of this host, add the pinned keys
+  runuser -u "$1" -- sh -c 'set -e; umask 022
   d=/home/$3/.ssh; f=$d/known_hosts
   new=$(mktemp "$d/.known_hosts.XXXXXX")
   trap "rm -f \"\$new\"" EXIT
   { [ ! -f "$f" ] || awk -v h="$2" "\$1 != h" "$f"; cat "$1"; } > "$new"
   chmod 0644 "$new"
-  mv -f "$new" "$f"' _ "$t" "$host_ip" "$user"
-d=/home/$exec_user/.ssh; f=$d/known_hosts
-new=$(mktemp "$d/.known_hosts.XXXXXX")
-{ [ ! -f "$f" ] || awk -v h="$host_ip" '$1 != h' "$f"; cat "$t"; } > "$new"
-chown "$exec_user:$exec_user" "$new"
-chmod 0644 "$new"
-mv -f "$new" "$f"
-if [ -n "$data_user" ]; then  # kd-data's user, the same pinned key
-  d=/home/$data_user/.ssh; f=$d/known_hosts
-  new=$(mktemp "$d/.known_hosts.XXXXXX")
-  { [ ! -f "$f" ] || awk -v h="$host_ip" '$1 != h' "$f"; cat "$t"; } > "$new"
-  chown "$data_user:$data_user" "$new"
-  chmod 0644 "$new"
-  mv -f "$new" "$f"
-fi
+  mv -f "$new" "$f"' _ "$t" "$host_ip" "$1"
+}
+pin_key "$user"
+pin_key "$exec_user"
+if [ -n "$data_user" ]; then pin_key "$data_user"; fi  # kd-data's user, the same pinned key
 touch /etc/digipaddock/servers.enabled
 if [ -s /etc/digipaddock/servers.enabled ] && [ -n "$(tail -c1 /etc/digipaddock/servers.enabled)" ]; then echo >> /etc/digipaddock/servers.enabled; fi
 grep -qx "$target" /etc/digipaddock/servers.enabled || echo "$target" >> /etc/digipaddock/servers.enabled

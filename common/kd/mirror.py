@@ -5,7 +5,8 @@ the forge. A main it has neither published nor blocked goes to GitHub as one com
 GitHub's main as the run reads it, by ``mirror_author`` (host.json), with the message ``Update to upstream <sha>``.
 The forge's history never goes out — its commits, messages, authors and removed lines stay on the forge — so what is
 scanned is what is published: the tree, its file names and the snapshot's message and identity, by the public scanner
-and the running release's closed scanner. A finding blocks that SHA — one red run (OnFailure → kd-alert), then again
+and the running release's closed scanner. Binary files are read as bytes, and a tree with a symlink or a submodule is a block
+before any scanner (kd/plain_tree.py, as in kd-release). A finding blocks that SHA — one red run (OnFailure → kd-alert), then again
 once a day (kd-alert's hourly cooldown may have swallowed the first) until main moves; clean — the snapshot goes out
 as a fast-forward of GitHub's main (no force: a push to GitHub in between rejects it, and the next run builds on that).
 A tag on the published main goes out as a plain tag of its snapshot (no forge tag message); with the running tree's
@@ -29,7 +30,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from kd import naming, privacy_scan
+from kd import naming, plain_tree, privacy_scan
 from kd.history_scan import history, history_text, public_history_findings
 
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -197,7 +198,12 @@ def _message(head):
 
 def _scan(git, bare, head, author, refs, scanners):
     """Both scanners over what a publish of ``head`` with ``refs`` shows: the tree, its paths, the snapshot's
-    message and identity and the tag names."""
+    message and identity and the tag names. A tree with a symlink or a submodule is a finding before any scanner runs:
+    the publish takes the git tree whole, and what such an entry holds no scanner reads. Both publish paths (a new
+    main, a late tag) come through here."""
+    odd = plain_tree.refusal(plain_tree.odd_entries(_git(git, [*bare, "ls-tree", "-r", head], None)))
+    if odd:
+        return [odd]
     published = (f"commit snapshot\nauthor {author}\ncommitter {author}\n{_message(head)}\n"
                  + "".join(f"\0tag {ref}\n" for ref in refs))
     paths = _git(git, [*bare, "ls-tree", "-r", "--name-only", "-z", head], None) or ""
@@ -336,7 +342,8 @@ def default_scanners(release_tree=TREE, python=PYTHON):
                 if where.startswith(prefix):
                     where = label + where[len(prefix):]
                     break
-            found.append(f"{where}:{match.group(2)}: private literal")  # the literal itself stays out
+            unit = " (byte offset)" if line.endswith("(byte offset)") else ""  # a binary file: no line, an offset
+            found.append(f"{where}:{match.group(2)}: private literal{unit}")  # the literal itself stays out
         return found or ["<closed scanner>:0: private literal"]  # exit 1 is a finding even when unparsed
 
     def scan(tree, records):
@@ -344,7 +351,8 @@ def default_scanners(release_tree=TREE, python=PYTHON):
             cfg = privacy_scan.load_config(tree / "privacy-scan.json")
         except (OSError, ValueError) as exc:
             raise MirrorError(f"public scanner: privacy-scan.json of main: {exc}") from None
-        found = [f"{f.path}:{f.line}: {f.kind}" for f in privacy_scan.scan_tree(tree, cfg)]
+        found = [f"{f.path}:{f.line}: {f.kind}" + (" (byte offset)" if f.text.startswith("byte offset ") else "")
+                 for f in privacy_scan.scan_tree(tree, cfg)]
         found += [f.split(" (allow ")[0] for f in public_history_findings(records, cfg)]
         text = tree.parent / "message.txt"
         text.write_text(history_text(records), "utf-8")

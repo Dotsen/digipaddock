@@ -512,6 +512,36 @@ def test_anything_but_a_clean_update_needs_a_new_signature(tmp_path, auth, chang
     assert len(live.reviews) == 1  # only the owner's own Approve on HEAD
 
 
+BINARY = "diff --git a/logo.png b/logo.png\nindex 5555555..6666666 100644\nBinary files a/logo.png and b/logo.png differ\n"
+
+
+@pytest.mark.parametrize("opaque", [
+    BINARY,
+    "diff --git a/logo.png b/logo.png\nindex 5555555..6666666 100644\nGIT binary patch\nliteral 4\nLcmZQzWMT#Y01f~L\n\n",
+])
+def test_a_change_the_diffs_text_does_not_show_is_never_carried(tmp_path, auth, opaque):
+    """KD-9478: a merge from the target whose tree also swaps the binary's bytes (an evil merge) keeps the diff's
+    text: the binary is one line without its bytes, and the blob ids of its index line are not hashed."""
+    live = Live()
+    live.diffs[HEAD] = DIFF + opaque
+    r = approved_then_updated(tmp_path, auth, live)
+    live.diffs[HEAD2] = MOVED + opaque.replace("5555555..6666666", "7777777..8888888")
+    error = refused(r, carry())
+    assert "its text does not show" in str(error) and ("Binary files a/logo.png" in str(error)
+                                                       or "GIT binary patch" in str(error))
+    assert len(live.reviews) == 1
+
+
+def test_an_evil_merge_into_a_file_the_pr_never_touched_changes_its_diff(tmp_path, auth):
+    """The PR's diff is against the target: a merge that also changes another file adds that file to it."""
+    live = Live()
+    r = approved_then_updated(tmp_path, auth, live)
+    live.diffs[HEAD2] = MOVED + ("diff --git a/common/kd/other.py b/common/kd/other.py\nindex 1234567..89abcde 100644\n"
+                                 "--- a/common/kd/other.py\n+++ b/common/kd/other.py\n@@ -1 +1 @@\n-a\n+evil()\n")
+    assert "own diff changed" in str(refused(r, carry()))
+    assert len(live.reviews) == 1
+
+
 def test_no_record_nothing_to_carry(tmp_path, auth):
     live = Live(head=HEAD2)
     live.parents[HEAD2] = [HEAD, M1]

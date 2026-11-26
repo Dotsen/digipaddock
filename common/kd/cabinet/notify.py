@@ -22,7 +22,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Dict, List, Mapping, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from kd.cabinet import config, i18n, schema, store, users, view
+from kd.cabinet import config, i18n, perms, schema, store, users, view
 
 KINDS = (
     "decision.waiting",
@@ -190,6 +190,11 @@ class Notifier:
             for u in self._active()
             if self.users.can(u, perm, project) and actor != f"user:{u}"
         ]
+
+    def _who_reads(self, space: str, actor: str = "") -> List[dict]:
+        """Who may read an agent's own thread in ``space`` (its chat; «Monitor» needs the servers too)."""
+        need = perms.AGENT_THREAD_PERMS[space]
+        return [p for p in self._who_can(need[0], None, actor) if all(self.users.can(p["id"], n) for n in need[1:])]
 
     # --- the queue ------------------------------------------------------------------------------
     def _due(self, person: dict, mode: str, now: datetime, loud: bool) -> datetime:
@@ -461,18 +466,19 @@ class Notifier:
 
     def _session(self, event, payload, now) -> List[int]:
         """An agent's session that has just failed: who may control it — on a card, ``agents.control``
-        on its project; in the agent's chat, everyone who may read the chat."""
+        on its project; in the agent's chat or «Monitor», everyone who may read that thread."""
         if payload.get("state") != "failed" or payload.get("was") == "failed":
             return []
         agent = payload.get("agent", "")
         card = self._card_of(event["card"]) if event["card"] else None
         if event["card"] and card is None:
             return []
-        people = (
-            self._who_can("agents.control", card.project, event["actor"])
-            if card is not None
-            else self._who_can("agents.chat", None, event["actor"])
-        )
+        if card is not None:
+            people = self._who_can("agents.control", card.project, event["actor"])
+        else:
+            thread = event.get("thread")
+            space = (self.store.agent_space(thread) if thread is not None else "") or "chat"
+            people = self._who_reads(space, event["actor"])
         url = config.card_url("", card.id) if card is not None else f"/agents/{agent}"
         ids = [
             self._queue(
@@ -536,7 +542,12 @@ class Notifier:
             url = incident_url(f"P-{references[0]['n']}") if len(references) == 1 else "/incidents"
             tag = f"incident:P-{references[0]['n']}" if len(references) == 1 else "incidents:reports"
         ids = []
-        for person in self._who_can("servers.read" if references else "agents.chat", None, event["actor"]):
+        # an incident's report goes to who reads the servers (its page is theirs); a reply to who may read the thread
+        if references:
+            people = self._who_can("servers.read", None, event["actor"])
+        else:
+            people = self._who_reads(space, event["actor"])
+        for person in people:
             mode = person["prefs"].get("agent.message", default_mode("agent.message"))
             unread = self.store.chat_state(person["id"], row["thread"])["unread"]
             title = i18n.t(person["lang"], "push.agent.monitor" if monitor else "push.agent.reply", agent=agent.upper(),

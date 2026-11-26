@@ -7,6 +7,7 @@ import os
 
 import pytest
 
+from kd import ci_unit
 from kd import devcheck_runner as dr
 from kd.session_host import devcheck as host_devcheck
 
@@ -65,7 +66,7 @@ class Units:
 
     def __call__(self, argv):
         self.calls.append(list(argv))
-        profile = argv[argv.index("--") + 5]  # python -I steps.py <project> <profile>
+        profile = ci_unit.command_of(argv)[4]  # python -I steps.py <project> <profile>
         rc = self.codes.get(profile, 0)
         out = "== pytest\nFAILED test_x - token=abc\n== pytest failed (exit 1)\n== counts {\"failed\": 1}" if rc else \
             "== pytest\n9 passed\n== counts {\"passed\": 9}"
@@ -100,7 +101,8 @@ def run(e, **over):
                   clock=lambda: next(e.clock), sleep=lambda s: None, work=str(e.tmp / "work"),
                   log_dir=str(e.tmp / "log"), token=str(e.token), deps=e.deps,
                   own=lambda path, **kw: e.owned.append((path, kw)), deployed="/opt/tree", host=HOST, repos=REPOS,
-                  mask=lambda text: text.replace("token=abc", "token=***"), ci_user="digi-ci", observe_group="digi-observe")
+                  mask=lambda text: text.replace("token=abc", "token=***"), ci_user="digi-ci", observe_group="digi-observe",
+                  tools=lambda: [])
     kwargs.update(over)
     return dr.run(ID, **kwargs)
 
@@ -245,15 +247,27 @@ def test_child_unit_properties_are_exact(env):
     assert argv[:7] == ["systemd-run", "--unit", host_devcheck.child_unit(ID), "--wait", "--pipe", "--collect",
                         "--quiet"]
     props = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
-    assert props == ["User=digi-ci", "Group=digi-ci", "PrivateNetwork=yes", "PrivateTmp=yes", "ProtectSystem=strict",
-                     "ProtectHome=yes", f"ReadWritePaths={work}", "NoNewPrivileges=yes", "CPUQuota=200%",
+    # no User=: the unit starts as root with what the wrapper needs, the ci user is taken inside its own pid namespace
+    assert props == ["CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP", "NoNewPrivileges=yes",
+                     "TimeoutStopSec=15", "PrivateNetwork=yes", "PrivateTmp=yes", "ProtectSystem=strict",
+                     "ProtectHome=yes", f"ReadWritePaths={work}", "CPUQuota=200%",
                      "MemoryMax=3G", "RuntimeMaxSec=1200",
-                     "InaccessiblePaths=" + " ".join("-" + p for p in dr.INACCESSIBLE), f"WorkingDirectory={src}"]
-    assert [a for a in argv if a.startswith("--setenv=")] == [f"--setenv=HOME={os.path.join(work, 'home')}",
-                                                              "--setenv=CI=1"]
+                     "InaccessiblePaths=" + " ".join("-" + p for p in dr.INACCESSIBLE)]
+    assert [a for a in argv if a.startswith("--setenv=")] == [
+        "--setenv=USER=digi-ci", "--setenv=LOGNAME=digi-ci", f"--setenv=HOME={os.path.join(work, 'home')}",
+        "--setenv=CI=1"]
     tail = argv[argv.index("--") + 1:]
-    assert tail == ["/cache/venv-1/bin/python", "-I", "/opt/tree/common/kd/devcheck_steps.py", "digipaddock", "unit", src,
+    assert tail == [ci_unit.UNSHARE, "--pid", "--fork", "--kill-child", "--mount-proc", "--",
+                    ci_unit.SETPRIV, "--reuid=digi-ci", "--regid=digi-ci", "--init-groups", "--inh-caps=-all",
+                    "--bounding-set=-all", "--no-new-privs", "--", ci_unit.ENV, f"--chdir={src}", "--",
+                    "/cache/venv-1/bin/python", "-I", "/opt/tree/common/kd/devcheck_steps.py", "digipaddock", "unit", src,
                     f"digipaddock-deploy={os.path.join(work, 'sets', 'digipaddock-deploy')}"]
+
+
+def test_no_isolation_tools_is_environment_not_ready_before_anything_runs(env):
+    result = run(env, tools=lambda: [ci_unit.SETPRIV])
+    assert result["class"] == "environment_not_ready" and ci_unit.SETPRIV in result["maintenance"]
+    assert env.forge.statuses == [] and env.git.calls == [] and env.units.calls == [] and env.deps_calls == []
 
 
 def test_a_short_timeout_limits_the_child(env):

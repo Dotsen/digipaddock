@@ -1,6 +1,6 @@
 // The «Deploy» page: the journal's address, its filters, how a run's status looks, what an environment says about
 // its commits; the owner's prod launch.
-import { apiPost } from "./api";
+import { ApiError, apiPost } from "./api";
 import type { Key } from "./i18n.svelte";
 import type { CheckState, DeployChallenge, DeployCommit, DeployEnv, DeployRun } from "./types";
 import { assertPasskey } from "./webauthn";
@@ -16,19 +16,44 @@ export interface Launched {
   skip_tests: boolean;
 }
 
-/** The launch: a challenge over the environment's branch head now, the saved passkey's signature without a
- *  fingerprint or PIN (the server asks `userVerification: discouraged`), then kd-review dispatches it. No typed
- *  word: the passkey is the confirmation. */
+/** The branch's head is not the commit the sheet showed (`unseen`: the sheet showed none). The page shows `head` and
+ *  its commits again, and the owner looks before launching: nothing was signed. */
+export class HeadChanged extends Error {
+  constructor(
+    public head: string,
+    public unseen: boolean,
+  ) {
+    super(unseen ? "the sheet showed no head of the branch" : "the branch moved since the page was read");
+    this.name = "HeadChanged";
+  }
+}
+
+/** The launch: a challenge over the commit the sheet showed (`shown`, '' when it showed none — the server then only
+ *  answers the head), the saved passkey's signature without a fingerprint or PIN (the server asks
+ *  `userVerification: discouraged`), then kd-review dispatches it. A head other than the shown one is `HeadChanged`
+ *  before any prompt, as a card revision is in decide.ts. No typed word: the passkey is the confirmation. */
 export async function launchDeploy(
   row: Pick<DeployEnv, "project" | "env">,
   skipTests: boolean,
+  shown: string,
   sign: (options: Record<string, unknown>) => Promise<unknown> = assertPasskey,
 ): Promise<Launched> {
-  const challenge = await apiPost<DeployChallenge>("/api/deploys/launch/challenge", {
-    project: row.project,
-    env: row.env,
-    skip_tests: skipTests,
-  });
+  let challenge: DeployChallenge;
+  try {
+    challenge = await apiPost<DeployChallenge>("/api/deploys/launch/challenge", {
+      project: row.project,
+      env: row.env,
+      skip_tests: skipTests,
+      ...(shown ? { expected_sha: shown } : {}),
+    });
+  } catch (exc) {
+    const reason = exc instanceof ApiError && exc.status === 409 ? exc.body.reason : "";
+    if ((reason === "branch_moved" || reason === "head_unseen") && typeof (exc as ApiError).body.head === "string") {
+      throw new HeadChanged((exc as ApiError).body.head as string, reason === "head_unseen");
+    }
+    throw exc;
+  }
+  if (challenge.launch.sha !== shown) throw new HeadChanged(challenge.launch.sha, !shown);
   const credential = await sign(challenge.options);
   return apiPost<Launched>("/api/deploys/launch", { challenge_id: challenge.challenge_id, credential });
 }

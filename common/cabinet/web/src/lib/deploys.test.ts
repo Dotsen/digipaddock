@@ -1,7 +1,7 @@
 // the «Deploys» page's journal address, filters and status colours.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  checkMark, commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, projectRows,
+  checkMark, HeadChanged, commitGroups, deltas, envsOf, inputsText, JOURNAL_STEP, journalUrl, journalView, launchDeploy, live, projectRows,
   projectsOf, settled, shortSha, statusClass, statusMark,
 } from "./deploys";
 import type { DeployCommit, DeployEnv, DeployRun } from "./types";
@@ -31,29 +31,68 @@ function json(body: unknown, status = 200) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+const SHOWN = "a".repeat(40);
+const MOVED = "b".repeat(40);
+
 describe("the owner's prod launch", () => {
   it("asks a challenge with skip_tests and no typed word, signs it and sends the signature", async () => {
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(json({ challenge_id: "c1", options: { challenge: "v1", userVerification: "discouraged" },
-                                    expires: "", launch: {} }))
+                                    expires: "", launch: { sha: SHOWN } }))
       .mockResolvedValueOnce(json({ state: "dispatched", sha: "c".repeat(40), project: "api", env: "prod",
                                     skip_tests: true }));
     vi.stubGlobal("fetch", fetch);
     const sign = vi.fn(async (options: Record<string, unknown>) => ({ id: "cred", over: options.challenge }));
-    const done = await launchDeploy({ project: "api", env: "prod" }, true, sign);
+    const done = await launchDeploy({ project: "api", env: "prod" }, true, SHOWN, sign);
     expect(done.state).toBe("dispatched");
     expect(sign).toHaveBeenCalledWith({ challenge: "v1", userVerification: "discouraged" });
     expect(fetch.mock.calls.map(([url, init]) => [url, JSON.parse(init.body)])).toEqual([
-      ["/api/deploys/launch/challenge", { project: "api", env: "prod", skip_tests: true }],
+      ["/api/deploys/launch/challenge", { project: "api", env: "prod", skip_tests: true, expected_sha: SHOWN }],
       ["/api/deploys/launch", { challenge_id: "c1", credential: { id: "cred", over: "v1" } }],
     ]);
+  });
+
+  it("names the commit the sheet showed and never signs when the branch moved since", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(json({ error: "conflict", message: "moved", reason: "branch_moved",
+                                                       head: MOVED, branch: "main", expected: SHOWN }, 409));
+    vi.stubGlobal("fetch", fetch);
+    const sign = vi.fn();
+    const error = await launchDeploy({ project: "api", env: "prod" }, false, SHOWN, sign).catch((e) => e);
+    expect(error).toBeInstanceOf(HeadChanged);
+    expect(error.head).toBe(MOVED);
+    expect(error.unseen).toBe(false);
+    expect(sign).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the head first when the sheet knew none: the answer is the head, no signature", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(json({ error: "conflict", message: "look", reason: "head_unseen",
+                                                       head: MOVED, branch: "main" }, 409));
+    vi.stubGlobal("fetch", fetch);
+    const sign = vi.fn();
+    const error = await launchDeploy({ project: "api", env: "prod" }, false, "", sign).catch((e) => e);
+    expect(error).toBeInstanceOf(HeadChanged);
+    expect([error.head, error.unseen]).toEqual([MOVED, true]);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ project: "api", env: "prod", skip_tests: false });
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("does not sign a challenge that binds another commit than the shown one", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json({
+      challenge_id: "c1", options: { challenge: "v1" }, expires: "",
+      launch: { project: "api", env: "prod", branch: "main", sha: MOVED, skip_tests: false } })));
+    const sign = vi.fn();
+    const error = await launchDeploy({ project: "api", env: "prod" }, false, SHOWN, sign).catch((e) => e);
+    expect(error).toBeInstanceOf(HeadChanged);
+    expect(error.head).toBe(MOVED);
+    expect(sign).not.toHaveBeenCalled();
   });
 
   it("asks no signature when the cabinet refuses the challenge", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json({ error: "refused", message: "owner only" }, 403)));
     const sign = vi.fn();
-    await expect(launchDeploy({ project: "api", env: "prod" }, false, sign)).rejects.toThrow();
+    await expect(launchDeploy({ project: "api", env: "prod" }, false, SHOWN, sign)).rejects.toThrow();
     expect(sign).not.toHaveBeenCalled();
   });
 });

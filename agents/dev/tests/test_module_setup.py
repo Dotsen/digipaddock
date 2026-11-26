@@ -102,16 +102,9 @@ def test_forge_journal_is_readable_by_the_agents_group_and_fixed_without_followi
     journal = _function(FORGE, "install_journal")
     assert 'install -d -o "$forge" -g "$user" -m 2750 "$JOURNAL"' in journal
     assert (
-        'install -o "$forge" -g "$user" -m 0640 /dev/null "$JOURNAL/forge.jsonl"'
-        in journal
+        'owned_file.py" file "$JOURNAL/forge.jsonl" "$forge" "$user" 640' in journal
     )
-    snippet = journal.split("<<'JOURNAL'\n", 1)[1].split("\nJOURNAL\n", 1)[0]
-    assert (
-        "O_NOFOLLOW" in snippet
-        and "S_ISREG" in snippet
-        and "os.fchown" in snippet
-        and "os.fchmod(fd, 0o640)" in snippet
-    )
+    assert "/dev/null" not in journal and "python3 -I -" not in journal
     assert not re.search(r"^\s*(chown|chmod|chgrp)\b.*JOURNAL", FORGE, re.M)
     assert (
         "su $forge $user" in journal and "create 0640 $forge $user" in journal

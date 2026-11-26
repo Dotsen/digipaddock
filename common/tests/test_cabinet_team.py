@@ -22,8 +22,8 @@ def visible(env, projects=("digipaddock", "web", "admin")):
     return [api.compact(c) for c in env.store.cards() if c.project in projects]
 
 
-def facts(env, name="dev", projects=("digipaddock", "web", "admin"), *, chat=True, hosted=True):
-    return team.facts(env.store, name, cards=visible(env, projects), chat=chat, hosted=hosted, now=env.now)
+def facts(env, name="dev", projects=("digipaddock", "web", "admin"), *, spaces=("chat", "monitor"), hosted=True):
+    return team.facts(env.store, name, cards=visible(env, projects), spaces=spaces, hosted=hosted, now=env.now)
 
 
 def command(env, card, agent="dev", n=1, state="queued", **extra):
@@ -151,8 +151,16 @@ def test_the_agent_chat_counts_only_with_the_chat_right(env):
     thread = env.store.agent_thread("dev")
     found = env.store.session_for(thread, "dev")
     env.store.session_update(found["id"], state="working", heartbeat=NOW)
-    assert facts(env, chat=True)["working"] == 1
-    assert facts(env, chat=False)["working"] == 0
+    assert facts(env, spaces=("chat",))["working"] == 1
+    assert facts(env, spaces=())["working"] == 0
+
+
+def test_monitor_counts_only_for_who_may_read_it(env):
+    thread = env.store.agent_thread("dev", "monitor")
+    found = env.store.session_for(thread, "dev")
+    env.store.session_update(found["id"], state="working", heartbeat=NOW)
+    assert facts(env, spaces=("chat", "monitor"))["working"] == 1
+    assert facts(env, spaces=("chat",))["working"] == 0
 
 
 def test_a_failure_on_a_done_card_or_a_card_handed_on_is_not_the_agents_error(env):

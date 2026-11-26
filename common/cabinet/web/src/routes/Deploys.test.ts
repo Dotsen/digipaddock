@@ -167,4 +167,47 @@ describe("Deploys", () => {
     const go = within(sheet).getByRole("button", { name: "Выкатить" }) as HTMLButtonElement;
     expect(go.disabled).toBe(false);
   });
+
+  it("names the shown commit, and a branch that moved is shown again with no passkey prompt", async () => {
+    const live = "9".repeat(40);
+    const get = vi.fn();
+    vi.stubGlobal("navigator", { ...navigator, credentials: { get } });
+    fetch.mockImplementation(async (url: string) =>
+      url === "/api/deploys/launch/challenge"
+        ? new Response(JSON.stringify({ error: "conflict", message: "moved", reason: "branch_moved", head: live,
+                                        branch: "master", expected: H }), {
+            status: 409, headers: { "Content-Type": "application/json" } })
+        : json(LIST));
+    render(Deploys);
+    const alert = await panel("Alert app");
+    await fireEvent.click(alert.getByRole("button", { name: "Выкатить" }));
+    const sheet = await screen.findByRole("dialog");
+    await fireEvent.click(within(sheet).getByRole("button", { name: "Выкатить" }));
+    expect((await within(sheet).findByRole("alert")).textContent).toContain("Ветка master ушла вперёд");
+    expect(within(sheet).getByText("Уйдёт голова ветки master — 9999999.")).toBeTruthy();
+    expect(within(sheet).getByText(/Список новых коммитов ещё не обновился/)).toBeTruthy();
+    const asked = fetch.mock.calls.find(([url]) => url === "/api/deploys/launch/challenge")!;
+    expect(JSON.parse(asked[1].body)).toMatchObject({ project: "alert", env: "prod", expected_sha: H });
+    expect(get).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.some(([url]) => url === "/api/deploys/launch")).toBe(false);
+  });
+
+  it("does not launch blind: a sheet that knew no head asks the server to name it first", async () => {
+    const live = "8".repeat(40);
+    const blind = { ...LIST, envs: LIST.envs.map((e) => (e.project === "alert" && e.env === "prod" ? { ...e, head: "" } : e)) };
+    fetch.mockImplementation(async (url: string) =>
+      url === "/api/deploys/launch/challenge"
+        ? new Response(JSON.stringify({ error: "conflict", message: "look", reason: "head_unseen", head: live,
+                                        branch: "master" }), { status: 409, headers: { "Content-Type": "application/json" } })
+        : json(blind));
+    render(Deploys);
+    const alert = await panel("Alert app");
+    await fireEvent.click(alert.getByRole("button", { name: "Выкатить" }));
+    const sheet = await screen.findByRole("dialog");
+    expect(within(sheet).getByText(/ещё не известна/)).toBeTruthy();
+    await fireEvent.click(within(sheet).getByRole("button", { name: "Выкатить" }));
+    expect((await within(sheet).findByRole("alert")).textContent).toContain("Голова ветки master — 8888888.");
+    const asked = fetch.mock.calls.find(([url]) => url === "/api/deploys/launch/challenge")!;
+    expect(JSON.parse(asked[1].body)).not.toHaveProperty("expected_sha");
+  });
 });

@@ -27,7 +27,12 @@ An overlay is **data only**: nothing of it is ever run. Before the switch, in th
    `schema_version` (its range is the released code's);
 2. the privacy scanners run over the **code tree alone** (the overlay carries addresses on purpose):
    the released code's public scanner with its `privacy-scan.json`, and the installed tree's closed
-   scanner `common/kd/private_scan.py` with the overlay's literal list `host/private_scan.json`;
+   scanner `common/kd/private_scan.py` with the overlay's literal list `host/private_scan.json`.
+   Both read every file of the tree: a file with a NUL byte in its first 8 KiB is binary and is read as
+   bytes (UTF-8 and UTF-16 of either byte order; a closed literal must be whole), never skipped; a
+   finding there carries a byte offset in place of a line. `kd-release` and `kd-mirror` both refuse a tree
+   with a symlink or a submodule (`common/kd/plain_tree.py`), and `kd-mirror` publishes nothing of such a
+   main;
 3. the released code's `kd.overlay` validates the overlay on its own (schema range, valid JSON, no
    secret-like strings), composes the tree and checks it for every required file and a valid
    `host/host.json`.

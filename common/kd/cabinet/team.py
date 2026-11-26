@@ -1,10 +1,10 @@
 """An agent's state from facts (remediation spec §9.2, R23).
 
 Not the age of its last progress line: what its sessions, commands and questions say, on the threads the person
-may read — the cards they see and, with ``agents.chat``, the agent's chat. Every number is counted from those
-only (rights before counts, AC22): a session, a command or a question on a card out of the person's sight is
-not in any of them. The threads are narrowed in the query itself, so rows the person may not see never crowd out
-those they may.
+may read — the cards they see and, of the agent's own threads, its chat with ``agents.chat`` and its «Monitor» with
+``servers.read`` too. Every number is counted from those only (rights before counts, AC22): a session, a command or a
+question on a card out of the person's sight is not in any of them. The threads are narrowed in the query itself,
+so rows the person may not see never crowd out those they may.
 
 - working — a session starting or at work whose heartbeat is fresh (``FRESH``); one whose heartbeat is older
   is ``stale``: nothing confirms it works, and with nothing else known the agent's state is ``unknown``;
@@ -23,7 +23,7 @@ agent not on the session host is ``unknown``: the cabinet does not watch it.
 """
 
 import json
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, Iterable, List, Mapping, Optional
 
 from kd.cabinet import schema, users
 
@@ -41,14 +41,16 @@ def _age(now: str, then: str) -> float:
     return (users.parse_time(now) - users.parse_time(then)).total_seconds()
 
 
-def facts(store, name: str, *, cards: List[Mapping], chat: bool, hosted: bool, now: str) -> Dict:
-    """The facts of agent ``name`` as the person reading ``cards`` (and its chat with ``chat``) may see them."""
+def facts(store, name: str, *, cards: List[Mapping], spaces: Iterable[str], hosted: bool, now: str) -> Dict:
+    """The facts of agent ``name`` as the person reading ``cards`` and the agent's own threads of ``spaces`` (its
+    chat, its «Monitor»: ``api.agent_spaces``) may see them."""
     readable = {c["id"]: c for c in cards}
     conn = store._conn
     threads = [r[0] for r in conn.execute(f"SELECT id FROM threads WHERE card IN {SCOPE}", (json.dumps(list(readable)),))]
-    if chat:
-        threads += [r[0] for r in conn.execute(  # its chat and "Monitor"
-            f"SELECT id FROM threads WHERE kind IN {SCOPE} AND agent=?", (json.dumps(schema.AGENT_THREAD_KINDS), name)
+    kinds = [schema.AGENT_SPACES[space] for space in spaces]
+    if kinds:
+        threads += [r[0] for r in conn.execute(  # its chat and "Monitor", those the person reads
+            f"SELECT id FROM threads WHERE kind IN {SCOPE} AND agent=?", (json.dumps(kinds), name)
         )]
     scope = json.dumps(threads)
 

@@ -160,6 +160,16 @@ def test_gate_script_forms_the_helpers_words():
         (
             {
                 "server": "node-c",
+                "verb": "cron.line",
+                "mark": "KD-7",
+                "action": "set",
+                "line": "*/5 * * * * sh%iptables -F%reboot",
+            },
+            "%",
+        ),
+        (
+            {
+                "server": "node-c",
                 "verb": "file.drop",
                 "dir": "/etc/cron.d",
                 "name": "x",
@@ -185,6 +195,30 @@ def test_gate_script_forms_the_helpers_words():
             {
                 "server": "node-c",
                 "verb": "file.drop",
+                "dir": "/etc/logrotate.d",
+                "name": "x",
+                "mark": "KD-7",
+                "action": "set",
+                "text": "/etc/shadow {\n create 0666 root root\n}\n",
+            },
+            "/var/log/",
+        ),
+        (
+            {
+                "server": "node-c",
+                "verb": "file.drop",
+                "dir": "/etc/sysctl.d",
+                "name": "60-kd.conf",
+                "mark": "KD-7",
+                "action": "set",
+                "text": "net.ipv4.ip_forward = 1\n",
+            },
+            "kd-admin-propose-action",
+        ),
+        (
+            {
+                "server": "node-c",
+                "verb": "file.drop",
                 "dir": "/etc/sysctl.d",
                 "name": "x.conf",
                 "mark": "KD-7",
@@ -200,6 +234,47 @@ def test_gate_script_forms_the_helpers_words():
 def test_typed_content_beyond_its_shape_is_refused(op, why):
     with pytest.raises(ops.ProposalError, match=why):
         step(op)
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {
+            "server": "node-c",
+            "verb": "cron.line",
+            "mark": "KD-123",
+            "action": "set",
+            "line": "*/5 * * * * /usr/local/bin/backup.sh",
+        },
+        {"server": "node-c", "verb": "cron.line", "mark": "KD-123", "action": "remove"},
+        {
+            "server": "node-c",
+            "verb": "file.drop",
+            "dir": "/etc/sysctl.d",
+            "name": "60-kd.conf",
+            "mark": "KD-123",
+            "action": "set",
+            "text": "vm.swappiness = 10\n",
+        },
+    ],
+)
+def test_a_plan_has_no_cron_line_or_file_drop_on_the_factorys_own_host(op):
+    # like a script, a root cron line or a sysctl/logrotate file on the home host reaches the cage itself
+    data = proposal(operations=[explain(op)])
+    with pytest.raises(ops.ProposalError, match="node-c is the factory's own host"):
+        ops.validate_proposal(
+            data, catalog(), INVENTORY, ENABLED, card_servers=("node-c",), home="node-c"
+        )
+    assert ops.validate_proposal(
+        data, catalog(), INVENTORY, ENABLED, card_servers=("node-c",), home="other"
+    )
+    # gate.script stays: it only turns the host's script steps off or on
+    switch = proposal(
+        operations=[explain({"server": "node-c", "verb": "gate.script", "value": "off"})]
+    )
+    assert ops.validate_proposal(
+        switch, catalog(), INVENTORY, ENABLED, card_servers=("node-c",), home="node-c"
+    )
 
 
 def test_the_stage_denylist_reads_a_cron_lines_command():

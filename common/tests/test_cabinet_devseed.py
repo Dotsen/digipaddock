@@ -167,7 +167,7 @@ def test_the_seed_grew_over_days_and_its_decisions_are_live(tmp_path):
     owner = api.Principal("user", -1, "owner")
     cards = [api.compact(r) for r in store.cards()]
     states = {
-        name: team.facts(store, name, cards=cards, chat=True, hosted=svc.ctx.host_config().hosted(name),
+        name: team.facts(store, name, cards=cards, spaces=api.agent_spaces(svc.ctx, owner), hosted=svc.ctx.host_config().hosted(name),
                          now=svc.now())["state"]
         for name in devseed.AGENTS
     }

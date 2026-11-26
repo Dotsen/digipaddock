@@ -236,7 +236,7 @@ async def chat_upload(name: str, request: Request, user: deps.User = Depends(dep
 @router.post("/api/agents/{name}/monitor/files")
 async def monitor_upload(name: str, request: Request, user: deps.User = Depends(deps.writer)):
     """The same in an agent's "Monitor"."""
-    await call(request, user, {"op": "user.agent.check", "agent": name})
+    await call(request, user, {"op": "user.agent.check", "agent": name, "space": "monitor"})
     return await _post(request, user, {"op": "user.agent.message", "agent": name, "space": "monitor"})
 
 

@@ -85,25 +85,9 @@ check() {
 install_journal() {
   # Own directory: the forge user writes, the agent reads by group (setgid: new and rotated files keep the group).
   install -d -o "$forge" -g "$user" -m 2750 "$JOURNAL"
-  [ -e "$JOURNAL/forge.jsonl" ] || [ -L "$JOURNAL/forge.jsonl" ] \
-    || install -o "$forge" -g "$user" -m 0640 /dev/null "$JOURNAL/forge.jsonl"
-  # The directory belongs to the forge user: root fixes the file through a descriptor that never follows a symlink,
-  # or a planted link would hand someone else's file to the forge user.
-  python3 -I - "$JOURNAL/forge.jsonl" "$forge" "$user" <<'JOURNAL'
-import grp, os, pwd, stat, sys
-path, user, group = sys.argv[1:]
-try:
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-except OSError as exc:
-    sys.exit(f"{path}: {exc.strerror} (a symlink?): the journal is left untouched, check it by hand")
-try:
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
-        sys.exit(f"{path}: not a regular file")
-    os.fchown(fd, pwd.getpwnam(user).pw_uid, grp.getgrnam(group).gr_gid)
-    os.fchmod(fd, 0o640)
-finally:
-    os.close(fd)
-JOURNAL
+  # The directory belongs to the forge user: root creates and fixes the file through a descriptor that never follows
+  # a symlink (common/kd/owned_file.py), or a planted link would hand someone else's file to the forge user.
+  /usr/bin/python3 -I "$REPO/common/kd/owned_file.py" file "$JOURNAL/forge.jsonl" "$forge" "$user" 640
   local tmp
   tmp=$(mktemp)
   cat > "$tmp" <<EOF

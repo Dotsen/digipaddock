@@ -4,6 +4,8 @@
 is the service's own words for the journal and for developers.
 """
 
+from typing import Optional
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -34,11 +36,12 @@ DEFAULT_KIND = {
 
 
 class Failure(Exception):
-    """An HTTP answer with a kind: ``Failure(401, "unauthorized", "wrong code")``."""
+    """An HTTP answer with a kind: ``Failure(401, "unauthorized", "wrong code")``; ``extra`` adds fields to the body."""
 
-    def __init__(self, status: int, kind: str, message: str = ""):
+    def __init__(self, status: int, kind: str, message: str = "", extra: Optional[dict] = None):
         super().__init__(message or kind)
         self.status, self.kind, self.message = status, kind, message or kind
+        self.extra = extra or {}
 
 
 def body(kind: str, message: str) -> dict:
@@ -48,7 +51,7 @@ def body(kind: str, message: str) -> dict:
 def install(app: FastAPI):
     @app.exception_handler(Failure)
     async def _failure(request: Request, exc: Failure):
-        return JSONResponse(body(exc.kind, exc.message), status_code=exc.status)
+        return JSONResponse({**exc.extra, **body(exc.kind, exc.message)}, status_code=exc.status)
 
     @app.exception_handler(api.ApiError)
     async def _api(request: Request, exc: api.ApiError):

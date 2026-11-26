@@ -16,7 +16,8 @@ value as the challenge of a sign-in. A key registered here only for signing (not
 A signature carries to a new head only by kd-review's own record (KD-9442): after each Approve it keeps what it
 approved — the decision, the mode, the target and the id of the PR's own diff at that head (``approvals.json``) — and
 ``carry`` posts the same Approve on a head that is that head brought up to date with the target and nothing else
-(``forge.clean_update``) with the same own diff (``forge.patch_id``), the required checks green on it. It reads all of
+(``forge.clean_update``) with the same own diff (``forge.patch_id``), one whose text shows every change it makes (no
+binary file: ``forge.opaque``), the required checks green on it. It reads all of
 that from Forgejo itself: the cabinet only names the PR and the two heads.
 
 It is also the service that starts a prod deploy for the owner (KD-9443, ``deploy_prod``): the cabinet's button asks
@@ -179,9 +180,8 @@ class Reviewer:
         except (Refused, OSError):
             pass
 
-    def _patch(self, repo: repos.Repo, number: int, head: str) -> Optional[str]:
-        """The id of the PR's own diff at ``head`` (``forge.patch_id``); None when it was cut, unreadable or the PR
-        moved on while it was read."""
+    def _diff(self, repo: repos.Repo, number: int, head: str) -> Optional[str]:
+        """The PR's own diff at ``head``; None when it was cut, unreadable or the PR moved on while it was read."""
         try:
             text = self.api.get_text(f"/repos/{repo.repo}/pulls/{number}.diff", forge.LIMIT)
             if len(text.encode("utf-8", "surrogatepass")) > forge.LIMIT or "�" in text:
@@ -189,7 +189,7 @@ class Reviewer:
             self._live(repo, number, head)
         except (forge.ForgeError, Refused):
             return None
-        return forge.patch_id(text)
+        return text
 
     # --- spent nonces -------------------------------------------------------------------------------------------
     def _spent(self, now: float) -> dict:
@@ -294,9 +294,10 @@ class Reviewer:
             answer = {"review": self._post(repo, number, head, forge.SIGNED.format(forge.MODE_TEXT[mode])
                                            + decision[:8] + forge.INTO.format(target)),
                       "head": head, "state": "approved"}
+        diff = self._diff(passport, number, head)
         self._remember(_key(repo, number, head), {
             "decision": decision, "mode": mode, "target": target, "user": user, "at": now,
-            "patch": self._patch(passport, number, head)})
+            "patch": None if diff is None else forge.patch_id(diff)})
         return answer
 
     def _post(self, repo: str, number: int, head: str, body: str) -> int:
@@ -332,10 +333,14 @@ class Reviewer:
         why = forge.clean_update(self.api, repo, old, head, target, base)
         if why:
             raise Refused("refused", f"{head[:7]} is not {old[:7]} updated from {target}: {why}")
-        patch = self._patch(passport, number, head)
-        if patch is None:
+        diff = self._diff(passport, number, head)
+        if diff is None:
             raise Refused("refused", f"the PR's diff on {head[:7]} is cut or unreadable")
-        if patch != record["patch"]:
+        hidden = forge.opaque(diff)
+        if hidden:  # its patch id would not pin the change: a merge could swap a binary's bytes unseen
+            raise Refused("refused", f"the PR's diff on {head[:7]} holds a change its text does not show "
+                                     f"({hidden[:200]})")
+        if forge.patch_id(diff) != record["patch"]:
             raise Refused("refused", f"the PR's own diff changed from {old[:7]} to {head[:7]}")
         missing = forge.missing_checks(forge.statuses(self.api, repo, head), repos.required(passport)) \
             if repos.required(passport) else []

@@ -6,6 +6,7 @@ import json
 import urllib.error
 
 from dev_agent import forge
+from dev_agent import pr as pr_cage
 from test_forge_merge import APPROVED, HEAD, merge_opener
 from test_forge_read import REPO, Resp, paths, write_env
 
@@ -84,6 +85,45 @@ def test_publish_reads_files_and_diff_and_posts(tmp_path):
     merged = Cabinet()
     rc, out, _ = run(tmp_path, opener(pr={**PR, "state": "closed", "merged": True}), merged)
     assert rc == 0 and merged.seen[0]["pr"]["state"] == "merged" and "PR #12: merged" in out
+
+
+def test_a_file_renamed_out_of_the_cage_is_the_cage_by_its_old_path(tmp_path):
+    """KD-9478: Forgejo gives a rename with edits as "renamed" and its new name only; kd-pr diffs --no-renames."""
+    files = [{"filename": "docs/forge.py", "previous_filename": "agents/dev/dev_agent/forge.py", "status": "renamed",
+              "additions": 1, "deletions": 1},
+             {"filename": "agents/dev/tests/guard_old.py", "previous_filename": "agents/dev/dev_agent/guard.py",
+              "status": "renamed", "additions": 0, "deletions": 0},
+             {"filename": "docs/b.md", "previous_filename": "docs/a.md", "status": "renamed", "additions": 0,
+              "deletions": 0},
+             {"filename": "common/specializations/developer/reviewer.v3.md", "status": "modified", "additions": 1,
+              "deletions": 1}]
+    cabinet = Cabinet()
+    rc, _, err = run(tmp_path, opener(files=files), cabinet)
+    assert rc == 0, err
+    sent = cabinet.seen[0]["pr"]
+    assert [f["path"] for f in sent["files"]] == [f["filename"] for f in files]
+    assert sent["cage"] == ["docs/forge.py", "agents/dev/tests/guard_old.py",
+                            "common/specializations/developer/reviewer.v3.md"]
+
+
+def test_a_name_the_cabinet_cannot_show_is_quoted_and_the_cage(tmp_path):
+    """KD-9478: a control character in a name is never dropped: the cabinet shows it escaped, and it counts as cage
+    wherever it sits (git quotes such a name in kd-pr's diff the same way)."""
+    from kd.cabinet import prs_api
+    files = [{"filename": "docs/a\nb.md", "status": "added", "additions": 1, "deletions": 0},
+             {"filename": "common/tests/x\x1b[0m.py", "status": "added", "additions": 1, "deletions": 0},
+             {"filename": "docs/c.md", "previous_filename": "common/kd/\u202eyp.x", "status": "renamed",
+              "additions": 0, "deletions": 0},
+             {"filename": "docs/plain.md", "status": "added", "additions": 1, "deletions": 0}]
+    cabinet = Cabinet()
+    rc, _, err = run(tmp_path, opener(files=files), cabinet)
+    assert rc == 0, err
+    sent = cabinet.seen[0]["pr"]
+    assert [f["path"] for f in sent["files"]] == ['"docs/a\\nb.md"', '"common/tests/x\\x1b[0m.py"', "docs/c.md",
+                                                  "docs/plain.md"]
+    assert sent["cage"] == ['"docs/a\\nb.md"', '"common/tests/x\\x1b[0m.py"', "docs/c.md"]
+    assert prs_api.validate(sent)["cage"] == sent["cage"]  # the board takes the row as it is
+    assert pr_cage.cage_files(['"common/tests/a\\nb.py"']) == ['"common/tests/a\\nb.py"']  # kd-pr's quoted name
 
 
 def _council(state, round_no=2):
@@ -312,3 +352,23 @@ def test_patch_id_ignores_where_the_change_sits_but_not_what_it_is():
     assert forge.patch_id(diff) == forge.patch_id(moved)
     assert forge.patch_id(diff) != forge.patch_id(moved.replace("+b", "+B"))
     assert forge.patch_id(diff) != forge.patch_id(moved.replace(" c\n", " C\n"))  # context counts too
+
+
+def test_patch_id_hashes_every_byte_of_a_line_and_the_mode():
+    """KD-9478: a line ends at \\n only — a \\r, \\v, \\f or U+2028 inside an added line once split it, and what followed
+    as "index …" or "@@ -1 +1 @@ …" was dropped; the mode of an index line is hashed, its blob ids are not."""
+    diff = "diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@ f\n a\n+b{}\n c\n"
+    for sep in ("\r", "\x0b", "\x0c", "\x1c", "\x85", " "):
+        for tail in ("index 1..2", "@@ -1 +1 @@ x"):
+            assert forge.patch_id(diff.format(sep + tail)) != forge.patch_id(diff.format(sep + tail + "y"))
+    plain = diff.format("")
+    assert forge.patch_id(plain) == forge.patch_id(plain.replace("index 1..2", "index 3..4"))
+    assert forge.patch_id(plain) != forge.patch_id(plain.replace("100644", "100755"))
+
+
+def test_opaque_names_a_change_the_diffs_text_does_not_show():
+    text = "diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-Binary files a/x and b/x differ\n+y\n"
+    assert forge.opaque(text) == ""  # a line of a text file is not a binary's
+    binary = "diff --git a/p.png b/p.png\nindex 1..2 100644\nBinary files a/p.png and b/p.png differ\n"
+    assert forge.opaque(text + binary) == "Binary files a/p.png and b/p.png differ"
+    assert forge.opaque("diff --git a/p b/p\nGIT binary patch\nliteral 0\n") == "GIT binary patch"

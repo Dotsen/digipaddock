@@ -400,8 +400,10 @@ class Store:
         return self.thread_messages(self._thread_id(card_id), after, before=before, limit=limit)
 
     def events_since(self, seq: int, limit: int = 500) -> List[dict]:
+        """The journal after ``seq``; ``thread`` — the thread an event is in, None for none (who may see an agent
+        thread's event depends on which of its threads it is: ``api.event_filter``)."""
         rows = self._conn.execute(
-            "SELECT seq, ts, actor, kind, card, payload FROM events WHERE seq>? ORDER BY seq LIMIT ?",
+            "SELECT seq, ts, actor, kind, card, thread, payload FROM events WHERE seq>? ORDER BY seq LIMIT ?",
             (seq, limit),
         ).fetchall()
         return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
@@ -409,7 +411,7 @@ class Store:
     def events_before(self, seq: int, limit: int = 500) -> List[dict]:
         """The journal backwards from ``seq`` (exclusive), newest first."""
         rows = self._conn.execute(
-            "SELECT seq, ts, actor, kind, card, payload FROM events WHERE seq<? ORDER BY seq DESC LIMIT ?",
+            "SELECT seq, ts, actor, kind, card, thread, payload FROM events WHERE seq<? ORDER BY seq DESC LIMIT ?",
             (seq, limit),
         ).fetchall()
         return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]

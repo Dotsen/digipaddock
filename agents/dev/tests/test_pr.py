@@ -63,6 +63,21 @@ def test_cage_files_is_everything_but_docs_tasks_tests_and_plain_md():
     assert pr.cage_line(["a", "b"]) == "Cage (computed): да — a, b"
 
 
+def test_every_text_put_into_an_agents_or_a_workers_instructions_is_the_cage():
+    """KD-9478: the shared template, the specializations and their skills, any .md an agent's CLAUDE.md may include,
+    a repository's CLAUDE.md and .claude/ — whatever the extension; docs, tasks, tests and READMEs stay out."""
+    texts = ["common/agent-template/CLAUDE.common.md", "common/specializations/developer/reviewer.v3.md",
+             "common/specializations/skills/security-review.v1.md", "common/specializations/developer/notes.txt",
+             "agents/sysadmin/servers.example.md", "agents/dev/README.md", "CLAUDE.md", "common/kd/CLAUDE.md",
+             ".claude/commands/fix.md", "common/.claude/agents/critic.md"]
+    assert pr.cage_files(texts) == texts
+    plain = ["README.md", "docs/CLAUDE.md", "docs/specializations.md", "tasks/todo.md", "CONTRIBUTING.md",
+             "common/cabinet/README.md", "agents/dev/tests/fixture.md", "common/tests/fixtures/new_agent_plan/boss/CLAUDE.md"]
+    assert pr.cage_files(plain) == []
+    # a name is taken as git gives it: a top-level " docs" folder is not docs/
+    assert pr.cage_files([" docs/x.py", "docs/x.py "]) == [" docs/x.py"]
+
+
 def test_check_computes_cage_from_diff_and_refuses_false_no():
     run = fake_run({"rev-parse --abbrev-ref": (0, "agent/KD-12-x\n", ""),
                     f"diff --name-only {MAIN}...HEAD": (0, "common/kd/shell.py\ndocs/a.md\n", "")})

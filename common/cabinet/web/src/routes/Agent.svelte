@@ -1,7 +1,8 @@
 <script lang="ts">
   // One agent: its state from facts and what it is made of (questions, failures in words, cards
   // by status, heartbeat and last action), specializations, today's spend, its latest progress lines and its
-  // cards; an agent on the session host also its slots, its chat (agents.chat) and its sessions.
+  // cards; an agent on the session host also its slots, its chat (agents.chat; «Монитор» also servers.read) and its
+  // sessions.
   import { onMount } from "svelte";
   import AgentFacts from "../components/AgentFacts.svelte";
   import Avatar from "../components/Avatar.svelte";
@@ -17,7 +18,7 @@
   import { namedCards, statusLine } from "../lib/agentline";
   import { chats, readAll } from "../lib/chats.svelte";
   import { navigate, router } from "../lib/router.svelte";
-  import { SPACES, spaceKey, type Space } from "../lib/spaces";
+  import { SPACES, canOpenSpace, spaceKey, type Space } from "../lib/spaces";
   import { isToolMessage } from "../lib/events";
   import { coalesce } from "../lib/coalesce";
   import { errorText, t } from "../lib/i18n.svelte";
@@ -40,7 +41,10 @@
     agent ? [...agent.cards].sort((a, b) => order(a.status) - order(b.status) || b.n - a.n) : [],
   );
   const hosted = $derived(!!agent?.host);
-  const canChat = $derived(session.can("agents.chat"));
+  const can = (perm: string) => session.can(perm);
+  const canChat = $derived(canOpenSpace(can));
+  // «Монитор» is the servers' too: its tab only for who reads them (the server says so as well, `monitor`)
+  const hasMonitor = $derived(!!agent?.monitor && canOpenSpace(can, "monitor"));
   // the coordinator's page is a chat first; facts, sessions and spend wait under "More → Diagnostics"
   const calm = $derived(!!agent && agent.name === COORDINATOR && hosted && canChat);
   let panel = $state<"" | "tasks" | "diagnostics">("");
@@ -69,7 +73,7 @@
   // (`?tab=monitor` — a push of a "Monitor" reply opens it); the coordinator's "Monitor" is its work log
   // (attention ticks), a tab of its calm page too
   const asked = $derived<Space>(router.current.query.get("tab") === "monitor" ? "monitor" : "chat");
-  const space = $derived<Space>(agent?.monitor ? asked : "chat");
+  const space = $derived<Space>(hasMonitor ? asked : "chat");
   const spaceOpen = $derived(spaceKey(name, space));
   function showSpace(next: Space) {
     const base = `/agents/${encodeURIComponent(name)}`;
@@ -191,7 +195,7 @@
       </section>
     {/if}
     <PushBanner name={agent.name.toUpperCase()} />
-    {#if agent.monitor}{@render spaceTabs(agent.name)}{/if}
+    {#if hasMonitor}{@render spaceTabs(agent.name)}{/if}
     <div class="chat full">
       {#key spaceOpen}
         <Thread chatAgent={spaceOpen} quiet working={agent.state === "working" ? `@${agent.name}` : ""}
@@ -224,7 +228,7 @@
   </div>
 
   {#if hosted && canChat}
-    {#if agent.monitor}
+    {#if hasMonitor}
       {@render spaceTabs(agent.name)}
     {:else}
       <h2 class="section-h">{t("agent.chat")}</h2>

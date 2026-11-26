@@ -6,7 +6,7 @@ Only the kd-cabinet service opens the file. Every write is one transaction of ro
 which ``Store.open`` applies in order, in one transaction, on a new base as on an old one.
 """
 
-SCHEMA_VERSION = 47
+SCHEMA_VERSION = 48
 STATUSES = ("Inbox", "To Do", "In Progress", "Review", "Blocked", "Done", "Cancelled")
 # closed without the work — a duplicate of its canonical card, or cancelled. Done stays «the result was
 # accepted»: a Cancelled card satisfies no dependency and counts as no finished work.
@@ -675,6 +675,14 @@ CREATE INDEX IF NOT EXISTS events_release_notice ON events(seq) WHERE kind = 'no
                                           'notice.forge.release_refused');
 """
 
+# v48: an agent's own threads (its chat and «Monitor», outside cards) are not a partner's (KD-9476). A base keeps the
+# roles it has (``store._default_roles`` adds only missing ones), so the partner role stored before loses
+# ``agents.chat`` here, whatever else the owner put into it; any other role keeps it. The owner gives it back by hand.
+DDL_V48 = """
+UPDATE roles SET perms = (SELECT json_group_array(value) FROM json_each(roles.perms) WHERE value != 'agents.chat')
+  WHERE id = 'partner' AND EXISTS (SELECT 1 FROM json_each(roles.perms) WHERE value = 'agents.chat');
+"""
+
 MIGRATIONS = {
     2: DDL_V2, 3: DDL_V3, 4: DDL_V4, 5: DDL_V5, 6: DDL_V6, 7: DDL_V7, 8: DDL_V8, 9: DDL_V9, 10: DDL_V10, 11: DDL_V11,
     12: DDL_V12, 13: DDL_V13, 14: DDL_V14, 15: DDL_V15, 16: DDL_V16, 17: DDL_V17,
@@ -682,7 +690,7 @@ MIGRATIONS = {
     25: DDL_V25, 26: DDL_V26, 27: DDL_V27, 28: DDL_V28, 29: DDL_V29, 30: DDL_V30, 31: DDL_V31,
     32: DDL_V32, 33: DDL_V33, 34: DDL_V34, 35: DDL_V35, 36: DDL_V36, 37: DDL_V37, 38: DDL_V38, 39: DDL_V39,
     40: DDL_V40, 41: DDL_V41, 42: DDL_V42, 43: DDL_V43, 44: DDL_V44, 45: DDL_V45, 46: DDL_V46,
-    47: DDL_V47,
+    47: DDL_V47, 48: DDL_V48,
 }
 # the council of models: what it reads, how a gathering stands, how one critic's read stands
 COUNCIL_KINDS = ("brief", "code")

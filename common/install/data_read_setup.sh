@@ -22,6 +22,8 @@ case $mode in install|check|disable) ;; *) usage ;; esac
 cd /
 # shellcheck source=lib/naming.sh
 . "$REPO/common/install/lib/naming.sh"
+# Owner and mode of what lies in a service user's directory go through a descriptor that never follows a link.
+owned() { /usr/bin/python3 -I "$REPO/common/kd/owned_file.py" "$@"; }
 data=$(kd_user data)
 observe=$(kd_user observe)
 HOME_DIR=/home/$data
@@ -66,15 +68,13 @@ case $mode in
     id "$data" >/dev/null 2>&1 || { echo "data.read: no user $data (new_agent.sh creates it first)" >&2; exit 1; }
     id "$observe" >/dev/null 2>&1 || { echo "data.read: no user $observe: install an agent with host.read first" >&2; exit 1; }
     chmod 0700 "$HOME_DIR"
-    install -d -o "$data" -g "$data" -m 0700 "$HOME_DIR/.ssh"
+    owned dir "$HOME_DIR/.ssh" "$data" "$data" 700
     stage=$(kd_host stage_alias)  # its own assignment: set -e stops on an unreadable host.json
     [ -f "$KEY" ] || runuser -u "$data" -- ssh-keygen -q -t ed25519 -N "" -C "agent-data@$stage" -f "$KEY"
-    [ -f "$HOME_DIR/.ssh/known_hosts" ] || install -o "$data" -g "$data" -m 0644 /dev/null "$HOME_DIR/.ssh/known_hosts"
+    owned file "$HOME_DIR/.ssh/known_hosts" "$data" "$data" 644
     # Only the data user writes the journal; setgid: rotated files keep the reader's group.
-    install -d -o "$data" -g "$observe" -m 2750 "$JOURNAL"
-    [ -f "$JOURNAL/data.jsonl" ] || install -o "$data" -g "$observe" -m 0640 /dev/null "$JOURNAL/data.jsonl"
-    chown "$data:$observe" "$JOURNAL/data.jsonl"
-    chmod 0640 "$JOURNAL/data.jsonl"
+    install -d -o "$data" -g "$observe" -m 2750 "$JOURNAL"  # in the root-owned /var/log: no one swaps it
+    owned file "$JOURNAL/data.jsonl" "$data" "$observe" 640
     printf '%s\n' "$ROTATE" > "$ROTATE_FILE"
     check
     echo "data.read: $agent reads the servers' databases through $data"

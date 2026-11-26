@@ -149,3 +149,17 @@ def test_a_broken_list_is_an_error(repo, tmp_path):
     broken = tmp_path / "broken.json"
     broken.write_text("{}", encoding="utf-8")
     assert run(repo, "--private-list", str(broken)) == 2
+
+
+def test_binary_files_are_scanned_committed_uncommitted_and_untracked(repo, listing, capsys):
+    blob = b"\0\1 host " + LITERAL.encode() + b"\n"
+    (repo / "c.bin").write_bytes(blob)
+    git(repo, "add", "--", "c.bin")
+    git(repo, "commit", "-qm", "docs: c")
+    git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    (repo / "c.bin").write_bytes(blob + b"more")  # an uncommitted change of a tracked binary
+    (repo / "u.bin").write_bytes(blob)  # an untracked binary
+    assert run(repo, "--private-list", str(listing)) == 1
+    err = capsys.readouterr().err
+    assert "c.bin:" in err and "u.bin:" in err and "(byte offset)" in err
+    assert LITERAL not in err

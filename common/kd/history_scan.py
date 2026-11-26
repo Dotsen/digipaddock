@@ -4,7 +4,7 @@ line, by the public scanner and the closed one.
 The forge's history keeps a line for good once merged, even one a later commit removed, in every clone of it.
 ``devcheck/unit`` scans a PR's own commits (``refs/kd/base..HEAD``) and ``scripts/check_history.py`` the commits main
 has not got yet, before the push, so such a line never reaches main. (kd-mirror publishes snapshots of main's tree, not
-this history.)
+this history.) A binary file's added content is read by its blob, as bytes, by the two scanners' binary rules.
 
     python3 -I common/kd/history_scan.py --config privacy-scan.json --list host/private_scan.json <repo> <base>
 
@@ -91,13 +91,15 @@ def _added(diff):
                 number += 1
 
 
-def history(messages, diff, paths=""):
+def history(messages, diff, paths="", binaries=()):
     """Records (where, line number, line): ``commit <h>`` / ``tag <ref>`` message lines, then the paths of a tree
-    (``paths``: ``git ls-tree -r --name-only -z``) and of the history, then added lines."""
+    (``paths``: ``git ls-tree -r --name-only -z``) and of the history, then added lines, then the added binary files
+    (``binaries``: (path, bytes) pairs) as (path, 0, bytes)."""
     return [
         *_messages(messages),
         *(("path", 0, name) for name in paths.split("\0") if name),
         *_added(diff),
+        *((path, 0, data) for path, data in binaries),
     ]
 
 
@@ -114,7 +116,7 @@ def _published(records, exclude):
 def history_text(records):
     """Message lines, paths and every added line — what the closed scanner reads as one file (the public exclude
     list is the public scanner's: the closed one reads the whole tree, review M2)."""
-    return "".join(line + "\n" for _, _, line in records)
+    return "".join(line + "\n" for _, _, line in records if isinstance(line, str))
 
 
 def line_digest(line):
@@ -124,10 +126,19 @@ def line_digest(line):
 
 def public_history_findings(records, cfg, allowed=frozenset()):
     """The public scanner over the history: ["<where>:<line>: <kind> (allow <digest>)", …]; a line whose digest
-    is in ``allowed`` is not scanned."""
+    is in ``allowed`` is not scanned. A binary file (bytes) is scanned by its bytes, the digest is its sha256 and
+    the number a byte offset."""
     domains = privacy_scan._domain_patterns(cfg)
     found = []
     for where, number, line in _published(records, cfg.exclude):
+        if isinstance(line, bytes):
+            digest = hashlib.sha256(line).hexdigest()
+            if digest not in allowed:
+                found += [
+                    f"{where}:{f.line}: {f.kind} (byte offset) (allow {digest})"
+                    for f in privacy_scan.scan_binary(line, where, cfg)
+                ]
+            continue
         digest = line_digest(line)
         if digest in allowed:
             continue
@@ -141,11 +152,16 @@ def public_history_findings(records, cfg, allowed=frozenset()):
 def closed_findings(records, patterns):
     """The closed scanner's literals (``private_scan.load``) over every record, excluded paths too: ["<where>:<line>:
     private literal", …] — the literal itself stays out."""
-    return [
-        f"{where}:{number}: private literal"
-        for where, number, line in records
-        if any(pattern.search(line) for _, pattern in patterns)
-    ]
+    found = []
+    for where, number, line in records:
+        if isinstance(line, bytes):
+            found += [
+                f"{where}:{offset}: private literal (byte offset)"
+                for offset, _ in private_scan.binary_hits(line, patterns)
+            ]
+        elif any(pattern.search(line) for _, pattern in patterns):
+            found.append(f"{where}:{number}: private literal")
+    return found
 
 
 def git_text(repo, *args):
@@ -159,9 +175,49 @@ def git_text(repo, *args):
     return out.decode("utf-8", "replace")
 
 
+def _binaries(repo, revs):
+    """(path, bytes) of every binary file (a NUL in its first 8 KiB) that ``revs`` adds or changes: git shows such a
+    file's diff as "Binary files differ", so its blob is read. A merge by its first parent."""
+    raw = git_text(
+        repo, "log", "--raw", "-z", "--no-abbrev", "--no-renames", "--format=",
+        "--diff-merges=first-parent", revs,
+    ).split("\0")
+    wanted = {}
+    for at, meta in enumerate(raw[:-1]):  # ":<mode> <mode> <old id> <new id> <status>" NUL path NUL
+        fields = meta.strip().split(" ")
+        if (
+            len(fields) == 5
+            and fields[0].startswith(":")
+            and fields[4][:1] in ("A", "M", "T")
+            and fields[1] != "160000"
+        ):
+            wanted[(raw[at + 1], fields[3])] = None
+    if not wanted:
+        return []
+    ids = sorted({blob for _, blob in wanted})
+    out = subprocess.run(
+        ["git", "-c", "core.quotePath=false", "cat-file", "--batch"], cwd=str(repo), input="".join(i + "\n" for i in ids).encode(),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+    ).stdout
+    blobs, at = {}, 0
+    while at < len(out):
+        end = out.index(b"\n", at)
+        head = out[at:end].split(b" ")
+        at = end + 1
+        if len(head) == 3:
+            size = int(head[2])
+            blobs[head[0].decode()] = out[at : at + size]
+            at += size + 1
+    return [
+        (path, blobs[blob])
+        for (path, blob) in sorted(wanted)
+        if b"\0" in blobs.get(blob, b"")[: privacy_scan.BINARY_PROBE]
+    ]
+
+
 def span(repo, base, head="HEAD"):
-    """The records of ``base..head``: its messages, then the paths and added lines — a merge by its first parent,
-    as main shows it."""
+    """The records of ``base..head``: its messages, then the paths and added lines (and the bytes of added binary
+    files) — a merge by its first parent, as main shows it."""
     revs = f"{base}..{head}"
     messages = git_text(repo, "log", "-z", LOG_FORMAT, revs)
     diff = git_text(
@@ -173,7 +229,7 @@ def span(repo, base, head="HEAD"):
         "--diff-merges=first-parent",
         revs,
     )
-    return history(messages, diff)
+    return history(messages, diff, binaries=_binaries(repo, revs))
 
 
 def scan(records, cfg, patterns):

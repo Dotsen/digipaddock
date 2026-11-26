@@ -13,7 +13,9 @@ Root runs it (``digipaddock-vulnscan.service``) as the orchestrator of three ste
    second card; a finding whose card could not be made is tried again the next day.
 
 A database older than vuln_scan.MAX_AGE_S after the download gives one card that it is not updated (again only after
-it was fresh in between). At most MAX_CARDS cards a run: the rest come the following days.
+it was fresh in between). At most MAX_CARDS cards a run: the rest come the following days. Each child unit is the ci
+user in a pid namespace of its own (``ci_unit``): a check's tests, of the same user, cannot reach the download's
+directory through /proc.
 """
 
 import datetime
@@ -25,7 +27,7 @@ import sys
 import time
 from typing import Callable, Optional
 
-from kd import devcheck_runner, naming, repo_sync
+from kd import ci_unit, devcheck_runner, naming, repo_sync
 from kd import vuln_scan as vs
 
 STATE = "/var/lib/digipaddock/vulnscan/state.json"  # root 0600: the findings seen and the open «not updated» card
@@ -183,40 +185,26 @@ class Daily:
     def _unit(
         self, name: str, command: list, *, network: bool, writable: str, limit: int
     ) -> list:
+        """A child unit: the ci user in a pid namespace of its own (``ci_unit``), the network only for the download."""
         props = [
-            f"User={self.ci_user}",
-            f"Group={self.ci_user}",
             *(() if network else ("PrivateNetwork=yes",)),
             "PrivateTmp=yes",
             "ProtectSystem=strict",
             "ProtectHome=yes",
-            "NoNewPrivileges=yes",
             *((f"ReadWritePaths={writable}",) if writable else ()),
             "MemoryMax=2G",
             f"RuntimeMaxSec={limit}",
             "InaccessiblePaths="
             + " ".join("-" + p for p in devcheck_runner.INACCESSIBLE),
         ]
-        argv = [
-            "systemd-run",
-            "--unit",
-            UNIT + name,
-            "--wait",
-            "--pipe",
-            "--collect",
-            "--quiet",
-        ]
-        for prop in props:
-            argv += ["-p", prop]
         script = os.path.join(self.deployed, "common", "kd", "vuln_scan.py")
-        return argv + [
-            "--setenv=HOME=/tmp",
-            "--",
-            "/usr/bin/python3",
-            "-I",
-            script,
-            *command,
-        ]
+        return ci_unit.argv(
+            UNIT + name,
+            props,
+            ["/usr/bin/python3", "-I", script, *command],
+            user=self.ci_user,
+            env=["HOME=/tmp"],
+        )
 
     def update(self) -> bool:
         rc, out = self.units(
@@ -450,6 +438,13 @@ def main(argv=None) -> int:
     if args != ["run"]:
         print("usage: kd-vulnscan run", file=sys.stderr)
         return 2
+    absent = ci_unit.missing()
+    if absent:
+        print(
+            f"kd-vulnscan: no {', '.join(absent)} (util-linux): the ci units cannot be isolated",
+            file=sys.stderr,
+        )
+        return 1
     import pwd
 
     from kd.cabinet import client as cabinet_client

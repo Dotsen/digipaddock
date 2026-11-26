@@ -96,9 +96,9 @@ def main(argv=None, *, env=None, client=None, grants=admin_approval.GRANTS,
         enabled = ops.load_enabled(Path(enabled_path))
         inventory_data = ops.load_inventory(Path(inventory_path or inventory.INVENTORY))
         op = ops.validate_operation(admin_grant.operation_at(grant, op_index), catalog, inventory_data, enabled)
-        # The proposal refuses a script on the factory's own host at propose time; the executor
-        # refuses it again here — a grant may hold one by another path (load_home fails closed: ValueError)
-        if op.verb == "script" and op.server == ops.load_home(Path(inventory_path or inventory.INVENTORY)):
+        # The proposal refuses a script, a cron line or a file drop on the factory's own host at propose time; the
+        # executor refuses it again here — a grant may hold one by another path (load_home fails closed: ValueError)
+        if op.verb in ops.HOME_VERBS and op.server == ops.load_home(Path(inventory_path or inventory.INVENTORY)):
             raise Refused(ops.HOME_SCRIPT.format(home=op.server))
         if op.server not in card.servers:
             raise Refused(f"{op.server} is not a server of {task_id}")

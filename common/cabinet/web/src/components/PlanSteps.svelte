@@ -8,8 +8,9 @@
 
 <script lang="ts">
   // A sysadmin plan's steps: what (first line), risk by colour, the server (production highlighted), the
-  // exact command folded under ▸, the rollback. A script step shows its text unfolded: the owner's
-  // signature covers exactly that text, so it is read, not opened.
+  // rollback and the exact command, unfolded: the owner's signature covers exactly that text, so it is read,
+  // not opened. A script is labelled as one; a typed step's command (a cron line, a dropped file) is shown
+  // whole as well.
   import { t } from "../lib/i18n.svelte";
   import type { PlanStep } from "../lib/types";
 
@@ -37,10 +38,10 @@
           <pre class="script">{step.command}</pre>
         </div>
       {:else}
-        <details class="cmd">
-          <summary>{t("decision.command")}</summary>
-          <pre>{step.command || step.mechanics}</pre>
-        </details>
+        <div class="cmd">
+          <span class="label typed">{t("decision.command")}</span>
+          <pre class="command">{step.command || step.mechanics}</pre>
+        </div>
       {/if}
     </li>
   {/each}
@@ -58,7 +59,7 @@
   .x { color: var(--muted); font-size: var(--fs-md); max-width: 62ch; }
   .x b { color: var(--text); font-weight: 500; }
   .cmd { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--muted); }
-  .cmd summary { cursor: pointer; font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--accent); }
   .cmd .label { font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--warn); }
+  .cmd .label.typed { color: var(--muted); }
   .cmd pre { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); background: var(--bg); border-radius: var(--r-sm); overflow-x: auto; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

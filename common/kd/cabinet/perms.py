@@ -29,6 +29,8 @@ PERMISSIONS = (
     "settings",
 )
 ALL = "*"
+# A partner works with agents in the threads of their projects' cards only: an agent's own threads are not theirs
+# (KD-9476; schema v48 takes agents.chat from a partner role stored before).
 DEFAULT_ROLES = {
     "owner": (ALL,),
     "partner": (
@@ -38,10 +40,12 @@ DEFAULT_ROLES = {
         "cards.edit",
         "decide.promote",
         "decide.question",
-        "agents.chat",
     ),
     "viewer": ("cards.read",),
 }
+# An agent's own threads with people, outside cards, by space: its chat, and its «Monitor» — the monitor's reports on
+# the servers — which also needs the servers. Both are agent-wide, so only a grant over every project counts.
+AGENT_THREAD_PERMS = {"chat": ("agents.chat",), "monitor": ("agents.chat", "servers.read")}
 
 
 def check(perm: str) -> str:

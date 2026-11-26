@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from kd import ci_unit
 from kd import devcheck_runner as dr
 from kd.session_host import devcheck as host_devcheck
 
@@ -36,8 +37,8 @@ class Units:
     def __call__(self, argv):
         self.calls.append(list(argv))
         time.sleep(self.delay)
-        command = argv[argv.index("--") + 1:]
-        where = [a.split("=", 1)[1] for a in argv if a.startswith("WorkingDirectory=")][0]
+        command = ci_unit.command_of(argv)
+        where = [a.split("=", 1)[1] for a in argv if a.startswith("--chdir=")][0]
         if self.fail and self.fail in " ".join(command):
             return 1, "ERROR: No matching distribution found for fastapi==1.0 (token=abc)"
         if command[1:3] == ["-m", "venv"]:
@@ -125,7 +126,7 @@ def test_the_venv_is_fetched_with_network_and_installed_without(tmp_path):
     env = Env(tmp_path)
     env.deps(ID, "digipaddock", checkout(tmp_path), {})
     builds = env.builds("venv")
-    steps = [c[c.index("--") + 1:] for c in builds]
+    steps = [ci_unit.command_of(c) for c in builds]
     dl_venv, backend, f_dev, f_build, f_cab, venv, i_dev, i_build, i_cab = steps
     new = venv[-1]
     assert os.path.basename(new).startswith(".new-venv-") and new.endswith(ID[:12])
@@ -149,7 +150,7 @@ def test_the_venv_is_fetched_with_network_and_installed_without(tmp_path):
                                "-r", os.path.join(locks, "requirements.txt")]
     assert [_network(c) for c in builds] == [True] * 5 + [False] * 4
     (npm,) = env.builds("node")
-    assert npm[npm.index("--") + 1:] == ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"] and _network(npm)
+    assert ci_unit.command_of(npm) == ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"] and _network(npm)
 
 
 @pytest.mark.parametrize("rel, text, why", [
@@ -222,16 +223,20 @@ def test_the_deps_unit_has_network_and_writes_only_its_directory(tmp_path):
     env = Env(tmp_path)
     env.deps(ID, "digipaddock", checkout(tmp_path), {})
     argv = env.units.calls[0]
-    new = [a.split("=", 1)[1] for a in argv if a.startswith("WorkingDirectory=")][0]
+    new = [a.split("=", 1)[1] for a in argv if a.startswith("--chdir=")][0]
     assert argv[:7] == ["systemd-run", "--unit", host_devcheck.deps_unit(ID), "--wait", "--pipe", "--collect",
                         "--quiet"]
     props = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
-    assert props == ["User=digi-ci", "Group=digi-ci", "PrivateTmp=yes", "ProtectSystem=strict", "ProtectHome=yes",
-                     f"ReadWritePaths={new}", "NoNewPrivileges=yes", "CPUQuota=200%", "MemoryMax=3G",
-                     f"RuntimeMaxSec={dr.DEPS_MAX_S}", "InaccessiblePaths=" + " ".join("-" + p for p in dr.INACCESSIBLE),
-                     f"WorkingDirectory={new}"]
+    # KD-9473: no User= — another check's tests would reach this build (with network) through /proc/<pid>/cwd
+    assert props == ["CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP", "NoNewPrivileges=yes",
+                     "TimeoutStopSec=15", "PrivateTmp=yes", "ProtectSystem=strict", "ProtectHome=yes",
+                     f"ReadWritePaths={new}", "CPUQuota=200%", "MemoryMax=3G",
+                     f"RuntimeMaxSec={dr.DEPS_MAX_S}", "InaccessiblePaths=" + " ".join("-" + p for p in dr.INACCESSIBLE)]
     assert not any(p.startswith(("PrivateNetwork", "IPAddressDeny")) for p in props)
-    assert [a for a in argv if a.startswith("--setenv=")] == [f"--setenv=HOME={os.path.join(new, '.home')}"]
+    assert [a for a in argv if a.startswith("--setenv=")] == [
+        "--setenv=USER=digi-ci", "--setenv=LOGNAME=digi-ci", f"--setenv=HOME={os.path.join(new, '.home')}"]
+    assert argv[argv.index("--") + 1:][:3] == [ci_unit.UNSHARE, "--pid", "--fork"]
+    assert "--reuid=digi-ci" in argv and "--no-new-privs" in argv
     assert (new, "digi-ci") in env.owned and len(env.sealed) == 2
 
 

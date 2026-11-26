@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -379,6 +380,32 @@ def test_a_key_not_made_yet_is_said_without_naming_a_wrong_phase(tmp_path):
     out = io.StringIO()
     bootstrap._show([str(tmp_path / "forgejo_deploy.pub")], out)
     assert out.getvalue() == f"    {tmp_path / 'forgejo_deploy.pub'} — not there yet, the install makes it\n"
+
+
+def test_a_key_file_is_shown_only_when_it_is_a_small_regular_file(tmp_path):
+    """Root prints it from a user's home: a huge file there is named, never printed."""
+    key = tmp_path / "key.pub"
+    key.write_bytes(b"ssh-ed25519 AAAA dev@host\n")
+    out = io.StringIO()
+    bootstrap._show([str(key)], out)
+    assert out.getvalue() == "ssh-ed25519 AAAA dev@host\n"
+    big = tmp_path / "big.pub"
+    big.write_bytes(b"x" * 20000)
+    out = io.StringIO()
+    bootstrap._show([str(big)], out)
+    assert "not shown: too large" in out.getvalue() and "xxxx" not in out.getvalue()
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="symlinks and directories as files: Linux")
+def test_a_symlink_or_a_directory_in_place_of_the_key_is_not_followed(tmp_path):
+    secret = tmp_path / "secret"
+    secret.write_text("root-only-text\n", encoding="utf-8")
+    (tmp_path / "key.pub").symlink_to(secret)
+    (tmp_path / "dir.pub").mkdir()
+    out = io.StringIO()
+    bootstrap._show([str(tmp_path / "key.pub"), str(tmp_path / "dir.pub")], out)
+    assert "root-only-text" not in out.getvalue()
+    assert "a symlink" in out.getvalue() and "not a regular file" in out.getvalue()
 
 
 def test_install_json_names_must_be_the_hosts(tmp_path, monkeypatch):

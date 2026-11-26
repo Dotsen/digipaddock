@@ -14,7 +14,8 @@ TURN_A, TURN_B = "a" * 32, "b" * 32
 def w(tmp_path):
     w = WebEnv(tmp_path)
     w.users.create("owner", "Владелец", roles=[("owner", "*")], actor="root")
-    w.users.create("petr", "Пётр", roles=[("partner", "*")], actor="root")
+    w.users.set_role("talker", ["cards.read", "agents.chat"], actor="root")  # no default role but the owner's has it
+    w.users.create("petr", "Пётр", roles=[("talker", "*")], actor="root")
     w.users.create("vera", "Вера", roles=[("viewer", "*")], actor="root")
     return w
 
@@ -97,7 +98,7 @@ def test_a_viewer_has_no_chats_and_may_not_read(w):
 def test_a_new_person_starts_at_the_end_of_every_chat(w):
     _say(w)
     _say(w, agent="analyst")
-    w.users.create("nina", "Нина", roles=[("partner", "*")], actor="root")
+    w.users.create("nina", "Нина", roles=[("talker", "*")], actor="root")
     chats = _unread(w, "nina")
     assert chats["boss"]["unread"] == 0 and chats["analyst"]["unread"] == 0
     _say(w)

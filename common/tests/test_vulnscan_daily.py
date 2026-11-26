@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from kd import ci_unit
 from kd import vuln_scan as vs
 from kd import vulnscan_daily as daily
 from kd.cabinet.client import CabinetError
@@ -82,7 +83,7 @@ class Units:
 
     def __call__(self, argv):
         self.calls.append(argv)
-        command = argv[argv.index("--") + 4 :]
+        command = ci_unit.command_of(argv)[3:]
         if command == ["update"]:
             return self.update_rc, "vulnscan: PyPI: 10 advisories, 1 MiB\n"
         project = os.path.basename(command[1])
@@ -156,16 +157,18 @@ def test_the_children_run_as_the_ci_user_the_download_alone_with_network(env):
     assert update[:4] == ["systemd-run", "--unit", "digipaddock-vulnscan-db", "--wait"]
     for argv in (update, *scans):
         props = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
+        # the ci user in a pid namespace of its own (KD-9473), never User= in the host's
         assert (
-            "User=digi-ci" in props
+            not any(p.startswith("User=") for p in props)
             and "ProtectSystem=strict" in props
             and "NoNewPrivileges=yes" in props
         )
+        assert "--reuid=digi-ci" in argv and argv[argv.index("--") + 1] == ci_unit.UNSHARE
         assert any(
             p.startswith("InaccessiblePaths=") and "-/etc/digipaddock" in p
             for p in props
         )
-        assert argv[argv.index("--") + 1 :][:3] == [
+        assert ci_unit.command_of(argv)[:3] == [
             "/usr/bin/python3",
             "-I",
             "/opt/digipaddock/common/kd/vuln_scan.py",
@@ -354,6 +357,11 @@ def test_english_texts_for_an_english_deployment(env):
 
 def test_main_needs_run(capsys):
     assert daily.main([]) == 2 and daily.main(["scan"]) == 2
+
+
+def test_main_refuses_to_run_without_the_isolation_tools(monkeypatch, capsys):
+    monkeypatch.setattr(daily.ci_unit, "missing", lambda: [ci_unit.UNSHARE])
+    assert daily.main(["run"]) == 1 and ci_unit.UNSHARE in capsys.readouterr().err
 
 
 def test_the_units_and_the_installer_agree():

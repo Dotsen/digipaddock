@@ -2047,8 +2047,11 @@
   "deploys.launch.checks_failed": "{n} of the commits that go out failed their checks.",
   "deploys.head": "head of {branch}: {sha}",
   "deploys.launch.head": "Goes out: the head of {branch} — {sha}.",
-  "deploys.launch.head_unknown": "Goes out: the current head of {branch}.",
+  "deploys.launch.head_unknown": "The head of {branch} is not known yet: press «Deploy» — the cabinet shows it first and you decide.",
   "deploys.launch.pending": "New commits against what runs on {env} now ({sha}): {n}.",
   "deploys.launch.nothing": "No new commits: {env} already runs this head.",
-  "deploys.launch.go": "Deploy"
+  "deploys.launch.go": "Deploy",
+  "deploys.launch.moved": "{branch} moved on while you were looking: its head is now {sha}. Look at what goes out and press «Deploy» again. No signature was asked.",
+  "deploys.launch.unseen": "The head of {branch} is {sha}. Look at what goes out and press «Deploy» again. No signature was asked.",
+  "deploys.launch.commits_lagging": "The list of new commits has not caught up yet: it comes with the next read of Forgejo."
 }

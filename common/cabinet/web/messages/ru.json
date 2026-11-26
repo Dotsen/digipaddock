@@ -2047,8 +2047,11 @@
   "deploys.launch.checks_failed": "У {n} из уходящих коммитов упали проверки.",
   "deploys.head": "голова ветки {branch}: {sha}",
   "deploys.launch.head": "Уйдёт голова ветки {branch} — {sha}.",
-  "deploys.launch.head_unknown": "Уйдёт текущая голова ветки {branch}.",
+  "deploys.launch.head_unknown": "Голова ветки {branch} ещё не известна: нажмите «Выкатить» — кабинет покажет её, и вы решите.",
   "deploys.launch.pending": "Новых коммитов против того, что сейчас на {env} ({sha}): {n}.",
   "deploys.launch.nothing": "Новых коммитов нет: на {env} уже эта голова.",
-  "deploys.launch.go": "Выкатить"
+  "deploys.launch.go": "Выкатить",
+  "deploys.launch.moved": "Ветка {branch} ушла вперёд, пока вы смотрели: теперь её голова {sha}. Посмотрите, что уйдёт, и нажмите «Выкатить» ещё раз. Подпись не запрашивалась.",
+  "deploys.launch.unseen": "Голова ветки {branch} — {sha}. Посмотрите, что уйдёт, и нажмите «Выкатить» ещё раз. Подпись не запрашивалась.",
+  "deploys.launch.commits_lagging": "Список новых коммитов ещё не обновился: он появится со следующим чтением Forgejo."
 }

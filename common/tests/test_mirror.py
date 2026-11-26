@@ -387,3 +387,46 @@ def test_the_snapshot_author_is_a_host_value_with_a_default():
     assert naming.HOST_DEFAULTS["mirror_author"] == "DigiPaddock <mirror@localhost>"
     assert naming._shaped("mirror_author", "DigiPaddock <5484945+someone@users.noreply.example.test>")
     assert not naming._shaped("mirror_author", "no email") and not naming._shaped("mirror_author", "x <a@b>\nz")
+
+
+def _commit_odd(forge, mode, name, message):
+    """A commit whose tree has a 120000 or 160000 entry (git update-index: no symlink rights needed)."""
+    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=forge.work, input="target-text\n",
+                          capture_output=True, text=True, env=GIT_ENV, check=True).stdout.strip()
+    git("update-index", "--add", "--cacheinfo", f"{mode},{blob},{name}", cwd=forge.work)
+    git("commit", "-q", "-m", message, cwd=forge.work)
+    git("push", "-q", "origin", "main", cwd=forge.work)
+    return git("rev-parse", "HEAD", cwd=forge.work)
+
+
+@pytest.mark.parametrize("mode", ["120000", "160000"])
+def test_a_tree_with_a_symlink_or_a_submodule_is_a_privacy_block_not_published(tmp_path, forge, github, capsys, mode):
+    seen = []
+    head = _commit_odd(forge, mode, "docs/link", "KD-3: a link")
+    assert go(tmp_path, forge, github, scanners=lambda tree, records: seen.append(1) or []) == 1
+    assert published(github) == [] and saved(tmp_path)["blocked"] == head and not seen
+    assert "kd-mirror: privacy: a symlink or a submodule in the tree: docs/link" in capsys.readouterr().err
+    assert go(tmp_path, forge, github) == 0  # blocked once, then quiet until main moves
+    assert published(github) == []
+
+
+def test_a_late_tag_on_a_tree_with_a_symlink_is_not_pushed(tmp_path, forge, github, capsys):
+    assert go(tmp_path, forge, github) == 0
+    _commit_odd(forge, "120000", "docs/link", "KD-3: a link")
+    git("update-ref", "refs/heads/main", "HEAD", cwd=forge.work)
+    state = tmp_path / "state" / "state.json"
+    head = git("rev-parse", "HEAD", cwd=forge.work)
+    state.write_text(json.dumps({"pushed": head, "blocked": "", "blocked_at": "", "tags": []}))
+    forge.tag("v1")
+    assert go(tmp_path, forge, github) == 1
+    assert "a symlink or a submodule in the tree: docs/link" in capsys.readouterr().err
+    assert not any("v1" in line for line in git("--git-dir", str(github), "tag").split())
+
+
+def test_default_scanners_read_a_binary_and_say_byte_offset(tmp_path):
+    scan = mirror.default_scanners(release_tree(tmp_path), python=sys.executable)
+    tree = main_tree(tmp_path, {})
+    (tree / "a.bin").write_bytes(b"\0\0 the-closed-word and host.example.invalid")
+    found = scan(tree, [("commit snapshot", 1, "Update to upstream x")])
+    assert "a.bin:23: domain (byte offset)" in found
+    assert "a.bin:3: private literal (byte offset)" in found

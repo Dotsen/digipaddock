@@ -17,6 +17,7 @@
   import { cardFieldPattern, changeText, checkTitle, explanation, incidentActions, incidentAsk, levelText, quietState, resolutionText, thresholdLine, type IncidentAction } from "../lib/monitoring";
   import { MUTES, serverHref, touchesServers } from "../lib/servers";
   import { session } from "../lib/session.svelte";
+  import { canOpenSpace } from "../lib/spaces";
   import { projects } from "../lib/stores/projects.svelte";
   import { synced } from "../lib/synced.svelte";
   import { age, exactWhen, when } from "../lib/time";
@@ -202,7 +203,7 @@
         {#if report}
           <p class="monitor-note">{t("mon.report_by", {at:exactWhen(report.created)})}</p>
           <Markdown text={report.body} />
-          {#if session.can("agents.chat")}<a class="monitor-note" href="/agents/sysadmin?tab=monitor">{t("mon.report_source")}</a>{/if}
+          {#if canOpenSpace((perm) => session.can(perm), "monitor")}<a class="monitor-note" href="/agents/sysadmin?tab=monitor">{t("mon.report_source")}</a>{/if}
         {:else}<p>{t("mon.analysis_pending")}</p>{/if}
         {#if i.investigation?.detail}<p class="error-text">{i.investigation.detail}</p>{/if}
       </section>

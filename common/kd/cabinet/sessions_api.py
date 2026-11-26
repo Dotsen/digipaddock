@@ -13,7 +13,7 @@ import json
 import re
 import sys
 import traceback
-from typing import Mapping
+from typing import Mapping, Tuple
 
 from kd import agents, llm_models, naming
 from kd.cabinet import api, commands, jobs, outcomes, schema, store, usage, voice, waits
@@ -413,17 +413,20 @@ def _command_enqueue(ctx, principal, request):
 
 
 def _scope(ctx, principal, request):
-    """(card, agent) a list is for: a card the caller sees, or an agent (people need ``agents.chat``)."""
+    """(card, agent) a list is for: a card the caller sees, or an agent (people need its chat, ``agents.chat``)."""
     if "card" in request:
         return api._visible_card(ctx, principal, request.get("card")), None
     agent = _agent(ctx, request.get("agent"))
-    api._require(ctx, principal, "agents.chat")
+    api._require_agent_thread(ctx, principal)
     return None, agent
 
 
 def _visible_thread(ctx, principal, thread: int) -> bool:
+    """A card's thread of a project in sight, or an agent's own thread the caller may read («Monitor» apart)."""
     card = _thread_card(ctx, thread)
-    return card is None or api.visible(ctx, principal, card.project)
+    if card is None:
+        return api.reads_agent_thread(ctx, principal, ctx.store.agent_space(thread) or "chat")
+    return api.visible(ctx, principal, card.project)
 
 
 def _command_list(ctx, principal, request):
@@ -452,6 +455,8 @@ def _controlled_session(ctx, principal, request) -> tuple:
     card = _thread_card(ctx, session["thread"])
     if card is not None:
         api._visible_card(ctx, principal, card.id)
+    else:  # a session of the agent's chat or «Monitor»: its turns are that thread's
+        api._require_agent_thread(ctx, principal, ctx.store.agent_space(session["thread"]) or "chat")
     api._require(ctx, principal, "agents.control", card.project if card else None)
     return session, card
 
@@ -586,23 +591,24 @@ def session_thread(ctx, agent: str, request):
     return row[0] if row is not None else None
 
 
-def _chat_open(ctx, principal, request) -> str:
-    """The agent whose chat this person may write to now: ``agents.chat`` and the agent on the session host."""
+def _chat_open(ctx, principal, request) -> Tuple[str, str]:
+    """The agent and the space (chat or «Monitor») this person may write to now: the thread's permissions
+    (``api.reads_agent_thread``) and the agent on the session host."""
     agent = _agent(ctx, request.get("agent"))
-    api._require(ctx, principal, "agents.chat")
+    space = space_of(request)
+    api._require_agent_thread(ctx, principal, space)
     if not _hosted(ctx, agent):
         raise api.ApiError("refused", f"{agent} is not on the session host: its chat is not open yet")
-    return agent
+    return agent, space
 
 
 def _agent_check(ctx, principal, request):
     """The checks of ``user.agent.message`` alone: the web asks before it reads an upload's body."""
-    return {"agent": _chat_open(ctx, principal, request)}
+    return {"agent": _chat_open(ctx, principal, request)[0]}
 
 
 def _agent_message(ctx, principal, request):
-    agent = _chat_open(ctx, principal, request)
-    space = space_of(request)
+    agent, space = _chat_open(ctx, principal, request)
     actor = api.card_actor(principal)
     files = api.message_files(ctx, actor, request.get("files", []))
     text = api.message_text(request.get("text"), files)
@@ -641,11 +647,12 @@ def chat_wake(ctx, agent: str, thread: int, seq: int, actor: str, space: str = "
 
 
 def chat_messages(ctx, principal, request):
-    """``thread.messages`` of an agent's chat or "Monitor" (``{agent, space}``): people need ``agents.chat``; an
-    agent reads its own threads only (the owner's chat with one agent is not another's)."""
+    """``thread.messages`` of an agent's chat or "Monitor" (``{agent, space}``): people need the thread's permissions
+    (``api.reads_agent_thread``); an agent reads its own threads only (the owner's chat with one agent is not
+    another's)."""
     agent = _agent(ctx, request.get("agent"))
     space = space_of(request)
-    api._require(ctx, principal, "agents.chat")
+    api._require_agent_thread(ctx, principal, space)
     if principal.kind == "agent" and principal.agent != agent:
         raise api.ApiError("refused", "an agent reads its own chat only")
     thread = ctx.store.agent_thread(agent, space)

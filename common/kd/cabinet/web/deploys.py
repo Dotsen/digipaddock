@@ -9,10 +9,13 @@
 
 The button «Deploy to prod» (``deploy_prod``), the owner's only — a person holding every permission:
 
-- ``POST /api/deploys/launch/challenge {project, env, skip_tests}`` — no typed word (the owner's choice): kd-review
-  names the head of the environment's branch (``deploy_head``; the cabinet has no network), and the person gets a
-  passkey request over the launch (``kd.deploy_signature``) with ``userVerification: discouraged`` — the one
-  signature of the cabinet without a fingerprint or PIN — and the commit it binds;
+- ``POST /api/deploys/launch/challenge {project, env, skip_tests, expected_sha}`` — no typed word (the owner's
+  choice): kd-review names the head of the environment's branch (``deploy_head``; the cabinet has no network), and
+  the person gets a passkey request over the launch (``kd.deploy_signature``) with ``userVerification:
+  discouraged`` — the one signature of the cabinet without a fingerprint or PIN — and the commit it binds. A
+  challenge is issued only for the head the page named (``expected_sha``, the commit its sheet showed): another live
+  head is a 409 ``conflict`` with ``reason: branch_moved`` and the live ``head``, a request without it a 409 with
+  ``reason: head_unseen`` and the head — in both nothing is stored and nothing is signed;
 - ``POST /api/deploys/launch {challenge_id, credential}`` — the cabinet checks the assertion against the person's own
   key (no user verification asked), kd-review checks it again with its own registry, the spent nonce and the branch's
   live head and calls ``workflow_dispatch`` with its own token; the launch — dispatched or refused — is recorded
@@ -91,12 +94,16 @@ def _review_failure(exc: Exception) -> Failure:
 
 @router.post("/api/deploys/launch/challenge")
 async def launch_challenge(request: Request, user: deps.User = Depends(deps.writer)):
-    """The passkey request over a prod launch: the environment, the commit at its branch's head now, skip_tests."""
+    """The passkey request over a prod launch: the environment, the commit at its branch's head — the one the page
+    showed (``expected_sha``) — and skip_tests."""
     service = deps.svc(request)
     body = await deps.json_body(request)
     skip_tests = body.get("skip_tests", False)
     if not isinstance(skip_tests, bool):
         raise Failure(400, "invalid", "skip_tests is true or false")
+    expected = body.get("expected_sha")
+    if expected is not None and (not isinstance(expected, str) or not SHA40.fullmatch(expected)):
+        raise Failure(400, "invalid", "expected_sha is a full lowercase commit hash")
     # the board answers who may: the owner only, a manual environment the reader reports
     env = (await call(request, user, {"op": "deploy.launchable", "project": body.get("project"),
                                       "env": body.get("env")}))["env"]
@@ -110,6 +117,13 @@ async def launch_challenge(request: Request, user: deps.User = Depends(deps.writ
     sha = head.get("sha")
     if not isinstance(sha, str) or not SHA40.fullmatch(sha) or head.get("branch") != env["branch"]:
         raise Failure(503, "unavailable", "kd-review named no head of the branch")
+    if expected != sha:  # the page shows the owner a commit before the passkey: never sign another one
+        seen = {"head": sha, "branch": env["branch"]}
+        if expected is None:
+            raise Failure(409, "conflict", "the page named no commit: look at the head first",
+                          {"reason": "head_unseen", **seen})
+        raise Failure(409, "conflict", "the branch moved since the page was read",
+                      {"reason": "branch_moved", "expected": expected, **seen})
     allow = await _signer_ids(request, user)
     if not allow:
         raise Failure(403, "setup_required",

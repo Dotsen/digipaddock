@@ -30,7 +30,12 @@ BRANCH_RE = re.compile(r"agent/(" + ids.ANY.pattern + r")-[a-z0-9-]{1,40}")
 CARD_RE = ids.CARD
 URL_RE = re.compile(r"https?://\S+/pulls/[0-9]+")
 WIP_RE = re.compile(r"^\s*(?:(?:wip:|\[wip\])\s*)+", re.I)  # the draft prefixes Forgejo knows (WIP:, [WIP]), all of them
-CAGE_MD = re.compile(r"agents/[^/]+/(CLAUDE\.md|playbooks/.+)")  # .md files that are the cage after all: agent instructions
+# Texts the installers or the runtime put into an agent's or a worker's instructions — the cage whatever their
+# extension: an agent's folder (its CLAUDE.md, playbooks, any .md its CLAUDE.md includes), the template shared by
+# every agent (kd.agent_text), the specializations and skills of workers and persistent cards (kd.specializations)
+INSTRUCTIONS = ("agents/", "common/agent-template/", "common/specializations/")
+# Claude Code reads a repository's CLAUDE.md and .claude/ into the session that works in it
+INSTRUCTION_NAME = re.compile(r"(?:.*/)?(?:CLAUDE\.md|\.claude/.*)")
 SAYS_NO = re.compile(r"(нет|no)\b", re.I)
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")  # a push option is one line; \r and other control characters do not go into a PR title
 BODY_MAX = 60 * 1024
@@ -87,15 +92,17 @@ def tree_of(repo: repos.Repo, card: str, run=subprocess.run) -> str:
 
 
 def cage_files(names: List[str]) -> List[str]:
-    """The agents' cage, by inversion: everything except docs/**, tasks/**, **/tests/** and *.md outside
-    agents/*/CLAUDE.md and agents/*/playbooks/**. A new code directory falls into the cage by itself — the list never
-    goes stale."""
+    """The agents' cage, by inversion: everything except docs/**, tasks/**, **/tests/** and the *.md that are no
+    instructions (``INSTRUCTIONS``, ``INSTRUCTION_NAME``). A new code directory falls into the cage by itself — the
+    list never goes stale. A name counts as git or Forgejo gives it, never trimmed; one git quoted (a control
+    character in it — the cabinet quotes such a name the same way) is the cage wherever it sits."""
     out = []
     for name in names:
-        name = name.strip()
-        if not name or name.startswith(("docs/", "tasks/")) or "/tests/" in "/" + name:
+        if not name:
             continue
-        if name.endswith(".md") and not CAGE_MD.fullmatch(name):
+        if not name.startswith('"') and (name.startswith(("docs/", "tasks/")) or "/tests/" in "/" + name):
+            continue
+        if name.endswith(".md") and not name.startswith(INSTRUCTIONS) and not INSTRUCTION_NAME.fullmatch(name):
             continue
         out.append(name)
     return out

@@ -69,11 +69,11 @@ def get(ctx, principal, request) -> dict:
     seen = ctx.store.marks(principal.user).get(SEEN, 0)
     since = _iso(users.parse_time(now) - timedelta(days=PERIODS[period]))
     changes = _changes(ctx.store, by_id, since, seen)
-    chat = api.allowed(ctx, principal, "agents.chat")
+    spaces = api.agent_spaces(ctx, principal)
     config = ctx.host_config()
     crew = []
     for name in registry.names(ctx.registry_path):
-        found = team.facts(ctx.store, name, cards=cards, chat=chat, hosted=config.hosted(name), now=now)
+        found = team.facts(ctx.store, name, cards=cards, spaces=spaces, hosted=config.hosted(name), now=now)
         crew.append({"name": name, **{k: found[k] for k in ("state", "working", "waiting_you", "queued", "failed")}})
     return {
         "needs": needs,

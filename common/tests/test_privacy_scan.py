@@ -79,9 +79,9 @@ def test_allow_marker_and_exclude(tmp_path):
     assert [(f.path, f.kind) for f in scan_tree(tmp_path, CFG)] == [("c.md", "ipv4")]
 
 
-def test_binary_skipped(tmp_path):
+def test_binary_is_scanned_not_skipped(tmp_path):
     (tmp_path / "blob.bin").write_bytes(b"\0" + PUBLIC.encode())
-    assert scan_tree(tmp_path, CFG) == []
+    assert [(f.path, f.line, f.kind) for f in scan_tree(tmp_path, CFG)] == [("blob.bin", 1, "ipv4")]
 
 
 def test_git_dir_skipped(tmp_path):

@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { agentUnread, eventSpace, parseSpace, spaceBase, spaceKey } from "./spaces";
+import { agentUnread, canOpenSpace, eventSpace, parseSpace, spaceBase, spaceKey } from "./spaces";
+
+describe("who opens an agent's thread (KD-9476)", () => {
+  const holder = (...perms: string[]) => (perm: string) => perms.includes(perm);
+
+  it("opens the chat with agents.chat and «Монитор» only with servers.read too", () => {
+    expect(canOpenSpace(holder("agents.chat"))).toBe(true);
+    expect(canOpenSpace(holder("agents.chat"), "monitor")).toBe(false);
+    expect(canOpenSpace(holder("agents.chat", "servers.read"), "monitor")).toBe(true);
+  });
+
+  it("opens neither for a partner's permissions", () => {
+    const partner = holder("cards.read", "cards.create", "cards.comment", "cards.edit", "decide.promote", "decide.question");
+    expect(canOpenSpace(partner, "chat")).toBe(false);
+    expect(canOpenSpace(partner, "monitor")).toBe(false);
+    expect(canOpenSpace(holder("servers.read"), "monitor")).toBe(false);
+  });
+});
 
 describe("an agent's threads (KD-28)", () => {
   it("keys the chat by the agent and «Монитор» as <agent>/monitor, as the server's unread counts", () => {

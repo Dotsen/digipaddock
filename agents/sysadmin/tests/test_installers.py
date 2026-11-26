@@ -98,16 +98,15 @@ def test_variable_check_catches_a_mutation():
 
 
 def test_deploy_writes_agent_known_hosts_as_agent_atomically():
-    assert 'runuser -u "$user" -- sh -c' in DEPLOY and "d=/home/$3/.ssh; f=$d/known_hosts" in DEPLOY
+    assert 'runuser -u "$1" -- sh -c' in DEPLOY and "d=/home/$3/.ssh; f=$d/known_hosts" in DEPLOY
     # stage's names from its naming.py, checked locally before any command
     assert "SYSADMIN_USER=$(stage_user agent sysadmin) && STAGE_EXEC_USER=$(stage_user exec)" in DEPLOY
     assert "[[ $SYSADMIN_USER =~ $name_re && $STAGE_EXEC_USER =~ $name_re ]]" in DEPLOY
     assert "_ $host_ip $target $SYSADMIN_USER $STAGE_EXEC_USER" in DEPLOY
     assert 'mktemp "$d/.known_hosts.XXXXXX"' in DEPLOY
     assert 'mv -f "$new" "$f"' in DEPLOY
-    # the exec user: root writes into its home, atomically (the agent cannot reach its home)
-    assert 'd=/home/$exec_user/.ssh; f=$d/known_hosts' in DEPLOY
-    assert 'chown "$exec_user:$exec_user" "$new"' in DEPLOY
+    # the exec user and the data user: written in their own name too, never by root (see the known_hosts test below)
+    assert 'chown "$exec_user:$exec_user" "$new"' not in DEPLOY and 'pin_key "$exec_user"' in DEPLOY
 
 
 # --- round 1 of the security review ---
@@ -161,7 +160,7 @@ def _exec_key_install(tmp_path, keys):
     auth = tmp_path / "authorized_keys"
     auth.write_text(keys, encoding="utf-8")
     script = ("set -euo pipefail\n" + functions + f'EXEC_GATE=/usr/local/bin/agent-exec-gate STAGE_IP=203.0.113.10\n'
-              f'EXEC_COMMENT=agent-exec@example-stage exec_key="{EXEC_PUB}" exec_auth="{auth}"\n'
+              f'exec_user=root EXEC_COMMENT=agent-exec@example-stage exec_key="{EXEC_PUB}" exec_auth="{auth}"\n'
               "exec_line=" + step + "\nfi\n")
     proc = subprocess.run([bash, "-c", script], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
@@ -198,7 +197,7 @@ def test_remove_passes_the_exec_key_so_its_lines_go_by_blob():
     assert "target_setup.sh --remove --exec-user $exec_user $remove_args" in remove
     target_remove = TARGET.split('if [ "$mode" = remove ]; then', 1)[1].split("\nfi\n", 1)[0]
     assert 'exec_blob=$(key_blob "$exec_key")' in target_remove
-    assert 'edit_keys "$exec_auth" "" "$EXEC_COMMENT" "$exec_blob"' in target_remove
+    assert 'exec_edit_keys "$exec_auth" "" "$EXEC_COMMENT" "$exec_blob"' in target_remove
 
 
 def test_key_blob_reads_only_a_well_formed_key():
@@ -438,7 +437,7 @@ def test_target_setup_installs_the_exec_gate_and_forced_command():
     # the exec key's line is the gate's forced command; the guard compares the whole line, not only the key
     assert 'exec_line="restrict,command=\\"$EXEC_GATE\\",from=\\"$STAGE_IP\\" $exec_key"' in TARGET
     assert 'if ! grep -qxF -- "$exec_line" "$exec_auth" \\' in TARGET
-    assert 'edit_keys "$exec_auth" "$exec_line" "$EXEC_COMMENT" "$exec_blob"' in TARGET
+    assert 'exec_edit_keys "$exec_auth" "$exec_line" "$EXEC_COMMENT" "$exec_blob"' in TARGET
     assert 'restrict,from=\\"$STAGE_IP\\" $exec_key' not in TARGET
     # the gate is a python source like the ro gate: ast.parse, a shebang, -I
     assert 'for src in "$gate_src" "$snapshot_src" "$usage_src" "$exec_gate_src"; do' in TARGET
@@ -705,3 +704,39 @@ def test_target_setup_opens_the_test_environments_reads():
     assert remove.index("test_env_acl revoke") < remove.index('"$EXEC_GATE"')
     check = TARGET.split('if [ "$mode" = check ]')[1].split("\nfi\n")[0]
     assert 'say "test env read"' in check
+
+
+def test_known_hosts_of_every_user_is_written_in_that_users_name_not_by_root():
+    """The home belongs to the user: a .ssh swapped for a link must not send root's write into a system directory."""
+    remote = DEPLOY.split("read -r -d '' remote <<'EOF'", 1)[1].split("\nEOF\n", 1)[0]
+    assert 'pin_key "$user"' in remote and 'pin_key "$exec_user"' in remote and 'pin_key "$data_user"' in remote
+    outside = re.sub(r"runuser -u \"\$1\" -- sh -c '.*?' _ [^\n]*", "", remote, flags=re.S)
+    assert "runuser" not in outside
+    for word in ("chown", "mv ", "mktemp \"$d", "known_hosts"):
+        assert word not in outside, f"root touches the users' known_hosts by path: {word}"
+    assert 'mv -f "$new" "$f"' in remote  # the atomic replace stays, inside the user's own shell
+
+
+def test_exec_and_data_journals_are_fixed_through_the_descriptor_helper_never_by_path():
+    """The journal directory belongs to the service user: chown/chmod/[ -f ] by path would follow a planted link."""
+    root = SYSADMIN.parent.parent
+    for name, journal in (("agents/sysadmin/install/exec_setup.sh", "exec.jsonl"),
+                          ("common/install/data_read_setup.sh", "data.jsonl")):
+        text = (root / name).read_text(encoding="utf-8")
+        assert f'owned file "$JOURNAL/{journal}"' in text, name
+        for line in text.splitlines():
+            code = line.split("#", 1)[0]
+            assert not (re.search(r"\b(chown|chmod|install)\b", code) and f"{journal}" in code), (name, line)
+            assert not re.search(r"\[ -f \"\$JOURNAL/", code), (name, line)
+        assert 'owned dir "$' in text and ".ssh" in text  # the user's .ssh: a link there is refused too
+
+
+def test_target_exec_users_ssh_is_written_by_that_user_not_by_root():
+    """On a target the exec user's ~/.ssh is its own: root creating, copying or moving files in it follows its links."""
+    assert 'runuser -u "$exec_user" -- sh -c' in TARGET and 'runuser -u "$exec_user" -- bash -c "$(declare -f edit_keys)' in TARGET
+    # the exec user's shell stops on a failed copy as this script does: the file is never edited without its copy
+    assert '$(declare -f edit_keys); set -euo pipefail; edit_keys ' in TARGET
+    for line in TARGET.splitlines():
+        code = line.split("#", 1)[0]
+        assert not re.search(r'install .*"\$exec_home|install .*"\$exec_auth', code), line
+        assert not re.search(r'^\s*edit_keys "\$exec_auth"', code), line

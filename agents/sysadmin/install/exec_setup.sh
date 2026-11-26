@@ -33,6 +33,7 @@ esac
 cd /
 # shellcheck source=../../../common/install/lib/naming.sh
 . /opt/digipaddock/common/install/lib/naming.sh
+owned() { /usr/bin/python3 -I /opt/digipaddock/common/kd/owned_file.py "$@"; }
 base=$(kd_user base)
 exec_user=$(kd_user exec)
 cabinet=$(kd_user cabinet)
@@ -96,14 +97,16 @@ check() {
 
 install_all() {
   id "$cabinet" >/dev/null 2>&1 || { echo "no user $cabinet: run common/install/cabinet_setup.sh install first" >&2; exit 1; }
-  install -d -o "$exec_user" -g "$exec_user" -m 0700 "$EXEC_HOME/.ssh"
+  # The home belongs to the exec user, who can swap .ssh for a link: owner and mode go through a descriptor
+  # (common/kd/owned_file.py) that never follows one.
+  owned dir "$EXEC_HOME/.ssh" "$exec_user" "$exec_user" 700
   stage=$(kd_host stage_alias)  # its own assignment: set -e stops on an unreadable host.json (review M9)
   [ -f "$KEY" ] || runuser -u "$exec_user" -- ssh-keygen -q -t ed25519 -N "" -C "agent-exec@$stage" -f "$KEY"
   # Only the exec user writes the journal; setgid: rotated files keep the group.
-  install -d -o "$exec_user" -g "$base" -m 2750 "$JOURNAL"
-  [ -f "$JOURNAL/exec.jsonl" ] || install -o "$exec_user" -g "$base" -m 0640 /dev/null "$JOURNAL/exec.jsonl"
-  chown "$exec_user:$base" "$JOURNAL/exec.jsonl"
-  chmod 0640 "$JOURNAL/exec.jsonl"
+  install -d -o "$exec_user" -g "$base" -m 2750 "$JOURNAL"  # in the root-owned /var/log: no one swaps it
+  # The directory is the exec user's: the file is created and fixed through a descriptor that never follows a
+  # planted link (a link or an odd file stops the install), never by path.
+  owned file "$JOURNAL/exec.jsonl" "$exec_user" "$base" 640
   printf '%s\n' "$ROTATE" > "$LOGROTATE"
   # The board is the cabinet; a running executor sees the group after its next start.
   bash "$CABINET" grant "$exec_user"

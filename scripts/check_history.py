@@ -46,7 +46,9 @@ def untracked(root: Path) -> list:
             continue
         data = path.read_bytes()
         found.append(("path", 0, name))
-        if b"\0" not in data[: privacy_scan.BINARY_PROBE]:
+        if b"\0" in data[: privacy_scan.BINARY_PROBE]:
+            found.append((name, 0, data))  # a binary file is scanned by its bytes
+        else:
             text = data.decode("utf-8", "replace")
             found += [
                 (name, number, line) for number, line in enumerate(text.splitlines(), 1)
@@ -54,11 +56,26 @@ def untracked(root: Path) -> list:
     return found
 
 
+def changed_binaries(root: Path) -> list:
+    """(path, bytes) of the tracked binary files the working tree changes against HEAD: git's diff only says
+    "Binary files differ"."""
+    found = []
+    for name in git(root, "diff", "--name-only", "--no-renames", "-z", "HEAD", "--").split("\0"):
+        path = root / name
+        if name and path.is_file() and not path.is_symlink():
+            data = path.read_bytes()
+            if b"\0" in data[: privacy_scan.BINARY_PROBE]:
+                found.append((name, data))
+    return found
+
+
 def records(root: Path, base: str) -> list:
     """The span as the mirror reads it, then the uncommitted and the untracked changes as added lines."""
     work = git(root, "diff", "--no-renames", "HEAD", "--")
     return (
-        history_scan.span(root, base) + history_scan.history("", work) + untracked(root)
+        history_scan.span(root, base)
+        + history_scan.history("", work, binaries=changed_binaries(root))
+        + untracked(root)
     )
 
 

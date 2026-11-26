@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -331,18 +332,36 @@ def _pr_pages(api: Api, repo: str, n: int) -> Tuple[List[dict], bool]:
     return out, False
 
 
-def _pr_files(api: Api, repo: str, n: int) -> Tuple[List[dict], bool]:
-    """The PR's files as the cabinet shows them; True when there were more."""
+HIDDEN = ("Cc", "Cf", "Zl", "Zp")  # control, format and line-breaking characters: a name with one is not shown as is
+
+
+def _shown(name: str) -> str:
+    """A path as the cabinet shows it: as it is, or — with a control or an invisible character — quoted and
+    escaped as git quotes it (``"docs/a\\nb.md"``): one line, nothing hidden, and the cage by ``pr.cage_files``."""
+    if not any(unicodedata.category(c) in HIDDEN for c in name):
+        return name
+    return '"' + "".join(c.encode("unicode_escape").decode("ascii") if unicodedata.category(c) in HIDDEN
+                         else "\\" + c if c in '"\\' else c for c in name) + '"'
+
+
+def _pr_files(api: Api, repo: str, n: int) -> Tuple[List[dict], List[str], bool]:
+    """The PR's files as the cabinet shows them, its cage (a rename's old path counts: a file moved out of the cage
+    is the cage) and True when there were more."""
     items, complete = _pr_pages(api, repo, n)
     out: List[dict] = []
+    cage: List[str] = []
     for item in items:
-        path = _safe(_str(item.get("filename")))
-        if not path or "\n" in path:
+        path, before = (_shown(_safe(_str(item.get(key)))) for key in ("filename", "previous_filename"))
+        if not path:
             continue
         status = _str(item.get("status")).lower()
         out.append({"path": path[:PATH_MAX], "status": status if FILE_STATUS.fullmatch(status) else "changed",
                     "additions": _count(item.get("additions")), "deletions": _count(item.get("deletions"))})
-    return out[:FILES_MAX], not complete or len(out) > FILES_MAX
+        if pr_cage.cage_files([path, before]):
+            cage.append(path[:PATH_MAX])
+    shown = out[:FILES_MAX]
+    paths = {f["path"] for f in shown}
+    return shown, [p for p in cage if p in paths], not complete or len(out) > FILES_MAX
 
 
 def _pr_paths(api: Api, repo: str, n: int) -> Tuple[Set[str], bool]:
@@ -419,20 +438,32 @@ def contains(api: Api, repo: str, head: str, base_sha: str) -> bool:
 
 CARRY_STEPS = 20  # merges from the target a signed head may be brought up to date by before its signature carries
 HUNK_RE = re.compile(r"@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@")
+INDEX_RE = re.compile(r"index [0-9a-f]+\.\.[0-9a-f]+((?: [0-7]{6})?)")
+# A diff line whose change the diff's text does not show: a binary file's bytes (git without --binary), or a binary
+# patch whose delta reads the blob it applies to — a blob id the patch id leaves out
+OPAQUE_RE = re.compile(r"Binary files .* differ|GIT binary patch")
 
 
 def patch_id(diff: str) -> str:
-    """A PR's own change wherever it sits now (as ``git patch-id``): the diff's lines in order without the blob ids of
-    its ``index`` lines and the line numbers and section names of its hunk headers — what a merge from the target
-    changes in a PR's diff when it touches none of the PR's lines."""
+    """A PR's own change wherever it sits now (as ``git patch-id``): the diff's lines in order — a line ends at
+    ``\\n`` only — without the blob ids of its ``index`` lines (their mode stays) and the line numbers and section
+    names of its hunk headers: what a merge from the target changes in a PR's diff when it touches none of the PR's
+    lines. It is the change only where the text shows it: ``opaque`` says where it does not."""
     digest = hashlib.sha256()
-    for line in diff.splitlines():
-        if line.startswith("index "):
-            continue
-        if HUNK_RE.match(line):
+    for line in diff.split("\n"):
+        index = INDEX_RE.fullmatch(line)
+        if index:
+            line = "index" + index.group(1)
+        elif HUNK_RE.match(line):
             line = "@@"
         digest.update(line.encode("utf-8", "surrogatepass") + b"\n")
     return digest.hexdigest()
+
+
+def opaque(diff: str) -> str:
+    """The first line of the diff with a change its text does not show (a binary file's) — such a diff's patch id
+    does not pin the change, and a signature never carries over it; ``""`` when every change is in the lines."""
+    return next((line for line in diff.split("\n") if OPAQUE_RE.fullmatch(line)), "")
 
 
 def clean_update(api: Api, repo: str, old: str, new: str, target: str, target_head: str) -> str:
@@ -513,7 +544,7 @@ def publish(api: Api, repo: repos.Repo, n: int, ordered: bool = False,
         raise ForgeError(f"PR #{n}: Forgejo не дал head sha")
     state = "merged" if data.get("merged") is True else ("open" if data.get("state") == "open" else "closed")
     checks = [] if state != "open" else repos.required(repo) if ordered else required_green(api, repo, head)
-    files, more = _pr_files(api, repo.repo, n)
+    files, cage, more = _pr_files(api, repo.repo, n)
     diff, cut = _cut(api.get_text(f"/repos/{repo.repo}/pulls/{n}.diff", DIFF_MAX))
     again = pr(api, repo.repo, n)
     if (_str(_dict(again.get("head")).get("sha")).lower() != head
@@ -521,7 +552,7 @@ def publish(api: Api, repo: repos.Repo, n: int, ordered: bool = False,
         raise ForgeError(f"PR #{n} сдвинулся, пока читались файлы и дифф — запусти publish ещё раз")
     return _fit({"repo": repo.repo, "project": repo.project, "number": n, "card": card.group(0),
                  "title": title[:TITLE_MAX], "url": _str(data.get("html_url"))[:URL_MAX], "head": head, "state": state,
-                 "files": files, "cage": pr_cage.cage_files([f["path"] for f in files]), "diff": diff,
+                 "files": files, "cage": cage, "diff": diff,
                  "truncated": cut or more, "release": repo.release is not None, "target": target,
                  "effect": repos.effect(repo, target), "checks": checks}, envelope), (
         title if state == "open" and title != raw else None)

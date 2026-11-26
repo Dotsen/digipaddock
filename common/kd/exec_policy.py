@@ -1713,7 +1713,8 @@ def plan_step(step: int, command: str, site_units=ALL_UNITS) -> Optional[str]:
 # A typed step that writes a root cron line or one file of sysctl.d / logrotate.d carries text the system later reads
 # as root. It stays narrow, so the step cannot be a script under another name: a cron line is one schedule and one
 # command, and that command passes rules 1 and 2 like a script; a sysctl file is plain ``key = value`` lines with no
-# program a kernel would start; a logrotate file has no script blocks and no option that runs or mails something.
+# program a kernel would start; a logrotate file names only logs under /var/log/ and has no script blocks and no option
+# that runs or mails something or sets an owner, a mode or a directory of the files it writes.
 # The stage checks it before the owner signs, the target's gate before it runs.
 
 SYSCTL_DIR = "/etc/sysctl.d"
@@ -1729,9 +1730,19 @@ _SYSCTL_LINE = re.compile(r"-?([A-Za-z0-9_][A-Za-z0-9_.*/-]*)[ \t]*=[ \t]*(.*)\Z
 # keys whose value is a program the kernel starts (as root) or a mask of what such helpers may do
 _SYSCTL_EXEC = ("kernel.core_pattern", "kernel.modprobe", "kernel.poweroff_cmd", "kernel.hotplug",
                 "kernel.usermodehelper")
+# the network's keys: applied at once, they change access (forwarding, filters, routes) — a critical action's
+_SYSCTL_NET = "net"
 # logrotate words that run a program (script blocks, compressors) or send the logs away (mail), or read another file
 _LOGROTATE_DENY = ("prerotate", "postrotate", "firstaction", "lastaction", "preremove", "endscript", "sharedscripts",
                    "compresscmd", "uncompresscmd", "mail", "mailfirst", "maillast", "include", "tabooext", "taboopat")
+# logrotate words that give the files it writes an owner and a mode, rotate as another user, or write a log's
+# copies into another directory: with them a stanza hands a file to someone or puts one where the step does not say
+_LOGROTATE_FILES = ("create", "su", "olddir", "createolddir", "copy")
+LOG_ROOT = "/var/log/"
+# A stanza's file name: under /var/log/, plain characters and the globs * and ?, no segment that starts with a dot
+# (a glob there — .* — matches ..), no quote, backslash, bracket, brace, ~ or $. Application trees are not log
+# roots: their account may write there, and root rotating a directory another user writes is the classic way up.
+_LOG_PATH = re.compile(r"/var/log(?:/[A-Za-z0-9_*?+@:,=-][A-Za-z0-9_.*?+@:,=-]*)+\Z")
 
 
 def _unreadable(text: str, allowed: str = "") -> bool:
@@ -1767,14 +1778,36 @@ def _cron_split(line: str) -> Tuple[Optional[str], List[str], str]:
     return None, schedule, rest
 
 
+def _cron_shell(command: str) -> Tuple[str, bool]:
+    """(what cron hands to the shell, whether an unescaped % cut it). cron ends the command at the first % a
+    backslash does not escape and feeds the rest to it on stdin (each further % a newline); ``\\%`` is a literal %
+    and loses its backslash, any other backslash stays (vixie cron and cronie read it the same way)."""
+    out, escaped = [], False
+    for ch in command:
+        if escaped:
+            if ch == "%":
+                out[-1] = ch
+            else:
+                out.append(ch)
+            escaped = False
+        elif ch == "%":
+            return "".join(out), True
+        else:
+            out.append(ch)
+            escaped = ch == "\\"
+    return "".join(out), False
+
+
 def cron_command(line: str) -> str:
-    """The command part of a cron line (after its schedule); "" when the line has none."""
-    return _cron_split(line)[2]
+    """The command of a cron line as cron hands it to the shell (after its schedule, ``\\%`` as %, up to an
+    unescaped %); "" when the line has none."""
+    return _cron_shell(_cron_split(line)[2])[0]
 
 
 def cron_problem(line: str, site_units=ALL_UNITS) -> Optional[str]:
     """Why a cron.line step may not carry this line, or None: one line up to MAX_CRON characters, nothing invisible,
-    a schedule of five fields or an @word, and a command that passes rules 1 and 2."""
+    a schedule of five fields or an @word, no unescaped % (cron would feed what follows it to the command on
+    stdin — text rules 1 and 2 never read as one), and a command that passes rules 1 and 2."""
     if not isinstance(line, str) or not line.strip():
         return "строка cron пуста"
     if "\n" in line or "\r" in line:
@@ -1786,6 +1819,10 @@ def cron_problem(line: str, site_units=ALL_UNITS) -> Optional[str]:
     problem, _, command = _cron_split(line)
     if problem:
         return problem
+    command, cut = _cron_shell(command)
+    if cut:
+        return ("знак % в команде cron без \\ перед ним: cron обрывает на нём команду, а остаток подаёт ей на вход; "
+                "буквальный % пишется как \\%")
     refusal = plan_step(0, command, site_units)
     return "команда строки cron: %s" % refusal if refusal else None
 
@@ -1815,17 +1852,66 @@ def drop_problem(directory: str, name: str, text: str) -> Optional[str]:
             if not match:
                 return "строка sysctl не вида ключ = значение: %s" % body[:80]
             key = match.group(1).replace("/", ".")
+            if "*" in key:  # systemd-sysctl expands it at boot: n*.ipv4… is net.ipv4…, kernel.core_patter* is one
+                return "ключ sysctl %s с шаблоном * — ключ пишется полностью" % key[:80]
+            if key == _SYSCTL_NET or key.startswith(_SYSCTL_NET + "."):
+                return ("ключ %s меняет сетевой доступ сразу (sysctl -p) — только критичным действием с подписью "
+                        "владельца (kd-admin-propose-action)" % key[:80])
             for denied in _SYSCTL_EXEC:
                 if key == denied or key.startswith(denied + "."):
                     return "ключ %s запускает программу ядром — только скриптом с подписью владельца" % denied
             if "|" in match.group(2):
                 return "знак | в значении sysctl"
         return None
+    return _logrotate_problem(text)
+
+
+def _log_path(word: str) -> bool:
+    """A file name of a stanza that names only logs under /var/log/ (one pair of quotes around it is no part of it)."""
+    if len(word) > 1 and word[0] == word[-1] and word[0] in "\"'":
+        word = word[1:-1]
+    return bool(_LOG_PATH.match(word))
+
+
+def _logrotate_problem(text: str) -> Optional[str]:
+    """Read a logrotate file as logrotate does: file names up to a ``{`` — over several lines, comment lines among
+    them included —, then directives up to ``}``; a directive is the first word of a line or of a part between
+    braces (its ``# comment`` is no word). Every file name lies under /var/log/, no directive runs a program, sends
+    or reads a file, or sets an owner, a mode or a directory."""
+    depth, names = 0, []  # type: int, List[str]
     for line in text.split("\n"):
-        # a directive is the first word of a line or of a part between braces; a path (mail.log) is no directive
-        for part in re.split(r"[{}]", line.split("#", 1)[0]):
-            words = part.split()
-            if words and words[0].lower() in _LOGROTATE_DENY:
-                return "%s в logrotate запускает программу, отправляет журналы или читает другой файл" % (
-                    words[0].lower())
+        if not depth and not names and line.lstrip().startswith("#"):
+            continue  # a comment line; inside a list of file names logrotate reads it as names
+        for part in re.split(r"([{}])", line):
+            if part == "{":
+                if depth or not names:
+                    return "{ в logrotate без списка путей перед ним или внутри другой стансы"
+                depth, names = 1, []
+            elif part == "}":
+                if not depth:
+                    return "} в logrotate без открытой стансы"
+                depth = 0
+            elif part.split():
+                if depth or (not names and part.split()[0][:1].isalpha()):
+                    words = part.split("#", 1)[0].split()
+                    if not words:
+                        continue
+                    word = words[0].lower()
+                    if not word[:1].isalpha():
+                        return "в стансе logrotate не директива: %s" % words[0][:80]
+                    if word in _LOGROTATE_DENY:
+                        return "%s в logrotate запускает программу, отправляет журналы или читает другой файл" % word
+                    if word in _LOGROTATE_FILES:
+                        return ("%s в logrotate задаёт файлам владельца, права или каталог — такой файл только "
+                                "скриптом с подписью владельца" % word)
+                else:
+                    for word in part.split():
+                        if not _log_path(word):
+                            return "путь %s вне %s: logrotate.d ротирует только журналы под %s" % (
+                                word[:80], LOG_ROOT, LOG_ROOT)
+                    names += part.split()
+    if depth:
+        return "станса logrotate без закрывающей }"
+    if names:
+        return "пути logrotate без { после них"
     return None
