@@ -60,9 +60,9 @@ MEASURES = {"head": "", "pending": None, "pending_commits": (), "ahead": None, "
 COMMITS_MAX, BODY_MAX = 20, 1000
 COMMIT_KEYS = {"sha", "title", "body", "author", "date", "url"}
 # a commit's checks (a reader of before them sends none): its worst state ('' — none or unknown) and those that did
-# not pass
-COMMIT_STATES = ("", "pending", "success", "warning", "failure")
-CHECK_STATES, COMMIT_CHECKS_MAX = ("pending", "warning", "failure", "success"), 5
+# not pass; ``cancelled`` — a newer push stopped its run, no failure
+COMMIT_STATES = ("", "pending", "success", "warning", "failure", "cancelled")
+CHECK_STATES, COMMIT_CHECKS_MAX = ("pending", "warning", "failure", "cancelled", "success"), 5
 # the owner's button waits while a deploy is under way: a launch kd-review dispatched (or whose answer was lost)
 # holds it until the reader shows its run, at most LAUNCH_HOLD_S; Forgejo's clock may run RUN_SLACK_S apart
 LAUNCH_HOLD_S, RUN_SLACK_S = 900, 120

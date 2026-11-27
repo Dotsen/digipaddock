@@ -2043,6 +2043,7 @@
   "deploys.check.failure": "checks failed",
   "deploys.check.pending": "checks running",
   "deploys.check.warning": "checks with a warning",
+  "deploys.check.cancelled": "checks cancelled: the run was stopped — usually a newer push replaced it",
   "deploys.launch.in_flight": "Deploying…",
   "deploys.launch.in_flight_note": "A deploy is under way — the button comes back when it ends",
   "deploys.launch.checks_failed": "{n} of the commits that go out failed their checks.",

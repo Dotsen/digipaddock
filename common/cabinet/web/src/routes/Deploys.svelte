@@ -455,6 +455,7 @@
   :is(.cmark, .cfail).ok { color: var(--good); }
   :is(.cmark, .cfail).crit { color: var(--crit); }
   :is(.cmark, .cfail).warn { color: var(--warn); }
+  :is(.cmark, .cfail).muted { color: var(--muted); }
   :is(.pill, .mark).ok { color: var(--good); background: var(--good-bg); }
   :is(.pill, .mark).crit { color: var(--crit); background: var(--crit-bg); }
   :is(.pill, .mark).warn { color: var(--warn); background: var(--warn-bg); }

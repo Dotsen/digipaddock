@@ -1348,7 +1348,8 @@ export interface DeployCommit {
   checks?: DeployCheck[]; // the checks that did not pass, the failed first, each with its log
 }
 
-export type CheckState = "pending" | "success" | "warning" | "failure";
+// cancelled: the job did not finish (a newer push of the branch stopped its run) — no failure of the commit
+export type CheckState = "pending" | "success" | "warning" | "failure" | "cancelled";
 
 /** A commit's check in Forgejo (an Actions job, a devcheck) that did not pass. */
 export interface DeployCheck {

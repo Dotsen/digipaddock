@@ -551,6 +551,25 @@ def test_each_listed_commit_carries_its_checks():
     assert len(asked) == len(set(asked)) == 4  # each commit asked once
 
 
+def test_a_cancelled_job_is_no_failure():
+    """Forgejo posts a cancelled job — a newer push of the branch stopped its run — as a failure described «Has been
+    cancelled»: the commit says cancelled, not failed; a real failure beside it still decides."""
+    runs = [_r(1, "test", "success", H, "2026-11-25T10:00:00Z"), _r(2, "prod", "success", P, "2026-11-25T08:00:00Z")]
+    stopped = _status(("CI / Run tests (push)", "failure"), ("CI / Deploy (push)", "failure"),
+                      ("CI / lint (push)", "success"))
+    for entry in stopped["statuses"][:2]:
+        entry["description"] = "Has been cancelled"
+    mixed = _status(("CI / Run tests (push)", "failure"), ("CI / Deploy (push)", "failure"))
+    mixed["statuses"][1]["description"] = "Has been cancelled"
+    api = Api({**MASTER, f"/repos/o/alert/commits/{H}/status": stopped, f"/repos/o/alert/commits/{X}/status": mixed},
+              totals={(H, P): (2, [_fc(H, "a"), _fc(X, "b")])})
+    _, prod = _listed(api, runs)
+    h, x = prod["pending_commits"]
+    assert (h["status"], [(c["context"], c["state"]) for c in h["checks"]]) == (
+        "cancelled", [("CI / Run tests (push)", "cancelled"), ("CI / Deploy (push)", "cancelled")])
+    assert (x["status"], [c["state"] for c in x["checks"]]) == ("failure", ["failure", "cancelled"])
+
+
 def test_checks_past_the_budget_are_unknown():
     runs = [_r(1, "test", "success", H, "2026-11-25T10:00:00Z"), _r(2, "prod", "success", P, "2026-11-25T08:00:00Z")]
     api = Api({**MASTER, f"/repos/o/alert/commits/{H}/status": _status(("CI", "failure")),

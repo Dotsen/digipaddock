@@ -2043,6 +2043,7 @@
   "deploys.check.failure": "проверки упали",
   "deploys.check.pending": "проверки идут",
   "deploys.check.warning": "проверки с предупреждением",
+  "deploys.check.cancelled": "проверки отменены: запуск остановлен — обычно его сменил более новый push",
   "deploys.launch.in_flight": "Выкатывается…",
   "deploys.launch.in_flight_note": "Выкат уже идёт — кнопка вернётся, когда он закончится",
   "deploys.launch.checks_failed": "У {n} из уходящих коммитов упали проверки.",

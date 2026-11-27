@@ -38,7 +38,10 @@ CHECKS_SHOWN = 5  # a commit's checks that did not pass, listed with their logs
 # a check's state as the page shows it (an error is a failure); a commit's state is the worst of its checks
 CHECK_STATES = {"success": "success", "failure": "failure", "error": "failure", "pending": "pending",
                 "warning": "warning"}
-WORST = ("failure", "pending", "warning", "success")
+WORST = ("failure", "pending", "warning", "cancelled", "success")
+# Forgejo posts a cancelled Actions job (a newer push of the branch stopped its run) as a failure with this
+# description: it is no failure of the commit, a newer run carries its tests
+CANCELLED = "Has been cancelled"
 # a run carries its whole event payload (a push's commits): 20 of them pass forge.LIMIT on a busy repository
 RUNS_MAX = 8 * forge.LIMIT
 STATUSES = (
@@ -265,6 +268,8 @@ def _checks(api, repo: str, sha: str) -> Tuple[str, List[dict]]:
     for entry in entries if isinstance(entries, list) else []:
         state = CHECK_STATES.get(str(entry.get("status") or entry.get("state") or "")) if isinstance(
             entry, dict) else None
+        if state == "failure" and str(entry.get("description") or "").startswith(CANCELLED):
+            state = "cancelled"
         if state:
             found.append({"context": " ".join(_clean(entry.get("context")).split()), "state": state,
                           "url": _link(entry.get("target_url"))})

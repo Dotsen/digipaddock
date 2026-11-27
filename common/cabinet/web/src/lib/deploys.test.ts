@@ -190,6 +190,12 @@ describe("the deploys page", () => {
     expect(deltas({ ...prod, pending_commits: [commit("a", "a")] }).map((d) => d.key)).toEqual(["deploys.pending"]);
   });
 
+  it("does not count a commit whose run a newer push cancelled as failed", () => {
+    const stopped = { ...commit("a", "docs: a"), status: "cancelled" as const };
+    const prod = { ...env("alert", "Alert", "prod"), manual: true, pending: 1, pending_commits: [stopped] };
+    expect(deltas(prod).map((d) => d.key)).toEqual(["deploys.pending"]);
+  });
+
   it("calls an environment settled when everything is deployed there and its last run passed", () => {
     const prod = { ...env("alert", "Alert", "prod"), manual: true, pending: 0, run: RUN };
     expect(settled(prod)).toBe(true);
@@ -208,6 +214,7 @@ describe("the deploys page", () => {
     expect(checkMark("failure")).toEqual({ mark: "✗", tone: "crit" });
     expect(checkMark("pending")).toEqual({ mark: "…", tone: "warn" });
     expect(checkMark("warning")).toEqual({ mark: "!", tone: "warn" });
+    expect(checkMark("cancelled")).toEqual({ mark: "⊘", tone: "muted" });
     expect(checkMark("")).toBeNull();
     expect(checkMark(undefined)).toBeNull();
   });

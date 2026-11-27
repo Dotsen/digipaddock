@@ -142,7 +142,12 @@ def test_each_environment_says_what_runs_there_and_what_waits(env):
              {"sha": "e" * 40, "title": "fix: x", "body": "", "author": "", "date": "", "url": "",
               "status": "failure", "checks": [
                   {"context": "CI / Run tests (push)", "state": "failure",
-                   "url": "https://forge.example.test/o/alert/actions/runs/7/jobs/0"}]}]
+                   "url": "https://forge.example.test/o/alert/actions/runs/7/jobs/0"}]},
+             # a newer push stopped its run: its jobs were cancelled, not failed
+             {"sha": "f" * 40, "title": "docs: y", "body": "", "author": "", "date": "", "url": "",
+              "status": "cancelled", "checks": [
+                  {"context": "CI / Run tests (push)", "state": "cancelled",
+                   "url": "https://forge.example.test/o/alert/actions/runs/6/jobs/0"}]}]
     envs = [
         {**ENVS[0], "head": head, "pending": 0, "pending_commits": [], "ahead": 3, "ahead_commits": waits,
          "ahead_of": "prod"},
@@ -163,7 +168,7 @@ def test_each_environment_says_what_runs_there_and_what_waits(env):
     assert rows["test"]["deployed"]["sha"] == head
     # the commits behind each count: the owner reads what waits for prod, and which of them failed their checks;
     # a reader of before the checks sends a commit without them
-    listed = [{**waits[0], "status": "", "checks": []}, waits[1]]
+    listed = [{**waits[0], "status": "", "checks": []}, *waits[1:]]
     assert rows["prod"]["pending_commits"] == listed and rows["test"]["ahead_commits"] == listed
     assert rows["prod"]["ahead_commits"] == [] and rows["test"]["pending_commits"] == []
 

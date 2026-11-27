@@ -153,6 +153,7 @@ export function checkMark(state: CheckState | "" | undefined): { mark: string; t
   if (state === "failure") return { mark: "✗", tone: "crit" };
   if (state === "pending") return { mark: "…", tone: "warn" };
   if (state === "warning") return { mark: "!", tone: "warn" };
+  if (state === "cancelled") return { mark: "⊘", tone: "muted" };
   return null;
 }
 
